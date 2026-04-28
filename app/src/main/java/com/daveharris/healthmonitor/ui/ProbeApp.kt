@@ -25,11 +25,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bluetooth
-import androidx.compose.material.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -67,7 +65,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,7 +89,6 @@ import java.time.format.DateTimeFormatter
 private enum class ProbeTab(val title: String) {
     DEVICE("Device"),
     OVERNIGHT("Overnight"),
-    SYNC("Sync"),
     FEEDBACK("Review")
 }
 
@@ -154,7 +150,6 @@ fun ProbeApp(
                                     when (tab) {
                                         ProbeTab.DEVICE -> Icon(Icons.Outlined.Bluetooth, contentDescription = null)
                                         ProbeTab.OVERNIGHT -> Icon(Icons.Outlined.Refresh, contentDescription = null)
-                                        ProbeTab.SYNC -> Icon(Icons.Outlined.CloudDownload, contentDescription = null)
                                         ProbeTab.FEEDBACK -> Icon(Icons.Outlined.Refresh, contentDescription = null)
                                     }
                                 },
@@ -186,13 +181,6 @@ fun ProbeApp(
                             syncRuns = syncRuns,
                             syncDomainResults = syncDomainResults,
                             latestPpiNightSummary = latestOfflinePpiNightSummary,
-                            viewModel = viewModel
-                        )
-                        ProbeTab.SYNC -> SyncScreen(
-                            padding = padding,
-                            runtime = runtime,
-                            syncRuns = syncRuns,
-                            syncDomainResults = syncDomainResults,
                             viewModel = viewModel
                         )
                         ProbeTab.FEEDBACK -> FeedbackScreen(
@@ -340,77 +328,6 @@ private fun DeviceScreen(
                 selected = viewModel.selectedDeviceId == device.deviceId,
                 onSelect = { viewModel.selectDevice(device.deviceId) }
             )
-        }
-    }
-}
-
-@Composable
-private fun SyncScreen(
-    padding: PaddingValues,
-    runtime: DeviceRuntimeState,
-    syncRuns: List<SyncRunEntity>,
-    syncDomainResults: List<SyncDomainResultEntity>,
-    viewModel: ProbeViewModel
-) {
-    val config = viewModel.syncWindowConfig
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            HeroCard(
-                title = "Refresh Data",
-                subtitle = "Pull in the latest Loop data after waking or anytime you want the app caught up.",
-                eyebrow = "Sync"
-            )
-        }
-        item {
-            SectionCard(title = "Manual sync", subtitle = "Current sync window") {
-                SupportText("Partial results are kept even if one domain arrives late, so it’s usually worth syncing even after a rough night.")
-                NumericField("Sleep days", config.sleepDays.toString()) { viewModel.updateSyncDays(sleepDays = it.toIntOrNull() ?: config.sleepDays) }
-                NumericField("Nightly recharge days", config.nightlyRechargeDays.toString()) { viewModel.updateSyncDays(nightlyRechargeDays = it.toIntOrNull() ?: config.nightlyRechargeDays) }
-                NumericField("24/7 HR days", config.hrDays.toString()) { viewModel.updateSyncDays(hrDays = it.toIntOrNull() ?: config.hrDays) }
-                NumericField("24/7 PPi days", config.ppiDays.toString()) { viewModel.updateSyncDays(ppiDays = it.toIntOrNull() ?: config.ppiDays) }
-                ButtonRow {
-                    Button(onClick = viewModel::runManualSync, enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null) { Text("Sync now") }
-                    OutlinedButton(onClick = viewModel::exportInspectorData, enabled = !viewModel.isBusy) { Text("Export JSON") }
-                    KeyMetricPill("Connection", if (runtime.connectedDevice != null) "Live" else "Not connected")
-                }
-            }
-        }
-        item { SectionLabel("Recent sync runs") }
-        itemsIndexed(syncRuns.take(6), key = { index, run -> "sync-run-${run.id}-${run.startedAtEpochMs}-$index" }) { _, run ->
-            DataCard(
-                title = "Run #${run.id}",
-                headline = run.status.replace('_', ' ').replaceFirstChar { it.titlecase() }
-            ) {
-                DetailRow("Started", formatEpochMs(run.startedAtEpochMs))
-                DetailRow("Ended", run.endedAtEpochMs?.let(::formatEpochMs) ?: "running")
-                DetailRow("Notes", run.notes ?: "none")
-            }
-        }
-        item { SectionLabel("Latest domain results") }
-        itemsIndexed(
-            items = syncDomainResults.take(12),
-            key = { index, result ->
-                "sync-domain-${result.id}-${result.syncRunId}-${result.domain}-${result.startedAtEpochMs}-$index"
-            }
-        ) { _, result ->
-            DataCard(
-                title = result.domain,
-                headline = result.status.replace('_', ' ').replaceFirstChar { it.titlecase() }
-            ) {
-                DetailRow("Requested range", result.requestedRange)
-                DetailRow("Records", result.recordCount.toString())
-                DetailRow("Parse status", result.parseStatus)
-                DetailRow("Details", result.detailSummary)
-                if (!result.errorMessage.isNullOrBlank()) {
-                    DetailRow("Error", result.errorMessage)
-                }
-            }
         }
     }
 }
@@ -1103,19 +1020,6 @@ private fun LabeledField(label: String, value: String, onValueChange: (String) -
         label = { Text(label) },
         singleLine = true,
         shape = RoundedCornerShape(18.dp)
-    )
-}
-
-@Composable
-private fun NumericField(label: String, value: String, onValueChange: (String) -> Unit) {
-    OutlinedTextField(
-        modifier = Modifier.fillMaxWidth(),
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        singleLine = true,
-        shape = RoundedCornerShape(18.dp),
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
     )
 }
 
