@@ -220,7 +220,7 @@ private fun MissingPermissionsScreen(padding: PaddingValues, onRequestPermission
         contentAlignment = Alignment.Center
     ) {
         SectionCard(title = "Bluetooth access needed", subtitle = "One-time setup") {
-            Text("Health Monitor needs Bluetooth permissions before it can scan for or connect to the Loop.")
+            Text("Lodestone needs Bluetooth permissions before it can scan for or connect to the Loop.")
             SupportText("Once that’s granted, the normal sync and review flow will work as expected.")
             Button(onClick = onRequestPermissions) {
                 Text("Grant Bluetooth permissions")
@@ -249,8 +249,8 @@ private fun DeviceScreen(
     ) {
         item {
             HeroCard(
-                title = "Health Monitor",
-                subtitle = "A calmer daily home for Loop connection, manual sync, and end-of-day review.",
+                title = "Lodestone",
+                subtitle = "A daily pacing compass for Loop connection, morning signals, and end-of-day review.",
                 eyebrow = "Device"
             )
         }
@@ -282,7 +282,7 @@ private fun DeviceScreen(
                 DetailRow("Saved sync profile", appSettingsSummary ?: "none")
                 if (runtime.connectedDevice == null || runtime.connectionPhase == "connecting") {
                     BannerNote(
-                        text = "Connection tip: Android does not let Health Monitor disable Polar Flow's Bluetooth session automatically. If the Loop is missing or connection stalls, close Polar Flow or disable Flow's Bluetooth/device access, then try Connect again.",
+                        text = "Connection tip: Android does not let Lodestone disable Polar Flow's Bluetooth session automatically. If the Loop is missing or connection stalls, close Polar Flow or disable Flow's Bluetooth/device access, then try Connect again.",
                         tint = MaterialTheme.colorScheme.secondaryContainer,
                         textColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )

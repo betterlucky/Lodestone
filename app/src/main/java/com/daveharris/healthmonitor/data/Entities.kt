@@ -197,7 +197,10 @@ data class DailyCheckInEntity(
     val updatedAtEpochMs: Long
 )
 
-@Entity(tableName = "wake_marker")
+@Entity(
+    tableName = "wake_marker",
+    indices = [Index("sourceDate")]
+)
 data class WakeMarkerEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val sourceDate: String,
