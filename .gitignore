@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+
+# Android / Gradle
+.gradle/
+.kotlin/
+**/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+
+# Python analysis helpers
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local exports, databases, and generated reports
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.jsonl
+probe-export-*.json
+
+# Early scratch notes kept local for privacy/noise.
+*.rtf
+*.rtfd/
+README.md
+garmin-integration.md
+polling.md
+wearable_recovery_research.md
