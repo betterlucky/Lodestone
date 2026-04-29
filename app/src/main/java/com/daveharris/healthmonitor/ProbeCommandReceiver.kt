@@ -206,6 +206,10 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 val count = repository.rebuildPpi247EpochTables().getOrThrow()
                 Log.i(TAG, "Rebuilt $count 24/7 PPI epoch rows")
             }
+            "context_rebuild_epochs" -> {
+                val count = repository.rebuildContextEpochTables().getOrThrow()
+                Log.i(TAG, "Rebuilt $count context epoch/sample rows")
+            }
             "food_sync" -> {
                 val date = foodDate ?: java.time.LocalDate.now().toString()
                 val count = dailyReviewRepository.importLatestFoodCsvFromDownloads(app.applicationContext, date).getOrThrow()

@@ -1085,6 +1085,12 @@ class ProbeRepository(
     private fun JsonObject.intOrNull(key: String): Int? =
         get(key)?.takeUnless { it.isJsonNull }?.asInt
 
+    private fun JsonObject.longOrNull(key: String): Long? =
+        runCatching { get(key)?.takeUnless { it.isJsonNull }?.asLong }.getOrNull()
+
+    private fun JsonObject.doubleOrNull(key: String): Double? =
+        runCatching { get(key)?.takeUnless { it.isJsonNull }?.asDouble }.getOrNull()
+
     private fun JsonObject.booleanOrNull(key: String): Boolean? =
         get(key)?.takeUnless { it.isJsonNull }?.asBoolean
 
@@ -1487,6 +1493,63 @@ class ProbeRepository(
         val filtered = filterNewRecords(records, dao.getExistingSkinTemperaturePayloads(deviceId))
         filtered.forEach { dao.deleteSkinTemperatureRecordsForDate(deviceId, it.sourceDate) }
         dao.insertSkinTemperatureRecords(filtered)
+        rebuildSkinTemperatureSamplesForDates(records.map { it.sourceDate }.distinct())
+    }
+
+    private suspend fun rebuildSkinTemperatureSamplesForDates(sourceDates: List<String>): Int {
+        val normalizedDates = sourceDates.distinct().filter { it.isNotBlank() }
+        if (normalizedDates.isEmpty()) return 0
+        val records = dao.getSkinTemperatureRawRecordsForDates(normalizedDates)
+        val updatedAt = System.currentTimeMillis()
+        val samples = records.flatMap { skinTemperatureSamplesFromRaw(it, updatedAt) }
+        dao.deleteSkinTemperatureSamplesForDates(normalizedDates)
+        if (samples.isNotEmpty()) {
+            dao.upsertSkinTemperatureSamples(samples)
+        }
+        return samples.size
+    }
+
+    suspend fun rebuildContextEpochTables(): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val skinRecords = dao.getAllSkinTemperatureRawRecords()
+            val activityRecords = dao.getAllActivitySampleRawRecords()
+            val skinCount = rebuildSkinTemperatureSamplesForDates(skinRecords.map { it.sourceDate }.distinct())
+            val activityCount = rebuildActivityEpochsForDates(activityRecords.map { it.sourceDate }.distinct())
+            skinCount + activityCount
+        }
+    }
+
+    private fun skinTemperatureSamplesFromRaw(
+        record: SkinTemperatureRawEntity,
+        updatedAtEpochMs: Long
+    ): List<SkinTemperatureSampleEntity> {
+        val root = runCatching { GsonProvider.gson.fromJson(record.rawPayloadJson, JsonObject::class.java) }.getOrNull()
+            ?: return emptyList()
+        val date = root.stringOrNull("date") ?: record.sourceDate
+        val dayStartEpochMs = runCatching {
+            LocalDate.parse(date).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }.getOrNull() ?: return emptyList()
+        val result = root.getAsJsonObject("result") ?: return emptyList()
+        val sensorLocation = result.stringOrNull("sensorLocation")
+        val measurementType = result.stringOrNull("measurementType")
+        return result.getAsJsonArray("skinTemperatureList")
+            ?.mapNotNull { element ->
+                val sample = element.asJsonObjectOrNull() ?: return@mapNotNull null
+                val deltaMs = sample.longOrNull("recordingTimeDeltaMs") ?: return@mapNotNull null
+                val temperature = sample.doubleOrNull("temperature") ?: return@mapNotNull null
+                val sampleTime = dayStartEpochMs + deltaMs
+                SkinTemperatureSampleEntity(
+                    deviceId = record.deviceId,
+                    sourceDate = Instant.ofEpochMilli(sampleTime).atZone(ZoneId.systemDefault()).toLocalDate().toString(),
+                    sampleTimeEpochMs = sampleTime,
+                    recordingTimeDeltaMs = deltaMs,
+                    temperatureCelsius = temperature,
+                    sensorLocation = sensorLocation,
+                    measurementType = measurementType,
+                    updatedAtEpochMs = updatedAtEpochMs
+                )
+            }
+            .orEmpty()
     }
 
     private suspend fun persistDailySummary(deviceId: String, data: List<PolarDailySummaryData>, requestedRange: String) {
@@ -1526,7 +1589,83 @@ class ProbeRepository(
         val filtered = filterNewRecords(records, dao.getExistingActivitySamplePayloads(deviceId))
         filtered.forEach { dao.deleteActivitySampleRecordsForDate(deviceId, it.sourceDate) }
         dao.insertActivitySampleRecords(filtered)
+        rebuildActivityEpochsForDates(records.map { it.sourceDate }.distinct())
     }
+
+    private suspend fun rebuildActivityEpochsForDates(sourceDates: List<String>): Int {
+        val normalizedDates = sourceDates.distinct().filter { it.isNotBlank() }
+        if (normalizedDates.isEmpty()) return 0
+        val records = dao.getActivitySampleRawRecordsForDates(normalizedDates)
+        val updatedAt = System.currentTimeMillis()
+        val epochs = records.flatMap { activityEpochsFromRaw(it, updatedAt) }
+        dao.deleteActivityEpochsForDates(normalizedDates)
+        if (epochs.isNotEmpty()) {
+            dao.upsertActivityEpochs(epochs)
+        }
+        return epochs.size
+    }
+
+    private fun activityEpochsFromRaw(
+        record: ActivitySamplesRawEntity,
+        updatedAtEpochMs: Long
+    ): List<ActivityEpochEntity> {
+        val root = runCatching { GsonProvider.gson.fromJson(record.rawPayloadJson, JsonObject::class.java) }.getOrNull()
+            ?: return emptyList()
+        val output = linkedMapOf<Long, ActivityEpochDraft>()
+        root.getAsJsonArray("polarActivitySamplesDataList")
+            ?.forEach { sessionElement ->
+                val session = sessionElement.asJsonObjectOrNull() ?: return@forEach
+                val start = session.stringOrNull("startTime")?.let(::parsePolarDateTimeEpochMs) ?: return@forEach
+                val metInterval = session.intOrNull("metRecordingInterval")
+                val stepInterval = session.intOrNull("stepRecordingInterval")
+                session.getAsJsonArray("metSamples")?.forEachIndexed { index, value ->
+                    val interval = metInterval ?: return@forEachIndexed
+                    val epochStart = start + (index.toLong() * interval * 1_000L)
+                    val draft = output.getOrPut(epochStart) { ActivityEpochDraft() }
+                    draft.met = runCatching { value.takeUnless { it.isJsonNull }?.asDouble }.getOrNull()
+                    draft.metInterval = interval
+                }
+                session.getAsJsonArray("stepSamples")?.forEachIndexed { index, value ->
+                    val interval = stepInterval ?: return@forEachIndexed
+                    val epochStart = start + (index.toLong() * interval * 1_000L)
+                    val draft = output.getOrPut(epochStart) { ActivityEpochDraft() }
+                    draft.steps = value.asIntOrNull()
+                    draft.stepInterval = interval
+                }
+                session.getAsJsonArray("activityInfoList")?.forEach { infoElement ->
+                    val info = infoElement.asJsonObjectOrNull() ?: return@forEach
+                    val epochStart = info.stringOrNull("timeStamp")?.let(::parsePolarDateTimeEpochMs) ?: return@forEach
+                    val draft = output.getOrPut(epochStart) { ActivityEpochDraft() }
+                    draft.activityClass = info.stringOrNull("activityClass")
+                    draft.activityFactor = info.doubleOrNull("factor")
+                }
+            }
+        return output.toSortedMap().map { (epochStart, draft) ->
+            val intervalSeconds = listOfNotNull(draft.metInterval, draft.stepInterval).minOrNull() ?: 30
+            ActivityEpochEntity(
+                deviceId = record.deviceId,
+                sourceDate = Instant.ofEpochMilli(epochStart).atZone(ZoneId.systemDefault()).toLocalDate().toString(),
+                epochStartEpochMs = epochStart,
+                epochEndEpochMs = epochStart + (intervalSeconds * 1_000L),
+                met = draft.met,
+                steps = draft.steps,
+                activityClass = draft.activityClass,
+                activityFactor = draft.activityFactor,
+                metRecordingIntervalSeconds = draft.metInterval,
+                stepRecordingIntervalSeconds = draft.stepInterval,
+                updatedAtEpochMs = updatedAtEpochMs
+            )
+        }
+    }
+
+    private data class ActivityEpochDraft(
+        var met: Double? = null,
+        var steps: Int? = null,
+        var activityClass: String? = null,
+        var activityFactor: Double? = null,
+        var metInterval: Int? = null,
+        var stepInterval: Int? = null
+    )
 
     suspend fun exportInspectorData(context: Context): Result<File> {
         val rows = withContext(Dispatchers.IO) { inspectorRows.first() }

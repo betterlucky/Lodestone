@@ -184,6 +184,24 @@ data class Ppi247EpochEntity(
     val updatedAtEpochMs: Long
 )
 
+@Entity(
+    tableName = "skin_temperature_sample",
+    primaryKeys = ["deviceId", "sampleTimeEpochMs"],
+    indices = [
+        Index("sourceDate")
+    ]
+)
+data class SkinTemperatureSampleEntity(
+    val deviceId: String,
+    val sourceDate: String,
+    val sampleTimeEpochMs: Long,
+    val recordingTimeDeltaMs: Long,
+    val temperatureCelsius: Double,
+    val sensorLocation: String?,
+    val measurementType: String?,
+    val updatedAtEpochMs: Long
+)
+
 @Entity(tableName = "daily_summary_raw")
 data class DailySummaryRawEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -208,6 +226,27 @@ data class ActivitySamplesRawEntity(
     val rawPayloadJson: String,
     val parserVersion: Int,
     val parseStatus: String
+)
+
+@Entity(
+    tableName = "activity_epoch",
+    primaryKeys = ["deviceId", "epochStartEpochMs"],
+    indices = [
+        Index("sourceDate")
+    ]
+)
+data class ActivityEpochEntity(
+    val deviceId: String,
+    val sourceDate: String,
+    val epochStartEpochMs: Long,
+    val epochEndEpochMs: Long,
+    val met: Double?,
+    val steps: Int?,
+    val activityClass: String?,
+    val activityFactor: Double?,
+    val metRecordingIntervalSeconds: Int?,
+    val stepRecordingIntervalSeconds: Int?,
+    val updatedAtEpochMs: Long
 )
 
 @Entity(tableName = "app_settings")

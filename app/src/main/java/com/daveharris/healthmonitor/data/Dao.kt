@@ -64,6 +64,12 @@ interface ProbeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPpi247Epochs(entities: List<Ppi247EpochEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSkinTemperatureSamples(entities: List<SkinTemperatureSampleEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertActivityEpochs(entities: List<ActivityEpochEntity>)
+
     @Insert
     suspend fun insertSyncRun(entity: SyncRunEntity): Long
 
@@ -133,11 +139,17 @@ interface ProbeDao {
     @Query("DELETE FROM skin_temperature_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteSkinTemperatureRecordsForDate(deviceId: String, sourceDate: String)
 
+    @Query("DELETE FROM skin_temperature_sample WHERE sourceDate IN (:sourceDates)")
+    suspend fun deleteSkinTemperatureSamplesForDates(sourceDates: List<String>)
+
     @Query("DELETE FROM daily_summary_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteDailySummaryRecordsForDate(deviceId: String, sourceDate: String)
 
     @Query("DELETE FROM activity_samples_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteActivitySampleRecordsForDate(deviceId: String, sourceDate: String)
+
+    @Query("DELETE FROM activity_epoch WHERE sourceDate IN (:sourceDates)")
+    suspend fun deleteActivityEpochsForDates(sourceDates: List<String>)
 
     @Query("SELECT * FROM device_profile ORDER BY lastSeenAtEpochMs DESC LIMIT 1")
     fun observeLatestDeviceProfile(): Flow<DeviceProfileEntity?>
@@ -388,6 +400,18 @@ interface ProbeDao {
 
     @Query("SELECT * FROM ppi247_day_raw ORDER BY sourceDate ASC, keySummary ASC")
     suspend fun getAllPpiRawRecords(): List<Ppi247DayRawEntity>
+
+    @Query("SELECT * FROM skin_temperature_raw WHERE sourceDate IN (:sourceDates) ORDER BY sourceDate ASC")
+    suspend fun getSkinTemperatureRawRecordsForDates(sourceDates: List<String>): List<SkinTemperatureRawEntity>
+
+    @Query("SELECT * FROM skin_temperature_raw ORDER BY sourceDate ASC")
+    suspend fun getAllSkinTemperatureRawRecords(): List<SkinTemperatureRawEntity>
+
+    @Query("SELECT * FROM activity_samples_raw WHERE sourceDate IN (:sourceDates) ORDER BY sourceDate ASC")
+    suspend fun getActivitySampleRawRecordsForDates(sourceDates: List<String>): List<ActivitySamplesRawEntity>
+
+    @Query("SELECT * FROM activity_samples_raw ORDER BY sourceDate ASC")
+    suspend fun getAllActivitySampleRawRecords(): List<ActivitySamplesRawEntity>
 
     @Query("SELECT * FROM ppi247_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
     suspend fun getPpi247EpochsForDate(sourceDate: String): List<Ppi247EpochEntity>

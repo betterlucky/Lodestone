@@ -20,8 +20,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Ppi247DayRawEntity::class,
         SkinTemperatureRawEntity::class,
         Ppi247EpochEntity::class,
+        SkinTemperatureSampleEntity::class,
         DailySummaryRawEntity::class,
         ActivitySamplesRawEntity::class,
+        ActivityEpochEntity::class,
         AppSettingsEntity::class,
         DailyCheckInEntity::class,
         WakeMarkerEntity::class,
@@ -31,7 +33,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineRecordingSessionEntity::class,
         OfflinePpiEpochEntity::class
     ],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -191,6 +193,46 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS skin_temperature_sample (
+                        deviceId TEXT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        sampleTimeEpochMs INTEGER NOT NULL,
+                        recordingTimeDeltaMs INTEGER NOT NULL,
+                        temperatureCelsius REAL NOT NULL,
+                        sensorLocation TEXT,
+                        measurementType TEXT,
+                        updatedAtEpochMs INTEGER NOT NULL,
+                        PRIMARY KEY(deviceId, sampleTimeEpochMs)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_skin_temperature_sample_sourceDate ON skin_temperature_sample(sourceDate)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS activity_epoch (
+                        deviceId TEXT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        epochStartEpochMs INTEGER NOT NULL,
+                        epochEndEpochMs INTEGER NOT NULL,
+                        met REAL,
+                        steps INTEGER,
+                        activityClass TEXT,
+                        activityFactor REAL,
+                        metRecordingIntervalSeconds INTEGER,
+                        stepRecordingIntervalSeconds INTEGER,
+                        updatedAtEpochMs INTEGER NOT NULL,
+                        PRIMARY KEY(deviceId, epochStartEpochMs)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_activity_epoch_sourceDate ON activity_epoch(sourceDate)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -203,7 +245,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_11_12,
             MIGRATION_12_13,
             MIGRATION_13_14,
-            MIGRATION_14_15
+            MIGRATION_14_15,
+            MIGRATION_15_16
         )
             .build()
     }
