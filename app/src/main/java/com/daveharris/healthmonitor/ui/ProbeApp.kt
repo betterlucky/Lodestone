@@ -103,6 +103,8 @@ fun ProbeApp(
     val capabilities by viewModel.observedCapabilities.collectAsState()
     val appSettings by viewModel.appSettings.collectAsState()
     val dailyCheckIns by viewModel.dailyCheckIns.collectAsState()
+    val foodDailySummaries by viewModel.foodDailySummaries.collectAsState()
+    val dailyWeights by viewModel.dailyWeights.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -179,6 +181,8 @@ fun ProbeApp(
                             padding = padding,
                             morningRead = morningRead,
                             dailyCheckIns = dailyCheckIns,
+                            foodDailySummaries = foodDailySummaries,
+                            dailyWeights = dailyWeights,
                             viewModel = viewModel,
                             onImportFoodCsv = onImportFoodCsv
                         )
@@ -403,9 +407,17 @@ private fun FeedbackScreen(
     padding: PaddingValues,
     morningRead: MorningReadSnapshot?,
     dailyCheckIns: List<DailyCheckInEntity>,
+    foodDailySummaries: List<FoodDailySummaryEntity>,
+    dailyWeights: List<DailyWeightEntity>,
     viewModel: ProbeViewModel,
     onImportFoodCsv: () -> Unit
 ) {
+    val foodSummariesByDate = remember(foodDailySummaries) {
+        foodDailySummaries.associateBy { it.sourceDate }
+    }
+    val weightsByDate = remember(dailyWeights) {
+        dailyWeights.associateBy { it.sourceDate }
+    }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -507,6 +519,8 @@ private fun FeedbackScreen(
             items = dailyCheckIns,
             key = { item -> "check-in-${item.sourceDate}-${item.updatedAtEpochMs}" }
         ) { checkIn ->
+            val foodSummary = foodSummariesByDate[checkIn.sourceDate]
+            val weight = weightsByDate[checkIn.sourceDate]
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -521,6 +535,7 @@ private fun FeedbackScreen(
                     StatusLine("Outcome", checkIn.eveningOutcome)
                     DetailRow("Approach", checkIn.approachToDay?.let(::labelForStatus) ?: "Not recorded")
                     DetailRow("Muscle weakness", if (checkIn.muscleWeaknessToday) "Yes" else "No")
+                    DetailRow("Food", reviewFoodImportSummary(foodSummary, weight))
                     if (!checkIn.notes.isNullOrBlank()) {
                         DetailRow("Notes", checkIn.notes)
                     }
@@ -530,6 +545,24 @@ private fun FeedbackScreen(
             }
         }
     }
+}
+
+private fun reviewFoodImportSummary(
+    summary: FoodDailySummaryEntity?,
+    weight: DailyWeightEntity?
+): String {
+    if (summary == null && weight == null) return "Not synced"
+    val parts = buildList {
+        if (summary != null) {
+            val calories = summary.totalCaloriesKcal?.let { "$it kcal" }
+            val events = summary.eventCount?.let { "$it items" }
+            add(listOfNotNull(calories, events).joinToString(", ").ifBlank { "food synced" })
+        }
+        if (weight != null) {
+            add(String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg))
+        }
+    }
+    return "Synced: ${parts.joinToString("; ")}"
 }
 
 @Composable
