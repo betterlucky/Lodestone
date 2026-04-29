@@ -33,6 +33,15 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 Log.i(TAG, "Command '$command' completed for device=${deviceId ?: "selected"}")
             } catch (t: Throwable) {
                 Log.e(TAG, "Command '$command' failed: ${t.message}", t)
+                if (command == "morning_read_check") {
+                    val selectedDeviceId = deviceId ?: app.container.repository.getAppSettings()?.selectedDeviceId
+                    MorningReadScheduler.scheduleNextCheck(
+                        context = app.applicationContext,
+                        targetDate = LocalDate.now().toString(),
+                        deviceId = selectedDeviceId
+                    )
+                    Log.i(TAG, "Rescheduled morning read check after failure.")
+                }
             } finally {
                 pendingResult.finish()
             }
