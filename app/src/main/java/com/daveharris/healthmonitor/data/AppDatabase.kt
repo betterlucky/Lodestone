@@ -19,6 +19,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Hr247DayRawEntity::class,
         Ppi247DayRawEntity::class,
         SkinTemperatureRawEntity::class,
+        Ppi247EpochEntity::class,
         DailySummaryRawEntity::class,
         ActivitySamplesRawEntity::class,
         AppSettingsEntity::class,
@@ -30,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         OfflineRecordingSessionEntity::class,
         OfflinePpiEpochEntity::class
     ],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -152,12 +153,58 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS ppi247_epoch (
+                        deviceId TEXT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        epochStartEpochMs INTEGER NOT NULL,
+                        epochEndEpochMs INTEGER NOT NULL,
+                        sampleCount INTEGER NOT NULL,
+                        usableSampleCount INTEGER NOT NULL,
+                        skinContactFalseCount INTEGER NOT NULL,
+                        movementDetectedCount INTEGER NOT NULL,
+                        offlineIntervalCount INTEGER NOT NULL,
+                        highErrorCount INTEGER NOT NULL,
+                        ppiLowCount INTEGER NOT NULL,
+                        ppiHighCount INTEGER NOT NULL,
+                        meanPpiMs REAL,
+                        medianPpiMs REAL,
+                        ppiP10Ms REAL,
+                        ppiP90Ms REAL,
+                        rmssdMs REAL,
+                        meanHrBpm REAL,
+                        minHrBpm INTEGER,
+                        maxHrBpm INTEGER,
+                        medianErrorEstimateMs REAL,
+                        errorEstimateP90Ms REAL,
+                        epochQuality TEXT NOT NULL,
+                        triggerTypesCsv TEXT NOT NULL,
+                        updatedAtEpochMs INTEGER NOT NULL,
+                        PRIMARY KEY(sourceDate, epochStartEpochMs)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ppi247_epoch_sourceDate ON ppi247_epoch(sourceDate)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
             AppDatabase::class.java,
             "health-monitor-probe.db"
-        ).addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+        ).addMigrations(
+            MIGRATION_8_9,
+            MIGRATION_9_10,
+            MIGRATION_10_11,
+            MIGRATION_11_12,
+            MIGRATION_12_13,
+            MIGRATION_13_14,
+            MIGRATION_14_15
+        )
             .build()
     }
 }

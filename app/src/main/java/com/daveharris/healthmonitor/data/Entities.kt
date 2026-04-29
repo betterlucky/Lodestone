@@ -149,6 +149,41 @@ data class SkinTemperatureRawEntity(
     val parseStatus: String
 )
 
+@Entity(
+    tableName = "ppi247_epoch",
+    primaryKeys = ["sourceDate", "epochStartEpochMs"],
+    indices = [
+        Index("sourceDate")
+    ]
+)
+data class Ppi247EpochEntity(
+    val deviceId: String,
+    val sourceDate: String,
+    val epochStartEpochMs: Long,
+    val epochEndEpochMs: Long,
+    val sampleCount: Int,
+    val usableSampleCount: Int,
+    val skinContactFalseCount: Int,
+    val movementDetectedCount: Int,
+    val offlineIntervalCount: Int,
+    val highErrorCount: Int,
+    val ppiLowCount: Int,
+    val ppiHighCount: Int,
+    val meanPpiMs: Double?,
+    val medianPpiMs: Double?,
+    val ppiP10Ms: Double?,
+    val ppiP90Ms: Double?,
+    val rmssdMs: Double?,
+    val meanHrBpm: Double?,
+    val minHrBpm: Int?,
+    val maxHrBpm: Int?,
+    val medianErrorEstimateMs: Double?,
+    val errorEstimateP90Ms: Double?,
+    val epochQuality: String,
+    val triggerTypesCsv: String,
+    val updatedAtEpochMs: Long
+)
+
 @Entity(tableName = "daily_summary_raw")
 data class DailySummaryRawEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

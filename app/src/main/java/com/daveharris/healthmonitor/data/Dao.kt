@@ -61,6 +61,9 @@ interface ProbeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertOfflinePpiEpochs(entities: List<OfflinePpiEpochEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertPpi247Epochs(entities: List<Ppi247EpochEntity>)
+
     @Insert
     suspend fun insertSyncRun(entity: SyncRunEntity): Long
 
@@ -123,6 +126,9 @@ interface ProbeDao {
 
     @Query("DELETE FROM ppi247_day_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate AND keySummary = :keySummary")
     suspend fun deletePpiRecordsForDateAndKeySummary(deviceId: String, sourceDate: String, keySummary: String)
+
+    @Query("DELETE FROM ppi247_epoch WHERE sourceDate IN (:sourceDates)")
+    suspend fun deletePpi247EpochsForDates(sourceDates: List<String>)
 
     @Query("DELETE FROM skin_temperature_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteSkinTemperatureRecordsForDate(deviceId: String, sourceDate: String)
@@ -377,8 +383,20 @@ interface ProbeDao {
     @Query("SELECT * FROM offline_ppi_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
     suspend fun getOfflinePpiEpochsForDate(sourceDate: String): List<OfflinePpiEpochEntity>
 
+    @Query("SELECT * FROM ppi247_day_raw WHERE sourceDate IN (:sourceDates) ORDER BY sourceDate ASC, keySummary ASC")
+    suspend fun getPpiRawRecordsForDates(sourceDates: List<String>): List<Ppi247DayRawEntity>
+
+    @Query("SELECT * FROM ppi247_day_raw ORDER BY sourceDate ASC, keySummary ASC")
+    suspend fun getAllPpiRawRecords(): List<Ppi247DayRawEntity>
+
+    @Query("SELECT * FROM ppi247_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
+    suspend fun getPpi247EpochsForDate(sourceDate: String): List<Ppi247EpochEntity>
+
     @Query("SELECT * FROM offline_ppi_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
     fun observeRecentOfflinePpiEpochs(): Flow<List<OfflinePpiEpochEntity>>
+
+    @Query("SELECT * FROM ppi247_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
+    fun observeRecentPpi247Epochs(): Flow<List<Ppi247EpochEntity>>
 
 }
 

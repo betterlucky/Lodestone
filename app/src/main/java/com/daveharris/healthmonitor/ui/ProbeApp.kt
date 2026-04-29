@@ -861,9 +861,9 @@ private fun MorningDataQualityCard(
                     "${morningRead.offlinePpiGoodEpochCount} good epochs$coverage"
                 }
                 latestPpiNightSummary != null -> "Recorded, waiting for sleep-window alignment"
-                else -> "No overnight PPI yet"
+                else -> "No raw PPI yet"
             }
-            DetailRow("Offline PPI", ppiQuality)
+            DetailRow("Raw PPI", ppiQuality)
             if ((morningRead?.offlinePpiPoorEpochCount ?: 0) > 0) {
                 DetailRow("Flagged PPI windows", morningRead?.offlinePpiPoorEpochCount.toString())
             }

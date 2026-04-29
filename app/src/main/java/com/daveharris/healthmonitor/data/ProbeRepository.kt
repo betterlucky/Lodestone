@@ -38,6 +38,7 @@ import java.io.File
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -64,9 +65,10 @@ class ProbeRepository(
     val morningRead = combine(
         dao.observeLatestSleepRecord(),
         dao.observeLatestNightlyRechargeRecord(),
-        dao.observeRecentOfflinePpiEpochs()
-    ) { sleep, nightly, offlinePpiEpochs ->
-        deriveMorningRead(sleep, nightly, offlinePpiEpochs)
+        dao.observeRecentOfflinePpiEpochs(),
+        dao.observeRecentPpi247Epochs()
+    ) { sleep, nightly, offlinePpiEpochs, ppi247Epochs ->
+        deriveMorningRead(sleep, nightly, offlinePpiEpochs, ppi247Epochs)
     }
 
     suspend fun search(prefix: String? = "Polar"): List<com.polar.sdk.api.model.PolarDeviceInfo> {
@@ -1071,6 +1073,12 @@ class ProbeRepository(
     private fun JsonElement.asJsonObjectOrNull(): JsonObject? =
         takeIf { it.isJsonObject }?.asJsonObject
 
+    private fun JsonElement.asIntOrNull(): Int? =
+        runCatching { takeUnless { it.isJsonNull }?.asInt }.getOrNull()
+
+    private fun JsonElement.asStringOrNull(): String? =
+        runCatching { takeUnless { it.isJsonNull }?.asString }.getOrNull()
+
     private fun JsonObject.stringOrNull(key: String): String? =
         get(key)?.takeUnless { it.isJsonNull }?.asString
 
@@ -1403,6 +1411,63 @@ class ProbeRepository(
         val filtered = filterNewRecords(records, dao.getExistingPpiPayloads(deviceId))
         filtered.forEach { dao.deletePpiRecordsForDateAndKeySummary(deviceId, it.sourceDate, it.keySummary) }
         dao.insertPpiRecords(filtered)
+        rebuildPpi247EpochsForDates(records.map { it.sourceDate }.distinct())
+    }
+
+    private suspend fun rebuildPpi247EpochsForDates(sourceDates: List<String>): Int {
+        val normalizedDates = sourceDates.distinct().filter { it.isNotBlank() }
+        if (normalizedDates.isEmpty()) return 0
+        val records = dao.getPpiRawRecordsForDates(normalizedDates)
+        val epochs = records
+            .groupBy { it.sourceDate }
+            .flatMap { (sourceDate, dayRecords) ->
+                val samples = dayRecords.flatMap { ppi247SamplesFromRaw(it, sourceDate) }.sortedBy { it.timestampEpochMs }
+                Ppi247EpochBuilder.derive(samples, updatedAtEpochMs = System.currentTimeMillis())
+            }
+        dao.deletePpi247EpochsForDates(normalizedDates)
+        if (epochs.isNotEmpty()) {
+            dao.upsertPpi247Epochs(epochs)
+        }
+        return epochs.size
+    }
+
+    suspend fun rebuildPpi247EpochTables(): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val records = dao.getAllPpiRawRecords()
+            rebuildPpi247EpochsForDates(records.map { it.sourceDate }.distinct())
+        }
+    }
+
+    private fun ppi247SamplesFromRaw(record: Ppi247DayRawEntity, sourceDate: String): List<Ppi247EpochBuilder.Sample> {
+        val root = runCatching { GsonProvider.gson.fromJson(record.rawPayloadJson, JsonObject::class.java) }.getOrNull()
+            ?: return emptyList()
+        val samplesObject = root.getAsJsonObject("samples") ?: return emptyList()
+        val startTime = samplesObject.get("startTime")?.takeUnless { it.isJsonNull }?.asString ?: return emptyList()
+        val triggerType = samplesObject.get("triggerType")?.takeUnless { it.isJsonNull }?.asString ?: "unknown"
+        val startEpochMs = runCatching {
+            LocalDateTime.of(LocalDate.parse(sourceDate), LocalTime.parse(startTime))
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull() ?: return emptyList()
+        val ppiValues = samplesObject.getAsJsonArray("ppiValueList")?.mapNotNull { it.asIntOrNull() }.orEmpty()
+        val errorValues = samplesObject.getAsJsonArray("ppiErrorEstimateList")?.mapNotNull { it.asIntOrNull() }.orEmpty()
+        val statusValues = samplesObject.getAsJsonArray("statusList")?.toList().orEmpty()
+        var timestampEpochMs = startEpochMs
+        return ppiValues.mapIndexed { index, ppiMs ->
+            timestampEpochMs += ppiMs.toLong()
+            val status = statusValues.getOrNull(index)?.takeIf { it.isJsonObject }?.asJsonObject
+            Ppi247EpochBuilder.Sample(
+                timestampEpochMs = timestampEpochMs,
+                deviceId = record.deviceId,
+                ppiMs = ppiMs,
+                errorEstimateMs = errorValues.getOrNull(index) ?: 0,
+                skinContactDetected = status?.get("skinContact")?.asStringOrNull() != "SKIN_CONTACT_NOT_DETECTED",
+                movementDetected = status?.get("movement")?.asStringOrNull() == "MOVING_DETECTED",
+                intervalOnline = status?.get("intervalStatus")?.asStringOrNull() != "INTERVAL_IS_OFFLINE",
+                triggerType = triggerType
+            )
+        }
     }
 
     private suspend fun persistSkinTemperature(deviceId: String, data: List<PolarSkinTemperatureData>, requestedRange: String) {
@@ -1535,18 +1600,19 @@ class ProbeRepository(
     private fun deriveMorningRead(
         sleepRow: SleepNightRawEntity?,
         nightlyRow: NightlyRechargeRawEntity?,
-        offlinePpiEpochs: List<OfflinePpiEpochEntity>
+        offlinePpiEpochs: List<OfflinePpiEpochEntity>,
+        ppi247Epochs: List<Ppi247EpochEntity>
     ): MorningReadSnapshot? {
-        if (sleepRow == null && nightlyRow == null && offlinePpiEpochs.isEmpty()) return null
+        if (sleepRow == null && nightlyRow == null && offlinePpiEpochs.isEmpty() && ppi247Epochs.isEmpty()) return null
 
         val expectedSourceDate = LocalDate.now(ZoneId.systemDefault()).toString()
         if (sleepRow?.sourceDate != expectedSourceDate) {
-            val hasOfflinePpi = offlinePpiEpochs.isNotEmpty()
+            val hasRawPpi = ppi247Epochs.isNotEmpty() || offlinePpiEpochs.isNotEmpty()
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
                 status = null,
                 confidence = "interim",
-                overnightAutonomicSource = if (hasOfflinePpi) "offline_ppi_pending_sleep_window" else "awaiting_sleep_data",
+                overnightAutonomicSource = if (hasRawPpi) "raw_ppi_pending_sleep_window" else "awaiting_sleep_data",
                 sleepDurationMinutes = null,
                 nightlyRmssd = null,
                 baselineReady = false,
@@ -1554,8 +1620,8 @@ class ProbeRepository(
                 summary = "Interim: waiting for Polar sleep data",
                 reasons = listOf(
                     "Today’s resolved sleep window is not available yet.",
-                    if (hasOfflinePpi) {
-                        "Offline PPI has been fetched, but it cannot be scored until the sleep window is known."
+                    if (hasRawPpi) {
+                        "Raw PPI has been fetched, but it cannot be sleep-window scored until the sleep window is known."
                     } else {
                         "The app will keep checking for the completed sleep report."
                     }
@@ -1587,12 +1653,12 @@ class ProbeRepository(
             ?.asString
             ?.let(::parsePolarDateTimeEpochMs)
         if (durationMinutes == null || sleepStartEpochMs == null || sleepEndEpochMs == null) {
-            val hasOfflinePpi = offlinePpiEpochs.isNotEmpty()
+            val hasRawPpi = ppi247Epochs.isNotEmpty() || offlinePpiEpochs.isNotEmpty()
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
                 status = null,
                 confidence = "interim",
-                overnightAutonomicSource = if (hasOfflinePpi) "offline_ppi_pending_sleep_window" else "awaiting_sleep_data",
+                overnightAutonomicSource = if (hasRawPpi) "raw_ppi_pending_sleep_window" else "awaiting_sleep_data",
                 sleepDurationMinutes = null,
                 nightlyRmssd = null,
                 baselineReady = false,
@@ -1600,8 +1666,8 @@ class ProbeRepository(
                 summary = "Interim: waiting for resolved Polar sleep window",
                 reasons = listOf(
                     "Polar has created today’s sleep record, but the resolved start/end times are not available yet.",
-                    if (hasOfflinePpi) {
-                        "Offline PPI has been fetched, but it cannot be sleep-window scored until those times arrive."
+                    if (hasRawPpi) {
+                        "Raw PPI has been fetched, but it cannot be sleep-window scored until those times arrive."
                     } else {
                         "The app will keep checking for the completed sleep report."
                     }
@@ -1620,14 +1686,21 @@ class ProbeRepository(
         val baselineReady = nightlySummary?.get("baselineReady")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
         val recoveryAvailable = nightlySummary?.get("recoveryAvailable")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
         val ansAvailable = nightlySummary?.get("ansAvailable")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
+        val ppi247Autonomic = summarizePpi247ForSleepWindow(
+            sourceDate = sleepRow.sourceDate,
+            sleepStartEpochMs = sleepStartEpochMs,
+            sleepEndEpochMs = sleepEndEpochMs,
+            epochs = ppi247Epochs
+        )
         val offlineAutonomic = summarizeOfflinePpiForSleepWindow(
             sourceDate = sleepRow.sourceDate,
             sleepStartEpochMs = sleepStartEpochMs,
             sleepEndEpochMs = sleepEndEpochMs,
             epochs = offlinePpiEpochs
         )
-        val autonomicRmssd = offlineAutonomic?.averageRmssdMs ?: rmssd
+        val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: offlineAutonomic?.averageRmssdMs ?: rmssd
         val autonomicSource = when {
+            ppi247Autonomic != null -> "ppi247_sleep_window"
             offlineAutonomic != null -> "offline_ppi_sleep_window"
             nightlyRow != null -> "nightly_recharge_summary"
             else -> "sleep_context_only"
@@ -1670,7 +1743,25 @@ class ProbeRepository(
             }
         }
 
-        if (offlineAutonomic != null) {
+        if (ppi247Autonomic != null) {
+            reasons += "24/7 PPI covered ${formatHours(ppi247Autonomic.coverageHours)} of the resolved sleep window (${ppi247Autonomic.goodEpochCount} good epochs)."
+            ppi247Autonomic.lateMinusEarlyRmssdMs?.let { delta ->
+                when {
+                    delta >= 8.0 -> {
+                        score += 0.25
+                        reasons += "Overnight RMSSD rose toward morning."
+                    }
+                    delta <= -8.0 -> {
+                        score -= 0.35
+                        reasons += "Overnight RMSSD fell toward morning."
+                    }
+                }
+            }
+            if (ppi247Autonomic.poorEpochCount > ppi247Autonomic.goodEpochCount / 4) {
+                score -= 0.15
+                reasons += "24/7 PPI had some flagged contact/error windows."
+            }
+        } else if (offlineAutonomic != null) {
             reasons += "Offline PPI covered ${formatHours(offlineAutonomic.coverageHours)} of the resolved sleep window (${offlineAutonomic.goodEpochCount} good epochs)."
             offlineAutonomic.lateMinusEarlyRmssdMs?.let { delta ->
                 when {
@@ -1689,7 +1780,7 @@ class ProbeRepository(
                 reasons += "Offline PPI had some flagged contact/error windows."
             }
         } else if (sleepStartEpochMs != null && sleepEndEpochMs != null) {
-            reasons += "No usable offline PPI overlapped the resolved sleep window."
+            reasons += "No usable raw PPI overlapped the resolved sleep window."
         }
 
         if (wakePhases != null && wakePhases >= 40) {
@@ -1705,11 +1796,11 @@ class ProbeRepository(
         } else {
             reasons += "Baseline history is not fully ready yet."
         }
-        if (offlineAutonomic == null && (!recoveryAvailable || !ansAvailable)) {
+        if (ppi247Autonomic == null && offlineAutonomic == null && (!recoveryAvailable || !ansAvailable)) {
             score -= 0.15
             reasons += "Polar's higher-level overnight interpretation is still immature."
-        } else if (offlineAutonomic != null && (!recoveryAvailable || !ansAvailable)) {
-            reasons += "Nightly Recharge interpretation is immature, but raw offline PPI is available."
+        } else if ((ppi247Autonomic != null || offlineAutonomic != null) && (!recoveryAvailable || !ansAvailable)) {
+            reasons += "Nightly Recharge interpretation is immature, but raw PPI is available."
         }
 
         val status = when {
@@ -1719,6 +1810,8 @@ class ProbeRepository(
             else -> TrafficLightStatus.CRASH
         }
         val confidence = when {
+            ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 48 && baselineReady -> "high"
+            ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 12 -> "medium"
             offlineAutonomic != null && offlineAutonomic.goodEpochCount >= 48 && baselineReady -> "high"
             offlineAutonomic != null && offlineAutonomic.goodEpochCount >= 12 -> "medium"
             nightlyRow == null -> "low"
@@ -1745,9 +1838,9 @@ class ProbeRepository(
             reasons = reasons,
             isInterim = false,
             sleepDataReady = true,
-            offlinePpiGoodEpochCount = offlineAutonomic?.goodEpochCount,
-            offlinePpiPoorEpochCount = offlineAutonomic?.poorEpochCount,
-            offlinePpiCoverageHours = offlineAutonomic?.coverageHours
+            offlinePpiGoodEpochCount = ppi247Autonomic?.goodEpochCount ?: offlineAutonomic?.goodEpochCount,
+            offlinePpiPoorEpochCount = ppi247Autonomic?.poorEpochCount ?: offlineAutonomic?.poorEpochCount,
+            offlinePpiCoverageHours = ppi247Autonomic?.coverageHours ?: offlineAutonomic?.coverageHours
         )
     }
 
@@ -1784,6 +1877,39 @@ class ProbeRepository(
         )
     }
 
+    private fun summarizePpi247ForSleepWindow(
+        sourceDate: String?,
+        sleepStartEpochMs: Long?,
+        sleepEndEpochMs: Long?,
+        epochs: List<Ppi247EpochEntity>
+    ): Ppi247WindowSummary? {
+        if (sleepStartEpochMs == null || sleepEndEpochMs == null || sleepEndEpochMs <= sleepStartEpochMs) return null
+        val windowEpochs = epochs
+            .asSequence()
+            .filter { epoch ->
+                epoch.epochStartEpochMs >= sleepStartEpochMs &&
+                    epoch.epochEndEpochMs <= sleepEndEpochMs &&
+                    (sourceDate == null || epoch.sourceDate == sourceDate || epoch.epochStartEpochMs >= sleepStartEpochMs)
+            }
+            .sortedBy { it.epochStartEpochMs }
+            .toList()
+        val goodEpochs = windowEpochs.filter { it.epochQuality == "good" && it.rmssdMs != null }
+        if (goodEpochs.size < 12) return null
+        val rmssdValues = goodEpochs.mapNotNull { it.rmssdMs }
+        val firstChunkSize = max(1, goodEpochs.size / 3)
+        val earlyAverage = goodEpochs.take(firstChunkSize).mapNotNull { it.rmssdMs }.averageOrNull()
+        val lateAverage = goodEpochs.takeLast(firstChunkSize).mapNotNull { it.rmssdMs }.averageOrNull()
+        return Ppi247WindowSummary(
+            averageRmssdMs = rmssdValues.average(),
+            minRmssdMs = rmssdValues.minOrNull(),
+            maxRmssdMs = rmssdValues.maxOrNull(),
+            goodEpochCount = goodEpochs.size,
+            poorEpochCount = windowEpochs.count { it.epochQuality.startsWith("poor") },
+            coverageHours = (goodEpochs.sumOf { (it.epochEndEpochMs - it.epochStartEpochMs).coerceAtLeast(0L) } / 3_600_000.0),
+            lateMinusEarlyRmssdMs = if (earlyAverage != null && lateAverage != null) lateAverage - earlyAverage else null
+        )
+    }
+
     private fun parsePolarDateTimeEpochMs(value: String): Long? =
         runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }
             .recoverCatching { LocalDateTime.parse(value).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() }
@@ -1794,6 +1920,7 @@ class ProbeRepository(
 
     private fun autonomicSourceLabel(source: String): String =
         when (source) {
+            "ppi247_sleep_window" -> "24/7 PPI"
             "offline_ppi_sleep_window" -> "Offline PPI"
             "nightly_recharge_summary" -> "Nightly Recharge"
             else -> "Overnight"
@@ -1855,6 +1982,16 @@ private data class OfflineRecordingDataSummary(
 )
 
 private data class OfflinePpiWindowSummary(
+    val averageRmssdMs: Double,
+    val minRmssdMs: Double?,
+    val maxRmssdMs: Double?,
+    val goodEpochCount: Int,
+    val poorEpochCount: Int,
+    val coverageHours: Double,
+    val lateMinusEarlyRmssdMs: Double?
+)
+
+private data class Ppi247WindowSummary(
     val averageRmssdMs: Double,
     val minRmssdMs: Double?,
     val maxRmssdMs: Double?,
