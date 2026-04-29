@@ -7,12 +7,6 @@ import com.daveharris.healthmonitor.polar.PolarProbeManager
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.polar.sdk.api.PolarBleApi
-import com.polar.sdk.api.model.PolarExerciseSession
-import com.polar.sdk.api.model.PolarHrData
-import com.polar.sdk.api.model.PolarOfflineRecordingData
-import com.polar.sdk.api.model.PolarOfflineRecordingEntry
-import com.polar.sdk.api.model.PolarOfflineRecordingResult
-import com.polar.sdk.api.model.PolarPpgData
 import com.polar.sdk.api.model.activity.Polar247HrSamplesData
 import com.polar.sdk.api.model.activity.Polar247PPiSamplesData
 import com.polar.sdk.api.model.activity.PolarActivitySamplesDayData
@@ -20,9 +14,6 @@ import com.polar.sdk.api.model.activity.PolarDailySummaryData
 import com.polar.sdk.api.model.sleep.PolarNightlyRechargeData
 import com.polar.sdk.api.model.sleep.PolarSleepData
 import com.polar.sdk.api.model.PolarSkinTemperatureData
-import com.polar.sdk.api.model.trainingsession.PolarTrainingSession
-import com.polar.sdk.api.model.trainingsession.PolarTrainingSessionFetchResult
-import com.polar.sdk.api.model.trainingsession.PolarTrainingSessionReference
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -42,10 +33,8 @@ import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
-import java.time.format.DateTimeFormatter
 import kotlin.math.max
 
-private val POLAR_TIMESTAMP_EPOCH: Instant = Instant.parse("2000-01-01T00:00:00Z")
 class ProbeRepository(
     private val database: AppDatabase,
     private val polarManager: PolarProbeManager
@@ -61,14 +50,12 @@ class ProbeRepository(
     val syncDomainResults = dao.observeSyncDomainResults()
     val inspectorRows = dao.observeInspectorRows()
     val appSettings = dao.observeAppSettings()
-    val latestOfflinePpiNightSummary = dao.observeLatestOfflinePpiNightSummary()
     val morningRead = combine(
         dao.observeLatestSleepRecord(),
         dao.observeLatestNightlyRechargeRecord(),
-        dao.observeRecentOfflinePpiEpochs(),
         dao.observeRecentPpi247Epochs()
-    ) { sleep, nightly, offlinePpiEpochs, ppi247Epochs ->
-        deriveMorningRead(sleep, nightly, offlinePpiEpochs, ppi247Epochs)
+    ) { sleep, nightly, ppi247Epochs ->
+        deriveMorningRead(sleep, nightly, ppi247Epochs)
     }
 
     suspend fun search(prefix: String? = "Polar"): List<com.polar.sdk.api.model.PolarDeviceInfo> {
@@ -287,449 +274,6 @@ class ProbeRepository(
         }
     }
 
-    suspend fun runTrainingSessionSmokeTest(
-        deviceId: String,
-        durationSeconds: Int = 300,
-        minimumBatteryPercent: Int = 20
-    ): Result<Long> = withContext(Dispatchers.IO) {
-        runCatching {
-            val normalizedDurationSeconds = durationSeconds.coerceIn(30, 900)
-            val runtime = runtimeState.value
-            val battery = runtime.batteryLevel
-            check(battery == null || battery >= minimumBatteryPercent) {
-                "Training smoke test blocked: Loop battery is $battery%, below the $minimumBatteryPercent% safety threshold."
-            }
-
-            val syncRunId = dao.insertSyncRun(
-                SyncRunEntity(
-                    deviceId = deviceId,
-                    firmwareVersion = runtime.firmwareVersion,
-                    appVersion = APP_VERSION,
-                    startedAtEpochMs = System.currentTimeMillis(),
-                    endedAtEpochMs = null,
-                    status = "running",
-                    notes = "training session smoke test"
-                )
-            )
-
-            val startedAt = System.currentTimeMillis()
-            var stopError: Throwable? = null
-            var startStatus: String? = null
-            var stopStatus: String? = null
-            val payload = linkedMapOf<String, Any?>(
-                "purpose" to "validation_only_training_session_smoke_test",
-                "deviceId" to deviceId,
-                "firmwareVersion" to runtime.firmwareVersion,
-                "startedAtEpochMs" to startedAt,
-                "requestedDurationSeconds" to normalizedDurationSeconds,
-                "minimumBatteryPercent" to minimumBatteryPercent,
-                "batteryAtStart" to battery,
-                "note" to "Checks whether manual training sessions expose RR/PPI-like intervals and whether normal Loop sync lanes still respond before/after."
-            )
-
-            try {
-                payload["preSessionDataSnapshot"] = collectDaytimeInterferenceSnapshot(deviceId)
-                startStatus = runCatching { polarManager.getExerciseStatus(deviceId).toString() }.getOrNull()
-                payload["exerciseStatusBeforeStart"] = startStatus
-
-                polarManager.startExercise(deviceId, PolarExerciseSession.SportProfile.OTHER_OUTDOOR)
-                payload["exerciseStartedAtEpochMs"] = System.currentTimeMillis()
-                delay(normalizedDurationSeconds * 1_000L)
-            } finally {
-                stopError = runCatching { polarManager.stopExercise(deviceId) }.exceptionOrNull()
-                payload["exerciseStoppedAtEpochMs"] = System.currentTimeMillis()
-                payload["stopError"] = stopError?.let { it.message ?: it.javaClass.simpleName }
-            }
-
-            delay(5_000)
-            stopStatus = runCatching { polarManager.getExerciseStatus(deviceId).toString() }.getOrNull()
-            payload["exerciseStatusAfterStop"] = stopStatus
-            payload["postSessionDataSnapshot"] = collectDaytimeInterferenceSnapshot(deviceId)
-
-            val today = LocalDate.now(ZoneOffset.UTC)
-            val references = polarManager.fetchTrainingSessionReferences(deviceId, today.minusDays(1), today)
-            val fetches = references.map { reference -> fetchTrainingSessionWithProgressSummary(deviceId, reference) }
-            val sessions = fetches.mapNotNull { it.session }
-            val sessionSummaries = sessions.map(::trainingSessionSummary)
-            val totalRrIntervals = sessionSummaries.sumOf { (it["rrIntervalCount"] as? Int) ?: 0 }
-            val totalHrSamples = sessionSummaries.sumOf { (it["heartRateSampleCount"] as? Int) ?: 0 }
-            payload["referenceCount"] = references.size
-            payload["references"] = references.map(::trainingReferenceSummary)
-            payload["fetchProgress"] = fetches.map { it.progressSummary }
-            payload["fetchedSessionCount"] = sessions.size
-            payload["sessions"] = sessionSummaries
-            payload["valueAssessment"] = mapOf(
-                "rrIntervalsPresent" to (totalRrIntervals > 0),
-                "heartRateSamplesPresent" to (totalHrSamples > 0),
-                "overnightCandidateIfRrPresent" to (totalRrIntervals > 0),
-                "normalDataInterferenceAssessment" to "daytime smoke only; can show sync lanes still respond, but cannot prove sleep/Nightly Recharge survives overnight training mode"
-            )
-
-            val shape = "refs=${references.size}, sessions=${sessions.size}, hrSamples=$totalHrSamples, rrIntervals=$totalRrIntervals"
-            dao.insertSyncDomainResult(
-                SyncDomainResultEntity(
-                    syncRunId = syncRunId,
-                    deviceId = deviceId,
-                    domain = ProbeDomain.TRAINING_SESSION_SMOKE.name,
-                    requestedRange = "duration=${normalizedDurationSeconds}s",
-                    status = if (totalRrIntervals > 0 || totalHrSamples > 0) ProbeStatus.SUPPORTED.name else ProbeStatus.EMPTY.name,
-                    recordCount = sessions.size,
-                    parserVersion = PARSER_VERSION,
-                    parseStatus = ProbeStatus.PARSED.name,
-                    detailSummary = shape,
-                    rawPayloadJson = GsonProvider.gson.toJson(payload),
-                    manualNotes = null,
-                    startedAtEpochMs = startedAt,
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    errorCode = null,
-                    errorMessage = stopError?.let { it.message ?: it.javaClass.simpleName }
-                )
-            )
-
-            dao.updateSyncRun(
-                requireNotNull(dao.getSyncRun(syncRunId)).copy(
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    status = if (stopError == null) "success" else "partial_failure",
-                    notes = "training smoke completed: $shape"
-                )
-            )
-            syncRunId
-        }
-    }
-
-    suspend fun startTrainingSessionSmoke(
-        deviceId: String,
-        minimumBatteryPercent: Int = 20
-    ): Result<Long> = withContext(Dispatchers.IO) {
-        runCatching {
-            val runtime = runtimeState.value
-            val battery = runtime.batteryLevel
-            check(battery == null || battery >= minimumBatteryPercent) {
-                "Training smoke test blocked: Loop battery is $battery%, below the $minimumBatteryPercent% safety threshold."
-            }
-            val syncRunId = dao.insertSyncRun(
-                SyncRunEntity(
-                    deviceId = deviceId,
-                    firmwareVersion = runtime.firmwareVersion,
-                    appVersion = APP_VERSION,
-                    startedAtEpochMs = System.currentTimeMillis(),
-                    endedAtEpochMs = null,
-                    status = "running",
-                    notes = "training session smoke start"
-                )
-            )
-            polarManager.startExercise(deviceId, PolarExerciseSession.SportProfile.OTHER_OUTDOOR)
-            dao.insertSyncDomainResult(
-                SyncDomainResultEntity(
-                    syncRunId = syncRunId,
-                    deviceId = deviceId,
-                    domain = ProbeDomain.TRAINING_SESSION_SMOKE.name,
-                    requestedRange = "manual_start",
-                    status = ProbeStatus.PARTIAL.name,
-                    recordCount = 0,
-                    parserVersion = PARSER_VERSION,
-                    parseStatus = ProbeStatus.RAW_ONLY.name,
-                    detailSummary = "started manual OTHER_OUTDOOR training smoke",
-                    rawPayloadJson = GsonProvider.gson.toJson(
-                        mapOf(
-                            "purpose" to "validation_only_training_session_smoke_start",
-                            "deviceId" to deviceId,
-                            "firmwareVersion" to runtime.firmwareVersion,
-                            "startedAtEpochMs" to System.currentTimeMillis(),
-                            "batteryAtStart" to battery,
-                            "minimumBatteryPercent" to minimumBatteryPercent
-                        )
-                    ),
-                    manualNotes = null,
-                    startedAtEpochMs = System.currentTimeMillis(),
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    errorCode = null,
-                    errorMessage = null
-                )
-            )
-            syncRunId
-        }
-    }
-
-    suspend fun stopAndFetchTrainingSessionSmoke(deviceId: String): Result<Long> = withContext(Dispatchers.IO) {
-        runCatching {
-            val runningRun = dao.getLatestRunningTrainingSmokeRun()
-            val syncRunId = runningRun?.id ?: dao.insertSyncRun(
-                SyncRunEntity(
-                    deviceId = deviceId,
-                    firmwareVersion = runtimeState.value.firmwareVersion,
-                    appVersion = APP_VERSION,
-                    startedAtEpochMs = System.currentTimeMillis(),
-                    endedAtEpochMs = null,
-                    status = "running",
-                    notes = "training session smoke stop/fetch"
-                )
-            )
-            val startedAt = System.currentTimeMillis()
-            val payload = linkedMapOf<String, Any?>(
-                "purpose" to "validation_only_training_session_smoke_stop_fetch",
-                "deviceId" to deviceId,
-                "firmwareVersion" to runtimeState.value.firmwareVersion,
-                "fetchStartedAtEpochMs" to startedAt,
-                "startedByRunId" to runningRun?.id,
-                "startedByRunStartedAtEpochMs" to runningRun?.startedAtEpochMs
-            )
-            val stopError = runCatching { polarManager.stopExercise(deviceId) }.exceptionOrNull()
-            payload["exerciseStoppedAtEpochMs"] = System.currentTimeMillis()
-            payload["stopError"] = stopError?.let { it.message ?: it.javaClass.simpleName }
-            delay(5_000)
-            payload["exerciseStatusAfterStop"] = runCatching { polarManager.getExerciseStatus(deviceId).toString() }.getOrNull()
-            payload["postSessionDataSnapshot"] = collectDaytimeInterferenceSnapshot(deviceId)
-
-            val today = LocalDate.now(ZoneOffset.UTC)
-            val references = polarManager.fetchTrainingSessionReferences(deviceId, today.minusDays(1), today)
-            val fetches = references.map { reference -> fetchTrainingSessionWithProgressSummary(deviceId, reference) }
-            val sessions = fetches.mapNotNull { it.session }
-            val sessionSummaries = sessions.map(::trainingSessionSummary)
-            val totalRrIntervals = sessionSummaries.sumOf { (it["rrIntervalCount"] as? Int) ?: 0 }
-            val totalHrSamples = sessionSummaries.sumOf { (it["heartRateSampleCount"] as? Int) ?: 0 }
-            payload["referenceCount"] = references.size
-            payload["references"] = references.map(::trainingReferenceSummary)
-            payload["fetchProgress"] = fetches.map { it.progressSummary }
-            payload["fetchedSessionCount"] = sessions.size
-            payload["sessions"] = sessionSummaries
-            payload["valueAssessment"] = mapOf(
-                "rrIntervalsPresent" to (totalRrIntervals > 0),
-                "heartRateSamplesPresent" to (totalHrSamples > 0),
-                "overnightCandidateIfRrPresent" to (totalRrIntervals > 0),
-                "normalDataInterferenceAssessment" to "post-stop daytime snapshot only; overnight sleep/Nightly Recharge impact still requires overnight validation"
-            )
-
-            val shape = "refs=${references.size}, sessions=${sessions.size}, hrSamples=$totalHrSamples, rrIntervals=$totalRrIntervals"
-            dao.insertSyncDomainResult(
-                SyncDomainResultEntity(
-                    syncRunId = syncRunId,
-                    deviceId = deviceId,
-                    domain = ProbeDomain.TRAINING_SESSION_SMOKE.name,
-                    requestedRange = "manual_stop_fetch",
-                    status = if (totalRrIntervals > 0 || totalHrSamples > 0) ProbeStatus.SUPPORTED.name else ProbeStatus.EMPTY.name,
-                    recordCount = sessions.size,
-                    parserVersion = PARSER_VERSION,
-                    parseStatus = ProbeStatus.PARSED.name,
-                    detailSummary = shape,
-                    rawPayloadJson = GsonProvider.gson.toJson(payload),
-                    manualNotes = null,
-                    startedAtEpochMs = startedAt,
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    errorCode = null,
-                    errorMessage = stopError?.let { it.message ?: it.javaClass.simpleName }
-                )
-            )
-            dao.updateSyncRun(
-                requireNotNull(dao.getSyncRun(syncRunId)).copy(
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    status = if (stopError == null) "success" else "partial_failure",
-                    notes = "training smoke stop/fetch completed: $shape"
-                )
-            )
-            syncRunId
-        }
-    }
-
-    suspend fun startNormalOfflineRecordingSmoke(
-        deviceId: String,
-        dataType: PolarBleApi.PolarDeviceDataType = PolarBleApi.PolarDeviceDataType.PPI,
-        minimumBatteryPercent: Int = 20
-    ): Result<Long> = withContext(Dispatchers.IO) {
-        runCatching {
-            val runtime = runtimeState.value
-            val battery = runtime.batteryLevel
-            check(battery == null || battery >= minimumBatteryPercent) {
-                "Offline recording smoke blocked: Loop battery is $battery%, below the $minimumBatteryPercent% safety threshold."
-            }
-            check(dataType != PolarBleApi.PolarDeviceDataType.PPG || battery == null || battery >= 35) {
-                "Offline PPG smoke blocked: Loop battery is $battery%, below the 35% safety threshold for heavier PPG recording."
-            }
-
-            val availableTypes = polarManager.getAvailableOfflineRecordingDataTypes(deviceId)
-            check(dataType in availableTypes) {
-                "Offline recording type ${dataType.name} is not available. Available: ${availableTypes.joinToString { it.name }}"
-            }
-            val offeredSettings = runCatching {
-                polarManager.requestOfflineRecordingSettings(deviceId, dataType)
-            }.getOrNull()
-            val activeBefore = runCatching { polarManager.getOfflineRecordingStatus(deviceId) }.getOrDefault(emptyList())
-            check(dataType !in activeBefore) {
-                "Offline ${dataType.name} recording is already active."
-            }
-
-            val syncRunId = dao.insertSyncRun(
-                SyncRunEntity(
-                    deviceId = deviceId,
-                    firmwareVersion = runtime.firmwareVersion,
-                    appVersion = APP_VERSION,
-                    startedAtEpochMs = System.currentTimeMillis(),
-                    endedAtEpochMs = null,
-                    status = "running",
-                    notes = "normal offline recording smoke start ${dataType.name}"
-                )
-            )
-            val startedAt = System.currentTimeMillis()
-            val preSnapshot = collectDaytimeInterferenceSnapshot(deviceId)
-
-            polarManager.startOfflineRecording(deviceId, dataType)
-            val activeAfter = runCatching { polarManager.getOfflineRecordingStatus(deviceId) }.getOrDefault(emptyList())
-            val payload = linkedMapOf<String, Any?>(
-                "purpose" to "validation_only_normal_mode_offline_recording_smoke_start",
-                "deviceId" to deviceId,
-                "dataType" to dataType.name,
-                "firmwareVersion" to runtime.firmwareVersion,
-                "startedAtEpochMs" to startedAt,
-                "batteryAtStart" to battery,
-                "minimumBatteryPercent" to minimumBatteryPercent,
-                "mode" to "normal_mode_no_sdk_mode",
-                "sdkModeUsed" to false,
-                "availableOfflineTypes" to availableTypes.map { it.name },
-                "requestedSettings" to offeredSettings?.let(::sensorSettingsSummary),
-                "activeRecordingsBeforeStart" to activeBefore.map { it.name },
-                "activeRecordingsAfterStart" to activeAfter.map { it.name },
-                "preStartNormalLaneSnapshot" to preSnapshot,
-                "note" to "Start only. Let this run for the intended duration, then call offline_stop_fetch. No SDK mode is enabled, so this tests whether normal Loop lanes can coexist with extra offline recording."
-            )
-            dao.insertSyncDomainResult(
-                SyncDomainResultEntity(
-                    syncRunId = syncRunId,
-                    deviceId = deviceId,
-                    domain = ProbeDomain.OFFLINE_RECORDING.name,
-                    requestedRange = "normal_mode_start:${dataType.name}",
-                    status = ProbeStatus.PARTIAL.name,
-                    recordCount = 0,
-                    parserVersion = PARSER_VERSION,
-                    parseStatus = ProbeStatus.RAW_ONLY.name,
-                    detailSummary = "started normal-mode offline ${dataType.name}",
-                    rawPayloadJson = GsonProvider.gson.toJson(payload),
-                    manualNotes = null,
-                    startedAtEpochMs = startedAt,
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    errorCode = null,
-                    errorMessage = null
-                )
-            )
-            syncRunId
-        }
-    }
-
-    suspend fun stopAndFetchNormalOfflineRecordingSmoke(
-        deviceId: String,
-        dataType: PolarBleApi.PolarDeviceDataType = PolarBleApi.PolarDeviceDataType.PPI
-    ): Result<Long> = withContext(Dispatchers.IO) {
-        runCatching {
-            val recentRunCutoffEpochMs = System.currentTimeMillis() - 36 * 60 * 60 * 1000L
-            val matchedRun = (
-                dao.getLatestRunningOfflineRecordingSmokeRunForType(dataType.name)
-                    ?: dao.getLatestOfflineRecordingSmokeRunForType(dataType.name)
-                )?.takeIf { it.startedAtEpochMs >= recentRunCutoffEpochMs }
-            val syncRunId = matchedRun?.id ?: dao.insertSyncRun(
-                SyncRunEntity(
-                    deviceId = deviceId,
-                    firmwareVersion = runtimeState.value.firmwareVersion,
-                    appVersion = APP_VERSION,
-                    startedAtEpochMs = System.currentTimeMillis(),
-                    endedAtEpochMs = null,
-                    status = "running",
-                    notes = "normal offline recording smoke stop/fetch ${dataType.name}"
-                )
-            )
-            val fetchStartedAt = System.currentTimeMillis()
-            val runStartedAt = matchedRun?.startedAtEpochMs ?: fetchStartedAt
-            val stopError = runCatching { polarManager.stopOfflineRecording(deviceId, dataType) }.exceptionOrNull()
-            delay(2_000)
-
-            val regularEntries = runCatching { polarManager.listOfflineRecordings(deviceId) }.getOrDefault(emptyList())
-            val splitEntries = runCatching { polarManager.listSplitOfflineRecordings(deviceId) }.getOrDefault(emptyList())
-            val candidateEntries = selectOfflineEntriesForRun(
-                dataType = dataType,
-                startedAtEpochMs = runStartedAt,
-                regularEntries = regularEntries,
-                splitEntries = splitEntries
-            )
-            val fetchedCandidates = candidateEntries.map { candidate ->
-                val result = when (candidate.kind) {
-                    "split" -> runCatching { polarManager.fetchSplitOfflineRecord(deviceId, candidate.entry) }
-                    else -> runCatching { polarManager.fetchOfflineRecord(deviceId, candidate.entry) }
-                }
-                OfflineFetchedCandidate(candidate.kind, candidate.entry, result)
-            }
-            val fetched = fetchedCandidates.map { candidate ->
-                offlineFetchSummary(candidate.kind, candidate.entry, candidate.result)
-            }
-            val totalSamples = fetched.sumOf { (it["sampleCount"] as? Int) ?: 0 }
-            val postSnapshot = collectDaytimeInterferenceSnapshot(deviceId)
-            val activeAfter = runCatching { polarManager.getOfflineRecordingStatus(deviceId) }.getOrDefault(emptyList())
-
-            val payload = linkedMapOf<String, Any?>(
-                "purpose" to "validation_only_normal_mode_offline_recording_smoke_stop_fetch",
-                "deviceId" to deviceId,
-                "dataType" to dataType.name,
-                "firmwareVersion" to runtimeState.value.firmwareVersion,
-                "startedByRunId" to matchedRun?.id,
-                "startedByRunStartedAtEpochMs" to matchedRun?.startedAtEpochMs,
-                "fetchStartedAtEpochMs" to fetchStartedAt,
-                "stopError" to stopError?.let { it.message ?: it.javaClass.simpleName },
-                "mode" to "normal_mode_no_sdk_mode",
-                "sdkModeUsed" to false,
-                "activeRecordingsAfterStop" to activeAfter.map { it.name },
-                "regularEntries" to regularEntries.map(::offlineEntrySummary),
-                "splitEntries" to splitEntries.map(::offlineEntrySummary),
-                "candidateEntries" to candidateEntries.map { offlineEntrySummary(it.entry) + ("recordingListKind" to it.kind) },
-                "fetchedRecords" to fetched,
-                "postStopNormalLaneSnapshot" to postSnapshot,
-                "coexistenceAssessment" to mapOf(
-                    "offlineSamplesPresent" to (totalSamples > 0),
-                    "normalHr247Responded" to ((postSnapshot["hr247"] as? Map<*, *>)?.get("status") == ProbeStatus.SUPPORTED.name),
-                    "normalPpi247Responded" to ((postSnapshot["ppi247"] as? Map<*, *>)?.get("status") == ProbeStatus.SUPPORTED.name),
-                    "normalSkinTemperatureResponded" to ((postSnapshot["skinTemperature"] as? Map<*, *>)?.get("status") == ProbeStatus.SUPPORTED.name),
-                    "overnightSleepImpactStillRequiresOvernightRun" to true
-                )
-            )
-            val shape = "type=${dataType.name}, candidates=${candidateEntries.size}, samples=$totalSamples"
-            val syncDomainResultId = dao.insertSyncDomainResult(
-                SyncDomainResultEntity(
-                    syncRunId = syncRunId,
-                    deviceId = deviceId,
-                    domain = ProbeDomain.OFFLINE_RECORDING.name,
-                    requestedRange = "normal_mode_stop_fetch:${dataType.name}",
-                    status = when {
-                        totalSamples > 0 -> ProbeStatus.SUPPORTED.name
-                        stopError != null -> ProbeStatus.PARTIAL.name
-                        else -> ProbeStatus.EMPTY.name
-                    },
-                    recordCount = candidateEntries.size,
-                    parserVersion = PARSER_VERSION,
-                    parseStatus = ProbeStatus.PARSED.name,
-                    detailSummary = shape,
-                    rawPayloadJson = GsonProvider.gson.toJson(payload),
-                    manualNotes = null,
-                    startedAtEpochMs = fetchStartedAt,
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    errorCode = null,
-                    errorMessage = stopError?.let { it.message ?: it.javaClass.simpleName }
-                )
-            )
-            persistOfflinePpiEpochs(
-                syncDomainResultId = syncDomainResultId,
-                syncRunId = syncRunId,
-                deviceId = deviceId,
-                dataType = dataType,
-                fetchedAtEpochMs = fetchStartedAt,
-                fetchedCandidates = fetchedCandidates
-            )
-            dao.updateSyncRun(
-                requireNotNull(dao.getSyncRun(syncRunId)).copy(
-                    endedAtEpochMs = System.currentTimeMillis(),
-                    status = if (stopError == null && totalSamples > 0) "success" else "partial_failure",
-                    notes = "normal offline recording smoke completed: $shape"
-                )
-            )
-            syncRunId
-        }
-    }
-
     private suspend fun <T> runWithinSyncSession(
         deviceId: String,
         sessionLabel: String,
@@ -756,320 +300,6 @@ class ProbeRepository(
         throw requireNotNull(lastError)
     }
 
-    private suspend fun collectDaytimeInterferenceSnapshot(deviceId: String): Map<String, Any?> {
-        val today = LocalDate.now(ZoneOffset.UTC)
-        val snapshot = linkedMapOf<String, Any?>(
-            "capturedAtEpochMs" to System.currentTimeMillis(),
-            "sourceDate" to today.toString()
-        )
-        return runCatching {
-            runWithinSyncSession(deviceId, "training_smoke_snapshot") {
-                val hr = runCatching { polarManager.fetch247Hr(deviceId, today, today) }
-                val ppi = runCatching { polarManager.fetch247Ppi(deviceId, today, today) }
-                val skinTemperature = runCatching { polarManager.fetchSkinTemperature(deviceId, today, today) }
-                val dailySummary = runCatching { polarManager.fetchDailySummary(deviceId, today, today) }
-                val activitySamples = runCatching { polarManager.fetchActivitySamples(deviceId, today, today) }
-
-                snapshot["hr247"] = laneSnapshot(hr, ::shapeForHr)
-                snapshot["ppi247"] = laneSnapshot(ppi, ::shapeForPpi)
-                snapshot["skinTemperature"] = laneSnapshot(skinTemperature, ::shapeForSkinTemperature)
-                snapshot["dailySummary"] = laneSnapshot(dailySummary, ::shapeForDailySummary)
-                snapshot["activitySamples"] = laneSnapshot(activitySamples, ::shapeForActivitySamples)
-                snapshot["respiration"] = mapOf(
-                    "availableInDaytimeBleSnapshot" to false,
-                    "note" to "Loop respiration is currently exposed through Nightly Recharge summaries, so daytime smoke testing cannot prove overnight respiration continuity."
-                )
-            }
-            snapshot
-        }.getOrElse { error ->
-            snapshot["snapshotError"] = error.message ?: error.javaClass.simpleName
-            snapshot
-        }
-    }
-
-    private fun <T> laneSnapshot(result: Result<List<T>>, shape: (List<T>) -> String): Map<String, Any?> =
-        result.fold(
-            onSuccess = {
-                mapOf(
-                    "status" to if (it.isEmpty()) ProbeStatus.EMPTY.name else ProbeStatus.SUPPORTED.name,
-                    "recordCount" to it.size,
-                    "shape" to shape(it)
-                )
-            },
-            onFailure = {
-                mapOf(
-                    "status" to ProbeStatus.ERROR.name,
-                    "error" to (it.message ?: it.javaClass.simpleName)
-                )
-            }
-        )
-
-    private fun sensorSettingsSummary(settings: com.polar.sdk.api.model.PolarSensorSetting): Map<String, Any?> =
-        settings.settings.entries.associate { (key, values) ->
-            key.name to values.sorted()
-        }
-
-    private fun offlineEntrySummary(entry: PolarOfflineRecordingEntry): Map<String, Any?> =
-        mapOf(
-            "path" to entry.path,
-            "size" to entry.size,
-            "date" to entry.date.toString(),
-            "type" to entry.type.name
-        )
-
-    private fun selectOfflineEntriesForRun(
-        dataType: PolarBleApi.PolarDeviceDataType,
-        startedAtEpochMs: Long,
-        regularEntries: List<PolarOfflineRecordingEntry>,
-        splitEntries: List<PolarOfflineRecordingEntry>
-    ): List<OfflineRecordingCandidate> {
-        val localStartedAt = LocalDateTime.ofInstant(
-            java.time.Instant.ofEpochMilli(startedAtEpochMs),
-            ZoneId.systemDefault()
-        ).minusMinutes(15)
-        val dateToken = DateTimeFormatter.BASIC_ISO_DATE.format(localStartedAt.toLocalDate())
-        fun isCandidate(entry: PolarOfflineRecordingEntry): Boolean {
-            return entry.type == dataType &&
-                (
-                    !entry.date.isBefore(localStartedAt) ||
-                        entry.path.contains(dateToken)
-                    )
-        }
-        val split = splitEntries.filter(::isCandidate).map { OfflineRecordingCandidate("split", it) }
-        val regular = regularEntries.filter(::isCandidate).map { OfflineRecordingCandidate("regular", it) }
-        return (split + regular)
-            .distinctBy { "${it.kind}:${it.entry.path}:${it.entry.size}" }
-            .sortedByDescending { it.entry.date }
-    }
-
-    private fun offlineFetchSummary(
-        kind: String,
-        entry: PolarOfflineRecordingEntry,
-        result: Result<PolarOfflineRecordingData>
-    ): Map<String, Any?> =
-        result.fold(
-            onSuccess = { data ->
-                val dataSummary = offlineRecordingDataSummary(data)
-                offlineEntrySummary(entry) + mapOf(
-                    "recordingListKind" to kind,
-                    "fetchStatus" to ProbeStatus.SUPPORTED.name,
-                    "dataClass" to data.javaClass.simpleName,
-                    "startTime" to data.startTime.toString(),
-                    "settings" to data.settings?.let(::sensorSettingsSummary),
-                    "sampleCount" to dataSummary.sampleCount,
-                    "samplePreview" to dataSummary.samplePreview,
-                    "samples" to dataSummary.samples,
-                    "payloadNotes" to dataSummary.notes
-                )
-            },
-            onFailure = { error ->
-                offlineEntrySummary(entry) + mapOf(
-                    "recordingListKind" to kind,
-                    "fetchStatus" to ProbeStatus.ERROR.name,
-                    "error" to (error.message ?: error.javaClass.simpleName)
-                )
-            }
-        )
-
-    private fun offlineRecordingDataSummary(data: PolarOfflineRecordingData): OfflineRecordingDataSummary =
-        when (data) {
-            is PolarOfflineRecordingData.PpiOfflineRecording -> OfflineRecordingDataSummary(
-                sampleCount = data.data.samples.size,
-                samplePreview = data.data.samples.take(20).map(::ppiSampleSummary),
-                samples = data.data.samples.map(::ppiSampleSummary),
-                notes = mapOf("primaryValue" to "ppi_ms", "hrvCandidate" to true)
-            )
-            is PolarOfflineRecordingData.PpgOfflineRecording -> OfflineRecordingDataSummary(
-                sampleCount = data.data.samples.size,
-                samplePreview = data.data.samples.take(10).map {
-                    mapOf(
-                        "timeStamp" to it.timeStamp,
-                        "channelSamples" to it.channelSamples,
-                        "statusBits" to it.statusBits
-                    )
-                },
-                samples = null,
-                notes = mapOf("primaryValue" to "raw_ppg_waveform", "requiresPostProcessingForHrv" to true, "ppgType" to data.data.type.name)
-            )
-            is PolarOfflineRecordingData.HrOfflineRecording -> OfflineRecordingDataSummary(
-                sampleCount = data.data.samples.size,
-                samplePreview = data.data.samples.take(20).map {
-                    mapOf(
-                        "hr" to it.hr,
-                        "correctedHr" to it.correctedHr,
-                        "ppgQuality" to it.ppgQuality,
-                        "rrsMs" to it.rrsMs,
-                        "rrAvailable" to it.rrAvailable,
-                        "contactStatus" to it.contactStatus
-                    )
-                },
-                samples = null,
-                notes = mapOf("primaryValue" to "heart_rate", "hrvCandidate" to data.data.samples.any { it.rrAvailable && it.rrsMs.isNotEmpty() })
-            )
-            is PolarOfflineRecordingData.AccOfflineRecording -> OfflineRecordingDataSummary(
-                sampleCount = data.data.samples.size,
-                samplePreview = data.data.samples.take(10).map { it.toString() },
-                samples = null,
-                notes = mapOf("primaryValue" to "accelerometer", "secondaryValue" to "artefact_and_motion_context")
-            )
-            is PolarOfflineRecordingData.SkinTemperatureOfflineRecording -> OfflineRecordingDataSummary(
-                sampleCount = data.data.samples.size,
-                samplePreview = data.data.samples.take(20).map {
-                    mapOf("timeStamp" to it.timeStamp, "temperature" to it.temperature)
-                },
-                samples = null,
-                notes = mapOf("primaryValue" to "skin_temperature", "secondaryValue" to "overnight_context_if_aligned")
-            )
-            else -> OfflineRecordingDataSummary(
-                sampleCount = 0,
-                samplePreview = listOf(data.toString().take(1_000)),
-                samples = null,
-                notes = mapOf("unsupportedSummaryType" to data.javaClass.name)
-            )
-        }
-
-    private suspend fun persistOfflinePpiEpochs(
-        syncDomainResultId: Long,
-        syncRunId: Long,
-        deviceId: String,
-        dataType: PolarBleApi.PolarDeviceDataType,
-        fetchedAtEpochMs: Long,
-        fetchedCandidates: List<OfflineFetchedCandidate>
-    ) {
-        if (dataType != PolarBleApi.PolarDeviceDataType.PPI) return
-
-        val sessions = mutableListOf<OfflineRecordingSessionEntity>()
-        val epochs = mutableListOf<OfflinePpiEpochEntity>()
-        fetchedCandidates.forEach { candidate ->
-            val data = candidate.result.getOrNull() as? PolarOfflineRecordingData.PpiOfflineRecording ?: return@forEach
-            val samples = data.data.samples
-            if (samples.isEmpty()) return@forEach
-
-            val sampleSummaries = samples.map { sample ->
-                OfflinePpiEpochBuilder.Sample(
-                    timestampEpochMs = polarTimestampToEpochMs(sample.timeStamp.toLong()),
-                    ppiMs = sample.ppi,
-                    errorEstimateMs = sample.errorEstimate,
-                    hrBpm = sample.hr,
-                    blockerBit = sample.blockerBit,
-                    skinContactStatus = sample.skinContactStatus
-                )
-            }.sortedBy { it.timestampEpochMs }
-            val usableCount = sampleSummaries.count { it.isUsable }
-            val recordingStart = sampleSummaries.firstOrNull()?.timestampEpochMs
-            val recordingEnd = sampleSummaries.lastOrNull()?.timestampEpochMs
-            sessions += OfflineRecordingSessionEntity(
-                recordingPath = candidate.entry.path,
-                syncDomainResultId = syncDomainResultId,
-                syncRunId = syncRunId,
-                deviceId = deviceId,
-                dataType = dataType.name,
-                recordingListKind = candidate.kind,
-                firmwareVersion = runtimeState.value.firmwareVersion,
-                recordingDateLocal = candidate.entry.date.toString(),
-                recordingStartEpochMs = recordingStart,
-                recordingEndEpochMs = recordingEnd,
-                fetchedAtEpochMs = fetchedAtEpochMs,
-                sampleCount = samples.size,
-                usableSampleCount = usableCount,
-                mode = "normal_mode_no_sdk_mode",
-                payloadSummaryJson = GsonProvider.gson.toJson(
-                    mapOf(
-                        "path" to candidate.entry.path,
-                        "size" to candidate.entry.size,
-                        "entryDate" to candidate.entry.date.toString(),
-                        "dataClass" to data.javaClass.simpleName,
-                        "startTime" to data.startTime.toString(),
-                        "settings" to data.settings?.let(::sensorSettingsSummary),
-                        "sampleCount" to samples.size,
-                        "usableSampleCount" to usableCount,
-                        "notes" to mapOf("primaryValue" to "ppi_ms", "derivedEpochMinutes" to OfflinePpiEpochBuilder.EPOCH_MINUTES)
-                    )
-                )
-            )
-            epochs += OfflinePpiEpochBuilder.derive(
-                recordingPath = candidate.entry.path,
-                syncDomainResultId = syncDomainResultId,
-                syncRunId = syncRunId,
-                deviceId = deviceId,
-                samples = sampleSummaries
-            )
-        }
-
-        if (sessions.isNotEmpty()) {
-            dao.upsertOfflineRecordingSessions(sessions)
-        }
-        if (epochs.isNotEmpty()) {
-            dao.upsertOfflinePpiEpochs(epochs)
-        }
-    }
-
-    private suspend fun persistOfflinePpiEpochsFromPayload(result: SyncDomainResultEntity, payload: String): Int {
-        val root = runCatching { GsonProvider.gson.fromJson(payload, JsonObject::class.java) }.getOrNull() ?: return 0
-        val fetchedRecords = root.getAsJsonArray("fetchedRecords") ?: return 0
-        val sessions = mutableListOf<OfflineRecordingSessionEntity>()
-        val epochs = mutableListOf<OfflinePpiEpochEntity>()
-        fetchedRecords
-            .mapNotNull { it.asJsonObjectOrNull() }
-            .filter { it.stringOrNull("type") == PolarBleApi.PolarDeviceDataType.PPI.name }
-            .forEach { record ->
-                val path = record.stringOrNull("path") ?: return@forEach
-                val samples = record.getAsJsonArray("samples")
-                    ?.mapNotNull { it.asJsonObjectOrNull()?.toOfflinePpiSampleForEpoch() }
-                    ?.sortedBy { it.timestampEpochMs }
-                    .orEmpty()
-                if (samples.isEmpty()) return@forEach
-
-                val usableCount = samples.count { it.isUsable }
-                sessions += OfflineRecordingSessionEntity(
-                    recordingPath = path,
-                    syncDomainResultId = result.id,
-                    syncRunId = result.syncRunId,
-                    deviceId = result.deviceId,
-                    dataType = PolarBleApi.PolarDeviceDataType.PPI.name,
-                    recordingListKind = record.stringOrNull("recordingListKind") ?: "unknown",
-                    firmwareVersion = root.stringOrNull("firmwareVersion"),
-                    recordingDateLocal = record.stringOrNull("date"),
-                    recordingStartEpochMs = samples.firstOrNull()?.timestampEpochMs,
-                    recordingEndEpochMs = samples.lastOrNull()?.timestampEpochMs,
-                    fetchedAtEpochMs = result.startedAtEpochMs,
-                    sampleCount = samples.size,
-                    usableSampleCount = usableCount,
-                    mode = root.stringOrNull("mode") ?: "unknown",
-                    payloadSummaryJson = GsonProvider.gson.toJson(
-                        mapOf(
-                            "path" to path,
-                            "size" to record.intOrNull("size"),
-                            "entryDate" to record.stringOrNull("date"),
-                            "dataClass" to record.stringOrNull("dataClass"),
-                            "startTime" to record.stringOrNull("startTime"),
-                            "sampleCount" to samples.size,
-                            "usableSampleCount" to usableCount,
-                            "backfilledFromSyncDomainResultId" to result.id,
-                            "notes" to mapOf("primaryValue" to "ppi_ms", "derivedEpochMinutes" to OfflinePpiEpochBuilder.EPOCH_MINUTES)
-                        )
-                    )
-                )
-                epochs += OfflinePpiEpochBuilder.derive(
-                    recordingPath = path,
-                    syncDomainResultId = result.id,
-                    syncRunId = result.syncRunId,
-                    deviceId = result.deviceId,
-                    samples = samples
-                )
-            }
-        if (sessions.isNotEmpty()) {
-            dao.upsertOfflineRecordingSessions(sessions)
-        }
-        if (epochs.isNotEmpty()) {
-            dao.upsertOfflinePpiEpochs(epochs)
-        }
-        return epochs.size
-    }
-
-    private fun polarTimestampToEpochMs(timestampNanosSince2000: Long): Long =
-        POLAR_TIMESTAMP_EPOCH.plusNanos(timestampNanosSince2000).toEpochMilli()
-
     private fun JsonElement.asJsonObjectOrNull(): JsonObject? =
         takeIf { it.isJsonObject }?.asJsonObject
 
@@ -1090,123 +320,6 @@ class ProbeRepository(
 
     private fun JsonObject.doubleOrNull(key: String): Double? =
         runCatching { get(key)?.takeUnless { it.isJsonNull }?.asDouble }.getOrNull()
-
-    private fun JsonObject.booleanOrNull(key: String): Boolean? =
-        get(key)?.takeUnless { it.isJsonNull }?.asBoolean
-
-    private fun JsonObject.toOfflinePpiSampleForEpoch(): OfflinePpiEpochBuilder.Sample? {
-        val timestampData = getAsJsonObject("timeStamp")
-            ?.get("data")
-            ?.takeUnless { it.isJsonNull }
-            ?.asLong
-            ?: return null
-        return OfflinePpiEpochBuilder.Sample(
-            timestampEpochMs = polarTimestampToEpochMs(timestampData),
-            ppiMs = intOrNull("ppi") ?: return null,
-            errorEstimateMs = intOrNull("errorEstimate") ?: Int.MAX_VALUE,
-            hrBpm = intOrNull("hr") ?: 0,
-            blockerBit = booleanOrNull("blockerBit") ?: false,
-            skinContactStatus = booleanOrNull("skinContactStatus") ?: false
-        )
-    }
-
-    private fun ppiSampleSummary(sample: com.polar.sdk.api.model.PolarPpiData.PolarPpiSample): Map<String, Any?> =
-        mapOf(
-            "ppi" to sample.ppi,
-            "errorEstimate" to sample.errorEstimate,
-            "hr" to sample.hr,
-            "blockerBit" to sample.blockerBit,
-            "skinContactStatus" to sample.skinContactStatus,
-            "skinContactSupported" to sample.skinContactSupported,
-            "timeStamp" to sample.timeStamp
-        )
-
-    private fun trainingReferenceSummary(reference: PolarTrainingSessionReference): Map<String, Any?> =
-        mapOf(
-            "date" to reference.date,
-            "path" to reference.path,
-            "fileSize" to reference.fileSize,
-            "trainingDataTypes" to reference.trainingDataTypes.map { it.name },
-            "exerciseCount" to reference.exercises.size,
-            "exercisePaths" to reference.exercises.map { it.path }
-        )
-
-    private suspend fun fetchTrainingSessionWithProgressSummary(
-        deviceId: String,
-        reference: PolarTrainingSessionReference
-    ): TrainingFetchSummary {
-        return runCatching {
-            val events = polarManager.fetchTrainingSessionWithProgress(deviceId, reference)
-            var session: PolarTrainingSession? = null
-            val progressEvents = events.mapNotNull { event ->
-                when (event) {
-                    is PolarTrainingSessionFetchResult.Progress -> mapOf(
-                        "totalBytes" to event.progress.totalBytes,
-                        "completedBytes" to event.progress.completedBytes,
-                        "progressPercent" to event.progress.progressPercent,
-                        "currentFileName" to event.progress.currentFileName
-                    )
-                    is PolarTrainingSessionFetchResult.Complete -> {
-                        session = event.session
-                        null
-                    }
-                }
-            }
-            TrainingFetchSummary(
-                session = session,
-                progressSummary = mapOf(
-                    "reference" to trainingReferenceSummary(reference),
-                    "status" to if (session != null) ProbeStatus.SUPPORTED.name else ProbeStatus.EMPTY.name,
-                    "eventCount" to events.size,
-                    "progressEventCount" to progressEvents.size,
-                    "firstProgress" to progressEvents.firstOrNull(),
-                    "lastProgress" to progressEvents.lastOrNull(),
-                    "allProgress" to progressEvents.take(20)
-                )
-            )
-        }.getOrElse { error ->
-            TrainingFetchSummary(
-                session = null,
-                progressSummary = mapOf(
-                    "reference" to trainingReferenceSummary(reference),
-                    "status" to ProbeStatus.ERROR.name,
-                    "error" to (error.message ?: error.javaClass.simpleName)
-                )
-            )
-        }
-    }
-
-    private fun trainingSessionSummary(session: PolarTrainingSession): Map<String, Any?> {
-        val exercises = session.exercises.map { exercise ->
-            val samples = exercise.samples
-            val advanced = exercise.samplesAdvanced
-            val rrIntervals = if (samples?.hasRrSamples() == true) samples.rrSamples.rrIntervalsList else emptyList()
-            mapOf(
-                "index" to exercise.index,
-                "path" to exercise.path,
-                "exerciseDataTypes" to exercise.exerciseDataTypes.map { it.name },
-                "fileSizes" to exercise.fileSizes,
-                "summaryText" to exercise.exerciseSummary?.toString()?.take(2_000),
-                "sampleSerializedSize" to samples?.serializedSize,
-                "advancedSampleSerializedSize" to advanced?.serializedSize,
-                "heartRateSampleCount" to (samples?.heartRateSamplesCount ?: 0),
-                "heartRateSamplesFirst20" to samples?.heartRateSamplesList.orEmpty().take(20),
-                "rrIntervalCount" to rrIntervals.size,
-                "rrIntervalsFirst20" to rrIntervals.take(20),
-                "temperatureSampleCount" to (samples?.temperatureSamplesCount ?: 0),
-                "bodyTemperatureSampleCount" to (samples?.bodyTemperatureCount ?: 0),
-                "intervalledSampleListCount" to (samples?.exerciseIntervalledSampleListCount ?: 0)
-            )
-        }
-        return mapOf(
-            "reference" to trainingReferenceSummary(session.reference),
-            "sessionSummaryText" to session.sessionSummary.toString().take(2_000),
-            "exerciseCount" to session.exercises.size,
-            "heartRateSampleCount" to exercises.sumOf { (it["heartRateSampleCount"] as? Int) ?: 0 },
-            "rrIntervalCount" to exercises.sumOf { (it["rrIntervalCount"] as? Int) ?: 0 },
-            "exercises" to exercises
-        )
-    }
 
     private suspend fun hasFirmwareChanged(deviceId: String, runtimeFirmware: String?): Boolean {
         val appSettings = dao.getAppSettings()
@@ -1323,22 +436,6 @@ class ProbeRepository(
                 )
             )
             throw error
-        }
-    }
-
-    suspend fun rebuildOfflinePpiEpochTables(): Result<Int> = withContext(Dispatchers.IO) {
-        runCatching {
-            val results = dao.getSupportedOfflinePpiResultSummaries()
-            var epochCount = 0
-            results.forEach { result ->
-                val payload = dao.getSyncDomainResultPayloadIfSmall(result.id)
-                if (payload == null) {
-                    // Android CursorWindow cannot safely hydrate very large legacy payload blobs.
-                    return@forEach
-                }
-                epochCount += persistOfflinePpiEpochsFromPayload(result, payload)
-            }
-            epochCount
         }
     }
 
@@ -1739,14 +836,13 @@ class ProbeRepository(
     private fun deriveMorningRead(
         sleepRow: SleepNightRawEntity?,
         nightlyRow: NightlyRechargeRawEntity?,
-        offlinePpiEpochs: List<OfflinePpiEpochEntity>,
         ppi247Epochs: List<Ppi247EpochEntity>
     ): MorningReadSnapshot? {
-        if (sleepRow == null && nightlyRow == null && offlinePpiEpochs.isEmpty() && ppi247Epochs.isEmpty()) return null
+        if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty()) return null
 
         val expectedSourceDate = LocalDate.now(ZoneId.systemDefault()).toString()
         if (sleepRow?.sourceDate != expectedSourceDate) {
-            val hasRawPpi = ppi247Epochs.isNotEmpty() || offlinePpiEpochs.isNotEmpty()
+            val hasRawPpi = ppi247Epochs.isNotEmpty()
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
                 status = null,
@@ -1792,7 +888,7 @@ class ProbeRepository(
             ?.asString
             ?.let(::parsePolarDateTimeEpochMs)
         if (durationMinutes == null || sleepStartEpochMs == null || sleepEndEpochMs == null) {
-            val hasRawPpi = ppi247Epochs.isNotEmpty() || offlinePpiEpochs.isNotEmpty()
+            val hasRawPpi = ppi247Epochs.isNotEmpty()
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
                 status = null,
@@ -1831,16 +927,9 @@ class ProbeRepository(
             sleepEndEpochMs = sleepEndEpochMs,
             epochs = ppi247Epochs
         )
-        val offlineAutonomic = summarizeOfflinePpiForSleepWindow(
-            sourceDate = sleepRow.sourceDate,
-            sleepStartEpochMs = sleepStartEpochMs,
-            sleepEndEpochMs = sleepEndEpochMs,
-            epochs = offlinePpiEpochs
-        )
-        val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: offlineAutonomic?.averageRmssdMs ?: rmssd
+        val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: rmssd
         val autonomicSource = when {
             ppi247Autonomic != null -> "ppi247_sleep_window"
-            offlineAutonomic != null -> "offline_ppi_sleep_window"
             nightlyRow != null -> "nightly_recharge_summary"
             else -> "sleep_context_only"
         }
@@ -1900,24 +989,6 @@ class ProbeRepository(
                 score -= 0.15
                 reasons += "24/7 PPI had some flagged contact/error windows."
             }
-        } else if (offlineAutonomic != null) {
-            reasons += "Offline PPI covered ${formatHours(offlineAutonomic.coverageHours)} of the resolved sleep window (${offlineAutonomic.goodEpochCount} good epochs)."
-            offlineAutonomic.lateMinusEarlyRmssdMs?.let { delta ->
-                when {
-                    delta >= 8.0 -> {
-                        score += 0.25
-                        reasons += "Overnight RMSSD rose toward morning."
-                    }
-                    delta <= -8.0 -> {
-                        score -= 0.35
-                        reasons += "Overnight RMSSD fell toward morning."
-                    }
-                }
-            }
-            if (offlineAutonomic.poorEpochCount > offlineAutonomic.goodEpochCount / 4) {
-                score -= 0.15
-                reasons += "Offline PPI had some flagged contact/error windows."
-            }
         } else if (sleepStartEpochMs != null && sleepEndEpochMs != null) {
             reasons += "No usable raw PPI overlapped the resolved sleep window."
         }
@@ -1935,10 +1006,10 @@ class ProbeRepository(
         } else {
             reasons += "Baseline history is not fully ready yet."
         }
-        if (ppi247Autonomic == null && offlineAutonomic == null && (!recoveryAvailable || !ansAvailable)) {
+        if (ppi247Autonomic == null && (!recoveryAvailable || !ansAvailable)) {
             score -= 0.15
             reasons += "Polar's higher-level overnight interpretation is still immature."
-        } else if ((ppi247Autonomic != null || offlineAutonomic != null) && (!recoveryAvailable || !ansAvailable)) {
+        } else if (ppi247Autonomic != null && (!recoveryAvailable || !ansAvailable)) {
             reasons += "Nightly Recharge interpretation is immature, but raw PPI is available."
         }
 
@@ -1951,8 +1022,6 @@ class ProbeRepository(
         val confidence = when {
             ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 48 && baselineReady -> "high"
             ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 12 -> "medium"
-            offlineAutonomic != null && offlineAutonomic.goodEpochCount >= 48 && baselineReady -> "high"
-            offlineAutonomic != null && offlineAutonomic.goodEpochCount >= 12 -> "medium"
             nightlyRow == null -> "low"
             !baselineReady || !recoveryAvailable || !ansAvailable -> "medium"
             else -> "high"
@@ -1977,42 +1046,9 @@ class ProbeRepository(
             reasons = reasons,
             isInterim = false,
             sleepDataReady = true,
-            offlinePpiGoodEpochCount = ppi247Autonomic?.goodEpochCount ?: offlineAutonomic?.goodEpochCount,
-            offlinePpiPoorEpochCount = ppi247Autonomic?.poorEpochCount ?: offlineAutonomic?.poorEpochCount,
-            offlinePpiCoverageHours = ppi247Autonomic?.coverageHours ?: offlineAutonomic?.coverageHours
-        )
-    }
-
-    private fun summarizeOfflinePpiForSleepWindow(
-        sourceDate: String?,
-        sleepStartEpochMs: Long?,
-        sleepEndEpochMs: Long?,
-        epochs: List<OfflinePpiEpochEntity>
-    ): OfflinePpiWindowSummary? {
-        if (sleepStartEpochMs == null || sleepEndEpochMs == null || sleepEndEpochMs <= sleepStartEpochMs) return null
-        val windowEpochs = epochs
-            .asSequence()
-            .filter { epoch ->
-                epoch.epochStartEpochMs >= sleepStartEpochMs &&
-                    epoch.epochEndEpochMs <= sleepEndEpochMs &&
-                    (sourceDate == null || epoch.sourceDate == sourceDate || epoch.epochStartEpochMs >= sleepStartEpochMs)
-            }
-            .sortedBy { it.epochStartEpochMs }
-            .toList()
-        val goodEpochs = windowEpochs.filter { it.epochQuality == "good" && it.rmssdMs != null }
-        if (goodEpochs.size < 12) return null
-        val rmssdValues = goodEpochs.mapNotNull { it.rmssdMs }
-        val firstChunkSize = max(1, goodEpochs.size / 3)
-        val earlyAverage = goodEpochs.take(firstChunkSize).mapNotNull { it.rmssdMs }.averageOrNull()
-        val lateAverage = goodEpochs.takeLast(firstChunkSize).mapNotNull { it.rmssdMs }.averageOrNull()
-        return OfflinePpiWindowSummary(
-            averageRmssdMs = rmssdValues.average(),
-            minRmssdMs = rmssdValues.minOrNull(),
-            maxRmssdMs = rmssdValues.maxOrNull(),
-            goodEpochCount = goodEpochs.size,
-            poorEpochCount = windowEpochs.count { it.epochQuality.startsWith("poor") },
-            coverageHours = (goodEpochs.sumOf { (it.epochEndEpochMs - it.epochStartEpochMs).coerceAtLeast(0L) } / 3_600_000.0),
-            lateMinusEarlyRmssdMs = if (earlyAverage != null && lateAverage != null) lateAverage - earlyAverage else null
+            rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
+            rawPpiPoorEpochCount = ppi247Autonomic?.poorEpochCount,
+            rawPpiCoverageHours = ppi247Autonomic?.coverageHours
         )
     }
 
@@ -2060,7 +1096,6 @@ class ProbeRepository(
     private fun autonomicSourceLabel(source: String): String =
         when (source) {
             "ppi247_sleep_window" -> "24/7 PPI"
-            "offline_ppi_sleep_window" -> "Offline PPI"
             "nightly_recharge_summary" -> "Nightly Recharge"
             else -> "Overnight"
         }
@@ -2095,39 +1130,6 @@ data class DomainPersistenceResult(
     val recordCount: Int,
     val shapeNotes: String,
     val rawPayloadJson: String
-)
-
-private data class TrainingFetchSummary(
-    val session: PolarTrainingSession?,
-    val progressSummary: Map<String, Any?>
-)
-
-private data class OfflineRecordingCandidate(
-    val kind: String,
-    val entry: PolarOfflineRecordingEntry
-)
-
-private data class OfflineFetchedCandidate(
-    val kind: String,
-    val entry: PolarOfflineRecordingEntry,
-    val result: Result<PolarOfflineRecordingData>
-)
-
-private data class OfflineRecordingDataSummary(
-    val sampleCount: Int,
-    val samplePreview: List<Any?>,
-    val samples: List<Any?>?,
-    val notes: Map<String, Any?>
-)
-
-private data class OfflinePpiWindowSummary(
-    val averageRmssdMs: Double,
-    val minRmssdMs: Double?,
-    val maxRmssdMs: Double?,
-    val goodEpochCount: Int,
-    val poorEpochCount: Int,
-    val coverageHours: Double,
-    val lateMinusEarlyRmssdMs: Double?
 )
 
 private data class Ppi247WindowSummary(

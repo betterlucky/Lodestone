@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.daveharris.healthmonitor.data.SyncWindowConfig
-import com.polar.sdk.api.PolarBleApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,16 +19,11 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         val app = context.applicationContext as HealthMonitorApp
         val command = intent.getStringExtra(EXTRA_COMMAND)?.lowercase().orEmpty()
         val deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)
-        val durationSeconds = intent.getIntExtra(EXTRA_DURATION_SECONDS, 300)
-        val offlineDataType = intent.getStringExtra(EXTRA_DATA_TYPE)
         val foodDate = intent.getStringExtra(EXTRA_FOOD_DATE)
 
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                executeCommand(app, command, deviceId, durationSeconds, offlineDataType, foodDate)
-                if (command == "offline_start" || command == "offline_stop_fetch") {
-                    OvernightPpiScheduler.rescheduleEnabled(app.applicationContext, command)
-                }
+                executeCommand(app, command, deviceId, foodDate)
                 Log.i(TAG, "Command '$command' completed for device=${deviceId ?: "selected"}")
             } catch (t: Throwable) {
                 Log.e(TAG, "Command '$command' failed: ${t.message}", t)
@@ -52,8 +46,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         app: HealthMonitorApp,
         command: String,
         deviceId: String?,
-        durationSeconds: Int,
-        offlineDataType: String?,
         foodDate: String?
     ) {
         val repository = app.container.repository
@@ -106,13 +98,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             return repository.runtimeState.value.connectedDevice?.deviceId ?: id
         }
 
-        fun parsedOfflineDataType(): PolarBleApi.PolarDeviceDataType =
-            offlineDataType
-                ?.trim()
-                ?.takeIf { it.isNotEmpty() }
-                ?.let { PolarBleApi.PolarDeviceDataType.valueOf(it.uppercase()) }
-                ?: PolarBleApi.PolarDeviceDataType.PPI
-
         when (command) {
             "scan" -> repository.search()
             "connect" -> {
@@ -146,40 +131,8 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 persistSelection(connectedId)
                 repository.runManualSync(connectedId, syncConfig).getOrThrow()
             }
-            "training_smoke" -> {
-                val id = requireNotNull(selectedDeviceId) { "training_smoke requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.runTrainingSessionSmokeTest(connectedId, durationSeconds).getOrThrow()
-            }
-            "training_start" -> {
-                val id = requireNotNull(selectedDeviceId) { "training_start requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.startTrainingSessionSmoke(connectedId).getOrThrow()
-            }
-            "training_stop_fetch" -> {
-                val id = requireNotNull(selectedDeviceId) { "training_stop_fetch requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.stopAndFetchTrainingSessionSmoke(connectedId).getOrThrow()
-            }
-            "offline_start" -> {
-                val id = requireNotNull(selectedDeviceId) { "offline_start requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.startNormalOfflineRecordingSmoke(connectedId, parsedOfflineDataType()).getOrThrow()
-            }
-            "offline_stop_fetch" -> {
-                val id = requireNotNull(selectedDeviceId) { "offline_stop_fetch requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.stopAndFetchNormalOfflineRecordingSmoke(connectedId, parsedOfflineDataType()).getOrThrow()
-                repository.runManualSync(connectedId, syncConfig).getOrThrow()
-                scheduleMorningReadCheckIfNeeded(app, connectedId)
-            }
-            "manual_awake_stop_fetch" -> {
-                val id = requireNotNull(selectedDeviceId) { "manual_awake_stop_fetch requires automation_device_id or selected device" }
+            "manual_awake_sync" -> {
+                val id = requireNotNull(selectedDeviceId) { "$command requires automation_device_id or selected device" }
                 val connectedId = connectAndAwait(id)
                 persistSelection(connectedId)
                 repository.recordWakeMarker(
@@ -187,7 +140,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                     deviceId = connectedId,
                     notes = "manual awake command"
                 )
-                repository.stopAndFetchNormalOfflineRecordingSmoke(connectedId, parsedOfflineDataType()).getOrThrow()
                 repository.runManualSync(connectedId, syncConfig).getOrThrow()
                 scheduleMorningReadCheckIfNeeded(app, connectedId)
             }
@@ -197,10 +149,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 persistSelection(connectedId)
                 repository.runManualSync(connectedId, syncConfig).getOrThrow()
                 scheduleMorningReadCheckIfNeeded(app, connectedId)
-            }
-            "offline_rebuild_epochs" -> {
-                val count = repository.rebuildOfflinePpiEpochTables().getOrThrow()
-                Log.i(TAG, "Rebuilt $count offline PPI epoch rows")
             }
             "ppi247_rebuild_epochs" -> {
                 val count = repository.rebuildPpi247EpochTables().getOrThrow()
@@ -232,8 +180,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         private const val TAG = "ProbeCommandReceiver"
         const val EXTRA_COMMAND = "probe_command"
         const val EXTRA_DEVICE_ID = "probe_device_id"
-        const val EXTRA_DURATION_SECONDS = "probe_duration_seconds"
-        const val EXTRA_DATA_TYPE = "probe_data_type"
         const val EXTRA_FOOD_DATE = "probe_food_date"
     }
 }

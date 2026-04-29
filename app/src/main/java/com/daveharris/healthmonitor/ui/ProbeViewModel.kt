@@ -12,7 +12,6 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewModelScope
 import com.daveharris.healthmonitor.HealthMonitorApp
 import com.daveharris.healthmonitor.MorningReadScheduler
-import com.daveharris.healthmonitor.OvernightPpiScheduler
 import com.daveharris.healthmonitor.data.DailyReviewRepository
 import com.daveharris.healthmonitor.data.DeviceProfileEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
@@ -23,7 +22,6 @@ import com.daveharris.healthmonitor.data.ProbeRepository
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
-import com.polar.sdk.api.PolarBleApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
@@ -33,8 +31,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.format.DateTimeParseException
 
 class ProbeViewModel(
     application: Application,
@@ -56,12 +52,6 @@ class ProbeViewModel(
     val foodDailySummaries = dailyReviewRepository.foodDailySummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    val latestOfflinePpiNightSummary = repository.latestOfflinePpiNightSummary.stateIn(
-        viewModelScope,
-        SharingStarted.WhileSubscribed(5_000),
-        null
-    )
-
     var isBusy by mutableStateOf(false)
         private set
     var statusMessage by mutableStateOf<String?>(null)
@@ -86,24 +76,10 @@ class ProbeViewModel(
         private set
     var currentDailyWeight by mutableStateOf<DailyWeightEntity?>(null)
         private set
-    var overnightStartTimeDraft by mutableStateOf("23:00")
-        private set
-    var overnightStopTimeDraft by mutableStateOf("10:30")
-        private set
-    var scheduledStartEnabled by mutableStateOf(false)
-        private set
-    var scheduledStopEnabled by mutableStateOf(false)
-        private set
-    var nextScheduledStartEpochMs by mutableStateOf<Long?>(null)
-        private set
-    var nextScheduledStopEpochMs by mutableStateOf<Long?>(null)
-        private set
     private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
-    private val overnightPrefs = application.getSharedPreferences("overnight_ppi", Context.MODE_PRIVATE)
 
     init {
-        loadOvernightSettings()
         viewModelScope.launch {
             repository.appSettings.filterNotNull().collect { settings ->
                 selectedDeviceId = selectedDeviceId ?: settings.selectedDeviceId
@@ -243,99 +219,31 @@ class ProbeViewModel(
         }
     }
 
-    fun startOvernightPpiNow() {
+    fun markAwakeAndSync() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
-            runBusyAction("Starting overnight PPI recording…") {
-                val connectedId = connectAndAwaitSelectedDevice(deviceId)
-                repository.startNormalOfflineRecordingSmoke(connectedId, PolarBleApi.PolarDeviceDataType.PPI).getOrThrow()
-                rollScheduledStartForward(connectedId)
-                statusMessage = "Overnight PPI recording started."
-            }
-        }
-    }
-
-    fun markAwakeAndFetchOvernightPpi() {
-        val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
-        viewModelScope.launch {
-            runBusyAction("Stopping overnight PPI and syncing…") {
+            runBusyAction("Recording wake time and syncing…") {
                 val connectedId = connectAndAwaitSelectedDevice(deviceId)
                 repository.recordWakeMarker(
                     sourceDate = LocalDate.now().toString(),
                     deviceId = connectedId,
                     notes = "I’m awake button"
                 )
-                repository.stopAndFetchNormalOfflineRecordingSmoke(connectedId, PolarBleApi.PolarDeviceDataType.PPI).getOrThrow()
                 repository.runManualSync(connectedId, syncWindowConfig).getOrThrow()
                 scheduleMorningReadCheckIfNeeded(connectedId)
                 persistAppSettings()
-                rollScheduledStopForward(connectedId)
-                statusMessage = "Awake recorded. PPI fetched and normal sync completed."
+                statusMessage = "Awake recorded. Normal sync completed."
             }
         }
     }
 
-    fun updateOvernightStartTime(value: String) {
-        overnightStartTimeDraft = value
-        saveOvernightPrefs()
-    }
-
-    fun updateOvernightStopTime(value: String) {
-        overnightStopTimeDraft = value
-        saveOvernightPrefs()
-    }
-
-    fun updateScheduledStartEnabled(enabled: Boolean) {
-        scheduledStartEnabled = enabled
-        if (enabled) {
-            scheduleStart()
-        } else {
-            OvernightPpiScheduler.cancelStart(getApplication())
-            nextScheduledStartEpochMs = null
-            saveOvernightPrefs()
-            statusMessage = "Scheduled PPI start disabled."
-        }
-    }
-
-    fun updateScheduledStopEnabled(enabled: Boolean) {
-        scheduledStopEnabled = enabled
-        if (enabled) {
-            scheduleStop()
-        } else {
-            OvernightPpiScheduler.cancelStop(getApplication())
-            nextScheduledStopEpochMs = null
-            saveOvernightPrefs()
-            statusMessage = "Scheduled PPI stop disabled."
-        }
-    }
-
-    fun scheduleStart() {
-        try {
-            val next = OvernightPpiScheduler.scheduleNextStart(getApplication(), overnightStartTimeDraft, selectedDeviceId)
-            scheduledStartEnabled = true
-            nextScheduledStartEpochMs = next
-            saveOvernightPrefs()
-            statusMessage = "Scheduled overnight PPI start."
-        } catch (error: DateTimeParseException) {
-            scheduledStartEnabled = false
-            nextScheduledStartEpochMs = null
-            saveOvernightPrefs()
-            statusMessage = "Use 24-hour time, for example 23:00."
-        }
-    }
-
-    fun scheduleStop() {
-        try {
-            val next = OvernightPpiScheduler.scheduleNextStop(getApplication(), overnightStopTimeDraft, selectedDeviceId)
-            scheduledStopEnabled = true
-            nextScheduledStopEpochMs = next
-            saveOvernightPrefs()
-            statusMessage = "Scheduled overnight PPI stop/fetch."
-        } catch (error: DateTimeParseException) {
-            scheduledStopEnabled = false
-            nextScheduledStopEpochMs = null
-            saveOvernightPrefs()
-            statusMessage = "Use 24-hour time, for example 10:30."
+    fun prepareForPolarFlowUpdate() {
+        val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
+        viewModelScope.launch {
+            runBusyAction("Releasing Loop connection for Polar Flow…") {
+                repository.disconnect(deviceId)
+                statusMessage = "Lodestone disconnected. Open Polar Flow, sync the Loop, close Flow, then return here and run sync."
+            }
         }
     }
 
@@ -500,52 +408,8 @@ class ProbeViewModel(
             "disconnect" -> disconnectSelectedDevice()
             "discover" -> discoverCapabilities()
             "sync" -> runManualSync()
-            "overnight_start" -> startOvernightPpiNow()
-            "overnight_awake" -> markAwakeAndFetchOvernightPpi()
+            "awake_sync" -> markAwakeAndSync()
         }
-    }
-
-    private fun loadOvernightSettings() {
-        overnightStartTimeDraft = overnightPrefs.getString("start_time", "23:00") ?: "23:00"
-        overnightStopTimeDraft = overnightPrefs.getString("stop_time", "10:30") ?: "10:30"
-        scheduledStartEnabled = overnightPrefs.getBoolean("start_enabled", false)
-        scheduledStopEnabled = overnightPrefs.getBoolean("stop_enabled", false)
-        nextScheduledStartEpochMs = overnightPrefs.getLong("next_start_epoch_ms", 0L).takeIf { it > 0L }
-        nextScheduledStopEpochMs = overnightPrefs.getLong("next_stop_epoch_ms", 0L).takeIf { it > 0L }
-    }
-
-    private fun saveOvernightPrefs() {
-        overnightPrefs.edit()
-            .putString("start_time", overnightStartTimeDraft)
-            .putString("stop_time", overnightStopTimeDraft)
-            .putString("device_id", selectedDeviceId)
-            .putBoolean("start_enabled", scheduledStartEnabled)
-            .putBoolean("stop_enabled", scheduledStopEnabled)
-            .putLong("next_start_epoch_ms", nextScheduledStartEpochMs ?: 0L)
-            .putLong("next_stop_epoch_ms", nextScheduledStopEpochMs ?: 0L)
-            .apply()
-    }
-
-    private fun rollScheduledStartForward(deviceId: String) {
-        if (!scheduledStartEnabled) return
-        nextScheduledStartEpochMs = OvernightPpiScheduler.scheduleNextStartAfter(
-            context = getApplication(),
-            timeText = overnightStartTimeDraft,
-            deviceId = deviceId,
-            earliest = LocalDateTime.now().plusHours(12)
-        )
-        saveOvernightPrefs()
-    }
-
-    private fun rollScheduledStopForward(deviceId: String) {
-        if (!scheduledStopEnabled) return
-        nextScheduledStopEpochMs = OvernightPpiScheduler.scheduleNextStopAfter(
-            context = getApplication(),
-            timeText = overnightStopTimeDraft,
-            deviceId = deviceId,
-            earliest = LocalDateTime.now().plusHours(12)
-        )
-        saveOvernightPrefs()
     }
 
     private suspend fun scheduleMorningReadCheckIfNeeded(deviceId: String) {

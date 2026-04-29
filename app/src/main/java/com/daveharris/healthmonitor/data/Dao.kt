@@ -56,12 +56,6 @@ interface ProbeDao {
     suspend fun deleteDailyWeightsForDates(sourceDates: List<String>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertOfflineRecordingSessions(entities: List<OfflineRecordingSessionEntity>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertOfflinePpiEpochs(entities: List<OfflinePpiEpochEntity>)
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPpi247Epochs(entities: List<Ppi247EpochEntity>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -166,49 +160,11 @@ interface ProbeDao {
     @Query("SELECT * FROM sync_run WHERE id = :id LIMIT 1")
     suspend fun getSyncRun(id: Long): SyncRunEntity?
 
-    @Query(
-        """
-        SELECT id, syncRunId, deviceId, domain, requestedRange, status, recordCount,
-               parserVersion, parseStatus, detailSummary, NULL AS rawPayloadJson,
-               manualNotes, startedAtEpochMs, endedAtEpochMs, errorCode, errorMessage
-        FROM sync_domain_result
-        WHERE domain = 'OFFLINE_RECORDING'
-          AND status = 'SUPPORTED'
-          AND detailSummary LIKE '%type=PPI%'
-          AND rawPayloadJson IS NOT NULL
-        ORDER BY startedAtEpochMs ASC
-        """
-    )
-    suspend fun getSupportedOfflinePpiResultSummaries(): List<SyncDomainResultEntity>
-
     @Query("SELECT LENGTH(rawPayloadJson) FROM sync_domain_result WHERE id = :id")
     suspend fun getSyncDomainResultPayloadLength(id: Long): Int?
 
     @Query("SELECT rawPayloadJson FROM sync_domain_result WHERE id = :id AND LENGTH(rawPayloadJson) <= :maxBytes")
     suspend fun getSyncDomainResultPayloadIfSmall(id: Long, maxBytes: Int = 1_500_000): String?
-
-    @Query("SELECT * FROM sync_run WHERE status = 'running' AND notes LIKE 'training session smoke%' ORDER BY startedAtEpochMs DESC LIMIT 1")
-    suspend fun getLatestRunningTrainingSmokeRun(): SyncRunEntity?
-
-    @Query("SELECT * FROM sync_run WHERE status = 'running' AND notes LIKE 'normal offline recording smoke%' ORDER BY startedAtEpochMs DESC LIMIT 1")
-    suspend fun getLatestRunningOfflineRecordingSmokeRun(): SyncRunEntity?
-
-    @Query("SELECT * FROM sync_run WHERE status = 'running' AND notes LIKE ('normal offline recording smoke start ' || :dataType) ORDER BY startedAtEpochMs DESC LIMIT 1")
-    suspend fun getLatestRunningOfflineRecordingSmokeRunForType(dataType: String): SyncRunEntity?
-
-    @Query(
-        """
-        SELECT * FROM sync_run
-        WHERE notes LIKE 'normal offline recording smoke%'
-          AND (
-              notes LIKE ('%start ' || :dataType)
-              OR notes LIKE ('%type=' || :dataType || '%')
-          )
-        ORDER BY startedAtEpochMs DESC
-        LIMIT 1
-        """
-    )
-    suspend fun getLatestOfflineRecordingSmokeRunForType(dataType: String): SyncRunEntity?
 
     @Query(
         """
@@ -232,29 +188,6 @@ interface ProbeDao {
 
     @Query("SELECT * FROM daily_weight ORDER BY sourceDate DESC")
     fun observeDailyWeights(): Flow<List<DailyWeightEntity>>
-
-    @Query(
-        """
-        SELECT sourceDate,
-               COUNT(*) AS epochCount,
-               SUM(sampleCount) AS sampleCount,
-               SUM(usableSampleCount) AS usableSampleCount,
-               AVG(rmssdMs) AS averageRmssdMs,
-               MAX(rmssdMs) AS maxRmssdMs,
-               AVG(meanHrBpm) AS averageHrBpm,
-               SUM(CASE WHEN epochQuality = 'good' THEN 1 ELSE 0 END) AS goodEpochCount,
-               SUM(CASE WHEN epochQuality = 'usable' THEN 1 ELSE 0 END) AS usableEpochCount,
-               SUM(CASE WHEN epochQuality = 'review' THEN 1 ELSE 0 END) AS reviewEpochCount,
-               SUM(CASE WHEN epochQuality LIKE 'poor%' THEN 1 ELSE 0 END) AS poorEpochCount,
-               MIN(epochStartEpochMs) AS firstEpochStartEpochMs,
-               MAX(epochEndEpochMs) AS lastEpochEndEpochMs
-        FROM offline_ppi_epoch
-        GROUP BY sourceDate
-        ORDER BY sourceDate DESC
-        LIMIT 1
-        """
-    )
-    fun observeLatestOfflinePpiNightSummary(): Flow<OfflinePpiNightSummary?>
 
     @Query("SELECT * FROM sleep_night_raw ORDER BY sourceDate DESC, syncTimestampEpochMs DESC LIMIT 1")
     fun observeLatestSleepRecord(): Flow<SleepNightRawEntity?>
@@ -392,9 +325,6 @@ interface ProbeDao {
     @Query("SELECT * FROM food_log_item WHERE sourceDate = :sourceDate ORDER BY timeLocal ASC, item ASC")
     suspend fun getFoodLogItemsForDate(sourceDate: String): List<FoodLogItemEntity>
 
-    @Query("SELECT * FROM offline_ppi_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
-    suspend fun getOfflinePpiEpochsForDate(sourceDate: String): List<OfflinePpiEpochEntity>
-
     @Query("SELECT * FROM ppi247_day_raw WHERE sourceDate IN (:sourceDates) ORDER BY sourceDate ASC, keySummary ASC")
     suspend fun getPpiRawRecordsForDates(sourceDates: List<String>): List<Ppi247DayRawEntity>
 
@@ -416,9 +346,6 @@ interface ProbeDao {
     @Query("SELECT * FROM ppi247_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
     suspend fun getPpi247EpochsForDate(sourceDate: String): List<Ppi247EpochEntity>
 
-    @Query("SELECT * FROM offline_ppi_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
-    fun observeRecentOfflinePpiEpochs(): Flow<List<OfflinePpiEpochEntity>>
-
     @Query("SELECT * FROM ppi247_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
     fun observeRecentPpi247Epochs(): Flow<List<Ppi247EpochEntity>>
 
@@ -434,20 +361,4 @@ data class InspectorRow(
     val parserVersion: Int,
     val parseStatus: String,
     val domain: String
-)
-
-data class OfflinePpiNightSummary(
-    val sourceDate: String,
-    val epochCount: Int,
-    val sampleCount: Int,
-    val usableSampleCount: Int,
-    val averageRmssdMs: Double?,
-    val maxRmssdMs: Double?,
-    val averageHrBpm: Double?,
-    val goodEpochCount: Int,
-    val usableEpochCount: Int,
-    val reviewEpochCount: Int,
-    val poorEpochCount: Int,
-    val firstEpochStartEpochMs: Long?,
-    val lastEpochEndEpochMs: Long?
 )

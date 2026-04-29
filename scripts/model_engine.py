@@ -729,12 +729,6 @@ def build_model_package(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "agreement_count": agreement_count,
         },
         "evening_feedback": build_evening_feedback(rows, source_date),
-        "offline_ppi_probe_result": {
-            "status": "not_run",
-            "purpose": "validation_only",
-        },
-        "offline_ppi_available": None,
-        "offline_ppi_overnight_alignment": None,
         "metadata_only": {
             "sleep_goal_minutes": (lanes["raw_sleep_and_context_lane"].get("sleep_structure") or {}).get("sleep_goal_minutes"),
         },

@@ -23,7 +23,7 @@ class ExportManager(private val context: Context) {
             stream.writer(Charsets.UTF_8).use { writer ->
                 GsonProvider.gson.toJson(rows, writer)
             }
-            stream.fd.sync()
+            runCatching { stream.fd.sync() }
         }
         if (!tempFile.renameTo(file)) {
             error("Failed to promote temporary export file to ${file.absolutePath}")

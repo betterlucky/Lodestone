@@ -7,6 +7,9 @@ import kotlin.math.sqrt
 object Ppi247EpochBuilder {
     const val EPOCH_MINUTES = 5L
     const val MIN_USABLE_SAMPLES_PER_EPOCH = 120
+    const val MIN_PPI_MS = 300
+    const val MAX_PPI_MS = 2_000
+    const val MAX_ERROR_ESTIMATE_MS = 50
 
     data class Sample(
         val timestampEpochMs: Long,
@@ -19,10 +22,10 @@ object Ppi247EpochBuilder {
         val triggerType: String
     ) {
         val isUsable: Boolean
-            get() = ppiMs in OfflinePpiEpochBuilder.MIN_PPI_MS..OfflinePpiEpochBuilder.MAX_PPI_MS &&
+            get() = ppiMs in MIN_PPI_MS..MAX_PPI_MS &&
                 skinContactDetected &&
                 intervalOnline &&
-                errorEstimateMs <= OfflinePpiEpochBuilder.MAX_ERROR_ESTIMATE_MS
+                errorEstimateMs <= MAX_ERROR_ESTIMATE_MS
     }
 
     fun derive(samples: List<Sample>, updatedAtEpochMs: Long): List<Ppi247EpochEntity> {
@@ -55,9 +58,9 @@ object Ppi247EpochBuilder {
                     skinContactFalseCount = epochSamples.count { !it.skinContactDetected },
                     movementDetectedCount = epochSamples.count { it.movementDetected },
                     offlineIntervalCount = epochSamples.count { !it.intervalOnline },
-                    highErrorCount = epochSamples.count { it.errorEstimateMs > OfflinePpiEpochBuilder.MAX_ERROR_ESTIMATE_MS },
-                    ppiLowCount = epochSamples.count { it.ppiMs < OfflinePpiEpochBuilder.MIN_PPI_MS },
-                    ppiHighCount = epochSamples.count { it.ppiMs > OfflinePpiEpochBuilder.MAX_PPI_MS },
+                    highErrorCount = epochSamples.count { it.errorEstimateMs > MAX_ERROR_ESTIMATE_MS },
+                    ppiLowCount = epochSamples.count { it.ppiMs < MIN_PPI_MS },
+                    ppiHighCount = epochSamples.count { it.ppiMs > MAX_PPI_MS },
                     meanPpiMs = averageOrNull(ppis),
                     medianPpiMs = percentile(ppis, 0.50),
                     ppiP10Ms = percentile(ppis, 0.10),

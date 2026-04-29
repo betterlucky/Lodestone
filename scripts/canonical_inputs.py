@@ -211,9 +211,6 @@ def main() -> None:
         "morning_prediction": model_package.get("morning_prediction"),
         "comparison_summary": model_package.get("comparison_summary"),
         "evening_feedback": model_package.get("evening_feedback"),
-        "offline_ppi_probe_result": model_package.get("offline_ppi_probe_result"),
-        "offline_ppi_available": model_package.get("offline_ppi_available"),
-        "offline_ppi_overnight_alignment": model_package.get("offline_ppi_overnight_alignment"),
         "garmin_overnight_comparison_lane": garmin_lane,
         "metadata_only": model_package.get("metadata_only"),
     }

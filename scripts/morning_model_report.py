@@ -76,11 +76,6 @@ def main() -> None:
         print(f"  outcome: {feedback.get('evening_outcome')}")
         print(f"  approach: {feedback.get('approach_to_day') or 'skipped'}")
     print()
-    print("Offline PPI probe")
-    probe = canonical.get("offline_ppi_probe_result") or {}
-    print(f"  status: {probe.get('status')}")
-    print(f"  purpose: {probe.get('purpose')}")
-    print()
     print("Garmin comparison lane")
     if garmin_lane.get("available"):
         sleep_window = garmin_lane.get("sleep_window") or {}

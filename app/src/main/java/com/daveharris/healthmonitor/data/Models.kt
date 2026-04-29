@@ -9,9 +9,7 @@ enum class ProbeDomain(val label: String) {
     PPI_247("24/7 PPi"),
     SKIN_TEMPERATURE("Skin temperature"),
     DAILY_SUMMARY("Daily summary"),
-    ACTIVITY_SAMPLES("Activity samples"),
-    OFFLINE_RECORDING("Offline recording"),
-    TRAINING_SESSION_SMOKE("Training session smoke test")
+    ACTIVITY_SAMPLES("Activity samples")
 }
 
 enum class ProbeStatus {
@@ -54,9 +52,9 @@ data class MorningReadSnapshot(
     val reasons: List<String>,
     val isInterim: Boolean = false,
     val sleepDataReady: Boolean = !isInterim && sleepDurationMinutes != null,
-    val offlinePpiGoodEpochCount: Int? = null,
-    val offlinePpiPoorEpochCount: Int? = null,
-    val offlinePpiCoverageHours: Double? = null
+    val rawPpiGoodEpochCount: Int? = null,
+    val rawPpiPoorEpochCount: Int? = null,
+    val rawPpiCoverageHours: Double? = null
 )
 
 enum class TrafficLightStatus {

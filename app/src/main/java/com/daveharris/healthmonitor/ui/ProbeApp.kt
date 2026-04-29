@@ -75,9 +75,6 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.FtuProfileEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ObservedCapabilityEntity
-import com.daveharris.healthmonitor.data.OfflinePpiNightSummary
-import com.daveharris.healthmonitor.data.SyncDomainResultEntity
-import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.model.PolarDeviceInfo
@@ -88,7 +85,7 @@ import java.time.format.DateTimeFormatter
 
 private enum class ProbeTab(val title: String) {
     DEVICE("Device"),
-    OVERNIGHT("Overnight"),
+    DATA("Data"),
     FEEDBACK("Review")
 }
 
@@ -104,12 +101,9 @@ fun ProbeApp(
     val deviceProfile by viewModel.deviceProfile.collectAsState()
     val ftuProfile by viewModel.ftuProfile.collectAsState()
     val capabilities by viewModel.observedCapabilities.collectAsState()
-    val syncRuns by viewModel.syncRuns.collectAsState()
-    val syncDomainResults by viewModel.syncDomainResults.collectAsState()
     val appSettings by viewModel.appSettings.collectAsState()
     val dailyCheckIns by viewModel.dailyCheckIns.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
-    val latestOfflinePpiNightSummary by viewModel.latestOfflinePpiNightSummary.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -149,7 +143,7 @@ fun ProbeApp(
                                 icon = {
                                     when (tab) {
                                         ProbeTab.DEVICE -> Icon(Icons.Outlined.Bluetooth, contentDescription = null)
-                                        ProbeTab.OVERNIGHT -> Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                        ProbeTab.DATA -> Icon(Icons.Outlined.Refresh, contentDescription = null)
                                         ProbeTab.FEEDBACK -> Icon(Icons.Outlined.Refresh, contentDescription = null)
                                     }
                                 },
@@ -175,18 +169,15 @@ fun ProbeApp(
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
                             viewModel = viewModel
                         )
-                        ProbeTab.OVERNIGHT -> OvernightScreen(
+                        ProbeTab.DATA -> DataScreen(
                             padding = padding,
                             runtime = runtime,
-                            syncRuns = syncRuns,
-                            syncDomainResults = syncDomainResults,
-                            latestPpiNightSummary = latestOfflinePpiNightSummary,
+                            morningRead = morningRead,
                             viewModel = viewModel
                         )
                         ProbeTab.FEEDBACK -> FeedbackScreen(
                             padding = padding,
                             morningRead = morningRead,
-                            latestPpiNightSummary = latestOfflinePpiNightSummary,
                             dailyCheckIns = dailyCheckIns,
                             viewModel = viewModel,
                             onImportFoodCsv = onImportFoodCsv
@@ -333,25 +324,12 @@ private fun DeviceScreen(
 }
 
 @Composable
-private fun OvernightScreen(
+private fun DataScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
-    syncRuns: List<SyncRunEntity>,
-    syncDomainResults: List<SyncDomainResultEntity>,
-    latestPpiNightSummary: OfflinePpiNightSummary?,
+    morningRead: MorningReadSnapshot?,
     viewModel: ProbeViewModel
 ) {
-    val latestOffline = syncDomainResults.firstOrNull { it.domain == "OFFLINE_RECORDING" }
-    val latestStart = syncRuns
-        .filter { it.notes?.contains("normal offline recording smoke start PPI") == true }
-        .maxByOrNull { it.startedAtEpochMs }
-    val latestCompleted = syncRuns
-        .filter { it.notes?.contains("normal offline recording smoke completed: type=PPI") == true }
-        .maxByOrNull { it.endedAtEpochMs ?: it.startedAtEpochMs }
-    val likelyRunning = latestStart != null &&
-        latestStart.status == "running" &&
-        (latestCompleted?.endedAtEpochMs ?: 0L) < latestStart.startedAtEpochMs
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -361,26 +339,21 @@ private fun OvernightScreen(
     ) {
         item {
             HeroCard(
-                title = "Overnight PPI",
-                subtitle = "Record raw overnight pulse intervals while keeping the normal Loop sleep and Nightly Recharge path.",
-                eyebrow = "Raw HRV"
+                title = "Data status",
+                subtitle = "Normal Loop sync now provides the raw PPI lane. Use Flow only when Polar has not released sleep-derived data yet.",
+                eyebrow = "Morning"
             )
         }
         item {
-            SectionCard(title = "Tonight", subtitle = "Manual controls") {
-                SupportText("Use Start when you want to begin recording. Use I’m Awake to stop, fetch PPI, and run the normal morning sync.")
+            SectionCard(title = "Morning sync", subtitle = "User-controlled wake flow") {
+                SupportText("Use I’m awake when you are ready to mark the day and run the normal Lodestone sync. If Polar has not released the sleep window yet, Lodestone will keep checking.")
                 DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
                 DetailRow("Connection", if (runtime.connectedDevice != null) "Live" else "Not connected")
-                DetailRow("Likely recording", if (likelyRunning) "Yes" else "No")
+                DetailRow("Sleep report", if (morningRead?.sleepDataReady == true) "Present" else "Waiting")
+                DetailRow("Autonomic source", morningRead?.overnightAutonomicSource ?: "none")
                 ButtonRow {
                     Button(
-                        onClick = viewModel::startOvernightPpiNow,
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("Start PPI now")
-                    }
-                    Button(
-                        onClick = viewModel::markAwakeAndFetchOvernightPpi,
+                        onClick = viewModel::markAwakeAndSync,
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
                     ) {
                         Text("I’m awake")
@@ -389,76 +362,35 @@ private fun OvernightScreen(
             }
         }
         item {
-            SectionCard(title = "Scheduled start", subtitle = "Optional broad-window trigger") {
-                SupportText("Use 24-hour local time. Android may run this within a short window rather than exactly on the minute.")
-                OutlinedTextField(
-                    value = viewModel.overnightStartTimeDraft,
-                    onValueChange = viewModel::updateOvernightStartTime,
-                    label = { Text("Start time") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                DetailRow("Enabled", if (viewModel.scheduledStartEnabled) "Yes" else "No")
-                DetailRow("Next start", viewModel.nextScheduledStartEpochMs?.let(::formatEpochMs) ?: "not scheduled")
+            SectionCard(title = "Polar Flow update", subtitle = "When sleep-derived data is stuck") {
+                SupportText("Flow appears to help finalise the sleep report. This is a guided fallback, not the normal data path.")
                 ButtonRow {
                     Button(
-                        onClick = { viewModel.updateScheduledStartEnabled(true) },
+                        onClick = viewModel::prepareForPolarFlowUpdate,
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
                     ) {
-                        Text("Enable start")
-                    }
-                    OutlinedButton(onClick = { viewModel.updateScheduledStartEnabled(false) }, enabled = !viewModel.isBusy) {
-                        Text("Disable start")
+                        Text("Prepare for Flow")
                     }
                 }
+                SupportText("Steps: tap Prepare, open Polar Flow and sync, close Flow, return here, then run Lodestone sync.")
             }
         }
         item {
-            SectionCard(title = "Scheduled stop", subtitle = "Optional automatic morning fetch") {
-                SupportText("This is useful for routine nights. If your sleep is irregular, leave this off and use I’m Awake instead.")
-                OutlinedTextField(
-                    value = viewModel.overnightStopTimeDraft,
-                    onValueChange = viewModel::updateOvernightStopTime,
-                    label = { Text("Stop/fetch time") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                DetailRow("Enabled", if (viewModel.scheduledStopEnabled) "Yes" else "No")
-                DetailRow("Next stop", viewModel.nextScheduledStopEpochMs?.let(::formatEpochMs) ?: "not scheduled")
+            SectionCard(title = "Raw PPI coverage", subtitle = "Normal sync-derived HRV lane") {
+                val goodEpochs = morningRead?.rawPpiGoodEpochCount
+                if (goodEpochs == null) {
+                    SupportText("Raw PPI is stored from normal sync, but there is no resolved sleep-window alignment for today yet.")
+                } else {
+                    DetailRow("Good epochs", goodEpochs.toString())
+                    DetailRow("Coverage", morningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
+                    if ((morningRead.rawPpiPoorEpochCount ?: 0) > 0) {
+                        DetailRow("Flagged windows", morningRead.rawPpiPoorEpochCount.toString())
+                    }
+                }
                 ButtonRow {
-                    Button(
-                        onClick = { viewModel.updateScheduledStopEnabled(true) },
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("Enable stop")
+                    OutlinedButton(onClick = viewModel::runManualSync, enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null) {
+                        Text("Run sync")
                     }
-                    OutlinedButton(onClick = { viewModel.updateScheduledStopEnabled(false) }, enabled = !viewModel.isBusy) {
-                        Text("Disable stop")
-                    }
-                }
-            }
-        }
-        item {
-            SectionCard(title = "Latest PPI result", subtitle = "Most recent offline recording outcome") {
-                if (latestOffline == null) {
-                    SupportText("No offline PPI result has been recorded yet.")
-                } else {
-                    DetailRow("Status", latestOffline.status)
-                    DetailRow("Requested", latestOffline.requestedRange)
-                    DetailRow("Records", latestOffline.recordCount.toString())
-                    DetailRow("Details", latestOffline.detailSummary)
-                    if (!latestOffline.errorMessage.isNullOrBlank()) {
-                        DetailRow("Error", latestOffline.errorMessage)
-                    }
-                }
-            }
-        }
-        item {
-            SectionCard(title = "Latest overnight PPI summary", subtitle = "5-minute raw-PPI trajectory rollup") {
-                if (latestPpiNightSummary == null) {
-                    SupportText("No normalized overnight PPI epochs are available yet.")
-                } else {
-                    OfflinePpiSummaryCard(latestPpiNightSummary)
                 }
             }
         }
@@ -470,7 +402,6 @@ private fun OvernightScreen(
 private fun FeedbackScreen(
     padding: PaddingValues,
     morningRead: MorningReadSnapshot?,
-    latestPpiNightSummary: OfflinePpiNightSummary?,
     dailyCheckIns: List<DailyCheckInEntity>,
     viewModel: ProbeViewModel,
     onImportFoodCsv: () -> Unit
@@ -492,8 +423,7 @@ private fun FeedbackScreen(
         item {
             SectionCard(title = "Today's note", subtitle = "Morning context") {
                 MorningDataQualityCard(
-                    morningRead = morningRead,
-                    latestPpiNightSummary = latestPpiNightSummary
+                    morningRead = morningRead
                 )
                 if (morningRead != null) {
                     MorningReadCard(morningRead)
@@ -812,8 +742,7 @@ private fun DataCard(
 
 @Composable
 private fun MorningDataQualityCard(
-    morningRead: MorningReadSnapshot?,
-    latestPpiNightSummary: OfflinePpiNightSummary?
+    morningRead: MorningReadSnapshot?
 ) {
     val ready = morningRead != null && !morningRead.isInterim
     val tone = when {
@@ -854,24 +783,23 @@ private fun MorningDataQualityCard(
             DetailRow("Sleep report", if (morningRead?.sleepDataReady == true) "Present" else "Waiting")
             DetailRow("Autonomic lane", morningRead?.overnightAutonomicSource ?: "none")
             val ppiQuality = when {
-                morningRead?.offlinePpiGoodEpochCount != null -> {
-                    val coverage = morningRead.offlinePpiCoverageHours?.let {
+                morningRead?.rawPpiGoodEpochCount != null -> {
+                    val coverage = morningRead.rawPpiCoverageHours?.let {
                         String.format(java.util.Locale.UK, ", %.1fh", it)
                     }.orEmpty()
-                    "${morningRead.offlinePpiGoodEpochCount} good epochs$coverage"
+                    "${morningRead.rawPpiGoodEpochCount} good epochs$coverage"
                 }
-                latestPpiNightSummary != null -> "Recorded, waiting for sleep-window alignment"
                 else -> "No raw PPI yet"
             }
             DetailRow("Raw PPI", ppiQuality)
-            if ((morningRead?.offlinePpiPoorEpochCount ?: 0) > 0) {
-                DetailRow("Flagged PPI windows", morningRead?.offlinePpiPoorEpochCount.toString())
+            if ((morningRead?.rawPpiPoorEpochCount ?: 0) > 0) {
+                DetailRow("Flagged PPI windows", morningRead?.rawPpiPoorEpochCount.toString())
             }
             SupportText(
                 when {
                     ready -> "Ready to use for today’s provisional guidance."
                     morningRead?.isInterim == true -> "The app will keep checking until Polar releases the sleep report."
-                    else -> "Run sync or stop/fetch overnight PPI to populate today’s read."
+                    else -> "Run sync to populate today’s read."
                 }
             )
         }
@@ -950,36 +878,6 @@ private fun FoodSummaryCard(
             if (weight != null) {
                 DetailRow("Weight", String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg))
             }
-        }
-    }
-}
-
-@Composable
-private fun OfflinePpiSummaryCard(summary: OfflinePpiNightSummary) {
-    val usablePercent = if (summary.sampleCount > 0) {
-        (summary.usableSampleCount.toDouble() / summary.sampleCount.toDouble()) * 100.0
-    } else {
-        null
-    }
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.34f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
-    ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(summary.sourceDate, fontWeight = FontWeight.SemiBold)
-            DetailRow("Window", "${summary.firstEpochStartEpochMs?.let(::formatTimeOnly) ?: "?"} → ${summary.lastEpochEndEpochMs?.let(::formatTimeOnly) ?: "?"}")
-            DetailRow("Epochs", summary.epochCount.toString())
-            DetailRow("Usable beats", "${summary.usableSampleCount} / ${summary.sampleCount}${usablePercent?.let { String.format(java.util.Locale.UK, " (%.0f%%)", it) } ?: ""}")
-            DetailRow("Avg RMSSD", summary.averageRmssdMs?.let { String.format(java.util.Locale.UK, "%.1f ms", it) } ?: "n/a")
-            DetailRow("Peak RMSSD", summary.maxRmssdMs?.let { String.format(java.util.Locale.UK, "%.1f ms", it) } ?: "n/a")
-            DetailRow("Avg HR", summary.averageHrBpm?.let { String.format(java.util.Locale.UK, "%.1f bpm", it) } ?: "n/a")
-            DetailRow(
-                "Quality",
-                "good ${summary.goodEpochCount}, usable ${summary.usableEpochCount}, review ${summary.reviewEpochCount}, poor ${summary.poorEpochCount}"
-            )
         }
     }
 }

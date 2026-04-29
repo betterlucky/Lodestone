@@ -29,11 +29,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WakeMarkerEntity::class,
         FoodDailySummaryEntity::class,
         FoodLogItemEntity::class,
-        DailyWeightEntity::class,
-        OfflineRecordingSessionEntity::class,
-        OfflinePpiEpochEntity::class
+        DailyWeightEntity::class
     ],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -233,6 +231,34 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS offline_ppi_epoch")
+                db.execSQL("DROP TABLE IF EXISTS offline_recording_session")
+                db.execSQL(
+                    """
+                    DELETE FROM sync_domain_result
+                    WHERE domain = 'OFFLINE_RECORDING'
+                       OR domain = 'TRAINING_SESSION_SMOKE'
+                       OR requestedRange LIKE '%offline%'
+                       OR requestedRange LIKE '%training%'
+                       OR detailSummary LIKE '%offline%'
+                       OR detailSummary LIKE '%training%'
+                       OR manualNotes LIKE '%offline%'
+                       OR manualNotes LIKE '%training%'
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    DELETE FROM sync_run
+                    WHERE notes LIKE '%offline%'
+                       OR notes LIKE '%training session smoke%'
+                       OR notes LIKE '%training smoke%'
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -246,7 +272,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_12_13,
             MIGRATION_13_14,
             MIGRATION_14_15,
-            MIGRATION_15_16
+            MIGRATION_15_16,
+            MIGRATION_16_17
         )
             .build()
     }
