@@ -27,6 +27,16 @@ interface ProbeDao {
     @Insert
     suspend fun insertWakeMarker(entity: WakeMarkerEntity): Long
 
+    @Query(
+        """
+        SELECT * FROM wake_marker
+        WHERE sourceDate = :sourceDate AND markerSource = :markerSource
+        ORDER BY markerEpochMs DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestWakeMarker(sourceDate: String, markerSource: String): WakeMarkerEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertFoodDailySummaries(entities: List<FoodDailySummaryEntity>)
 
@@ -170,6 +180,20 @@ interface ProbeDao {
 
     @Query(
         """
+        SELECT * FROM sync_run
+        WHERE notes LIKE 'normal offline recording smoke%'
+          AND (
+              notes LIKE ('%start ' || :dataType)
+              OR notes LIKE ('%type=' || :dataType || '%')
+          )
+        ORDER BY startedAtEpochMs DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestOfflineRecordingSmokeRunForType(dataType: String): SyncRunEntity?
+
+    @Query(
+        """
         SELECT id, syncRunId, deviceId, domain, requestedRange, status, recordCount,
                parserVersion, parseStatus, detailSummary, NULL AS rawPayloadJson,
                manualNotes, startedAtEpochMs, endedAtEpochMs, errorCode, errorMessage
@@ -219,6 +243,9 @@ interface ProbeDao {
 
     @Query("SELECT COUNT(*) FROM sleep_night_raw WHERE sourceDate = :sourceDate")
     suspend fun countSleepRecordsForDate(sourceDate: String): Int
+
+    @Query("SELECT * FROM sleep_night_raw WHERE sourceDate = :sourceDate ORDER BY syncTimestampEpochMs DESC LIMIT 1")
+    suspend fun getLatestSleepRecordForDate(sourceDate: String): SleepNightRawEntity?
 
     @Query("SELECT * FROM nightly_recharge_raw ORDER BY sourceDate DESC, syncTimestampEpochMs DESC LIMIT 1")
     fun observeLatestNightlyRechargeRecord(): Flow<NightlyRechargeRawEntity?>

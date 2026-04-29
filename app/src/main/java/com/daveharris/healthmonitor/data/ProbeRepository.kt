@@ -105,16 +105,21 @@ class ProbeRepository(
     suspend fun getAppSettings(): AppSettingsEntity? = dao.getAppSettings()
 
     suspend fun hasSleepRecordForDate(sourceDate: String): Boolean =
-        dao.countSleepRecordsForDate(sourceDate) > 0
+        dao.getLatestSleepRecordForDate(sourceDate)?.hasResolvedSleepWindow() == true
 
     suspend fun recordWakeMarker(
         sourceDate: String,
         markerEpochMs: Long = System.currentTimeMillis(),
         markerSource: String = "manual_im_awake",
         deviceId: String?,
-        notes: String? = null
-    ) {
-        dao.insertWakeMarker(
+        notes: String? = null,
+        dedupeWindowMs: Long = 15 * 60 * 1000L
+    ): Long {
+        val latest = dao.getLatestWakeMarker(sourceDate, markerSource)
+        if (latest != null && kotlin.math.abs(markerEpochMs - latest.markerEpochMs) <= dedupeWindowMs) {
+            return latest.id
+        }
+        return dao.insertWakeMarker(
             WakeMarkerEntity(
                 sourceDate = sourceDate,
                 markerEpochMs = markerEpochMs,
@@ -612,9 +617,12 @@ class ProbeRepository(
         dataType: PolarBleApi.PolarDeviceDataType = PolarBleApi.PolarDeviceDataType.PPI
     ): Result<Long> = withContext(Dispatchers.IO) {
         runCatching {
-            val runningRun = dao.getLatestRunningOfflineRecordingSmokeRunForType(dataType.name)
-                ?: dao.getLatestRunningOfflineRecordingSmokeRun()
-            val syncRunId = runningRun?.id ?: dao.insertSyncRun(
+            val recentRunCutoffEpochMs = System.currentTimeMillis() - 36 * 60 * 60 * 1000L
+            val matchedRun = (
+                dao.getLatestRunningOfflineRecordingSmokeRunForType(dataType.name)
+                    ?: dao.getLatestOfflineRecordingSmokeRunForType(dataType.name)
+                )?.takeIf { it.startedAtEpochMs >= recentRunCutoffEpochMs }
+            val syncRunId = matchedRun?.id ?: dao.insertSyncRun(
                 SyncRunEntity(
                     deviceId = deviceId,
                     firmwareVersion = runtimeState.value.firmwareVersion,
@@ -626,7 +634,7 @@ class ProbeRepository(
                 )
             )
             val fetchStartedAt = System.currentTimeMillis()
-            val runStartedAt = runningRun?.startedAtEpochMs ?: fetchStartedAt
+            val runStartedAt = matchedRun?.startedAtEpochMs ?: fetchStartedAt
             val stopError = runCatching { polarManager.stopOfflineRecording(deviceId, dataType) }.exceptionOrNull()
             delay(2_000)
 
@@ -657,8 +665,8 @@ class ProbeRepository(
                 "deviceId" to deviceId,
                 "dataType" to dataType.name,
                 "firmwareVersion" to runtimeState.value.firmwareVersion,
-                "startedByRunId" to runningRun?.id,
-                "startedByRunStartedAtEpochMs" to runningRun?.startedAtEpochMs,
+                "startedByRunId" to matchedRun?.id,
+                "startedByRunStartedAtEpochMs" to matchedRun?.startedAtEpochMs,
                 "fetchStartedAtEpochMs" to fetchStartedAt,
                 "stopError" to stopError?.let { it.message ?: it.javaClass.simpleName },
                 "mode" to "normal_mode_no_sdk_mode",
@@ -1578,6 +1586,30 @@ class ProbeRepository(
             ?.takeUnless { it.isJsonNull }
             ?.asString
             ?.let(::parsePolarDateTimeEpochMs)
+        if (durationMinutes == null || sleepStartEpochMs == null || sleepEndEpochMs == null) {
+            val hasOfflinePpi = offlinePpiEpochs.isNotEmpty()
+            return MorningReadSnapshot(
+                sourceDate = expectedSourceDate,
+                status = null,
+                confidence = "interim",
+                overnightAutonomicSource = if (hasOfflinePpi) "offline_ppi_pending_sleep_window" else "awaiting_sleep_data",
+                sleepDurationMinutes = null,
+                nightlyRmssd = null,
+                baselineReady = false,
+                recoveryAvailable = false,
+                summary = "Interim: waiting for resolved Polar sleep window",
+                reasons = listOf(
+                    "Polar has created today’s sleep record, but the resolved start/end times are not available yet.",
+                    if (hasOfflinePpi) {
+                        "Offline PPI has been fetched, but it cannot be sleep-window scored until those times arrive."
+                    } else {
+                        "The app will keep checking for the completed sleep report."
+                    }
+                ),
+                isInterim = true,
+                sleepDataReady = false
+            )
+        }
         val cycleCount = sleepSummary?.get("cycleCount")?.takeUnless { it.isJsonNull }?.asInt
         val wakePhases = sleepSummary
             ?.getAsJsonObject("phaseCounts")
@@ -1831,3 +1863,13 @@ private data class OfflinePpiWindowSummary(
     val coverageHours: Double,
     val lateMinusEarlyRmssdMs: Double?
 )
+
+private fun SleepNightRawEntity.hasResolvedSleepWindow(): Boolean {
+    val json = runCatching { GsonProvider.gson.fromJson(rawPayloadJson, JsonObject::class.java) }.getOrNull()
+    val result = json?.getAsJsonObject("result")
+    val summary = result?.getAsJsonObject("summary")
+    val durationMinutes = summary?.get("durationMinutes")?.takeUnless { it.isJsonNull }?.asInt
+    val sleepStart = result?.get("sleepStartTime")?.takeUnless { it.isJsonNull }?.asString
+    val sleepEnd = result?.get("sleepEndTime")?.takeUnless { it.isJsonNull }?.asString
+    return durationMinutes != null && sleepStart != null && sleepEnd != null
+}

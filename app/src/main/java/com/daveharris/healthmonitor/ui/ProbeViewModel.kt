@@ -22,13 +22,16 @@ import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ProbeRepository
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
+import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.PolarBleApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeParseException
@@ -167,6 +170,35 @@ class ProbeViewModel(
         }
     }
 
+    private suspend fun connectAndAwaitSelectedDevice(deviceId: String): String {
+        fun DeviceRuntimeState.matchesSelectedDevice(): Boolean {
+            val device = connectedDevice
+            return connectionPhase == "connected" &&
+                (
+                    device?.deviceId.equals(deviceId, ignoreCase = true) ||
+                        device?.address.equals(deviceId, ignoreCase = true)
+                    )
+        }
+
+        repository.connect(deviceId)
+        withTimeout(45_000) {
+            repository.runtimeState.first { runtime ->
+                runtime.matchesSelectedDevice()
+            }
+        }
+        withTimeout(20_000) {
+            repository.runtimeState.first { runtime ->
+                runtime.matchesSelectedDevice() &&
+                    (
+                        runtime.firmwareVersion != null ||
+                            runtime.readyFeatures.isNotEmpty() ||
+                            runtime.unavailableFeatures.isNotEmpty()
+                        )
+            }
+        }
+        return repository.runtimeState.value.connectedDevice?.deviceId ?: deviceId
+    }
+
     fun updateSyncDays(
         sleepDays: Int = syncWindowConfig.sleepDays,
         nightlyRechargeDays: Int = syncWindowConfig.nightlyRechargeDays,
@@ -215,8 +247,9 @@ class ProbeViewModel(
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
             runBusyAction("Starting overnight PPI recording…") {
-                repository.startNormalOfflineRecordingSmoke(deviceId, PolarBleApi.PolarDeviceDataType.PPI).getOrThrow()
-                rollScheduledStartForward(deviceId)
+                val connectedId = connectAndAwaitSelectedDevice(deviceId)
+                repository.startNormalOfflineRecordingSmoke(connectedId, PolarBleApi.PolarDeviceDataType.PPI).getOrThrow()
+                rollScheduledStartForward(connectedId)
                 statusMessage = "Overnight PPI recording started."
             }
         }
@@ -226,16 +259,17 @@ class ProbeViewModel(
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
             runBusyAction("Stopping overnight PPI and syncing…") {
+                val connectedId = connectAndAwaitSelectedDevice(deviceId)
                 repository.recordWakeMarker(
                     sourceDate = LocalDate.now().toString(),
-                    deviceId = deviceId,
+                    deviceId = connectedId,
                     notes = "I’m awake button"
                 )
-                repository.stopAndFetchNormalOfflineRecordingSmoke(deviceId, PolarBleApi.PolarDeviceDataType.PPI).getOrThrow()
-                repository.runManualSync(deviceId, syncWindowConfig).getOrThrow()
-                scheduleMorningReadCheckIfNeeded(deviceId)
+                repository.stopAndFetchNormalOfflineRecordingSmoke(connectedId, PolarBleApi.PolarDeviceDataType.PPI).getOrThrow()
+                repository.runManualSync(connectedId, syncWindowConfig).getOrThrow()
+                scheduleMorningReadCheckIfNeeded(connectedId)
                 persistAppSettings()
-                rollScheduledStopForward(deviceId)
+                rollScheduledStopForward(connectedId)
                 statusMessage = "Awake recorded. PPI fetched and normal sync completed."
             }
         }
