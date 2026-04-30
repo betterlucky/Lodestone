@@ -24,6 +24,8 @@ venv/
 *.sqlite
 *.jsonl
 probe-export-*.json
+polar-cloud-data/
+.env.polar
 
 # Early scratch notes kept local for privacy/noise.
 *.rtf
