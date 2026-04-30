@@ -8,6 +8,7 @@ compare cloud-exported Polar data with the Loop SDK data already in Lodestone.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import sys
@@ -48,6 +49,11 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("POLAR_ACCESS_TOKEN"),
         help="AccessLink bearer token. Prefer POLAR_ACCESS_TOKEN or .env.polar locally.",
     )
+    parser.add_argument(
+        "--ppi-samples",
+        action="store_true",
+        help="Fetch /ppi-samples with features=samples one day at a time.",
+    )
     return parser.parse_args()
 
 
@@ -63,8 +69,16 @@ def load_local_env() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
-def fetch_json(endpoint: str, token: str, from_date: str, to_date: str) -> object:
-    query = urllib.parse.urlencode({"from": from_date, "to": to_date})
+def fetch_json(
+    endpoint: str,
+    token: str,
+    from_date: str,
+    to_date: str,
+    features: tuple[str, ...] = (),
+) -> object:
+    params: list[tuple[str, str]] = [("from", from_date), ("to", to_date)]
+    params.extend(("features", feature) for feature in features)
+    query = urllib.parse.urlencode(params)
     request = urllib.request.Request(
         f"{BASE_URL}/{endpoint}?{query}",
         headers={
@@ -75,6 +89,17 @@ def fetch_json(endpoint: str, token: str, from_date: str, to_date: str) -> objec
     with urllib.request.urlopen(request, timeout=60) as response:
         raw = response.read().decode("utf-8")
     return json.loads(raw) if raw else None
+
+
+def date_range(from_date: str, to_date: str) -> list[str]:
+    start = dt.date.fromisoformat(from_date)
+    end = dt.date.fromisoformat(to_date)
+    days = []
+    current = start
+    while current < end:
+        days.append(current.isoformat())
+        current += dt.timedelta(days=1)
+    return days
 
 
 def summarize_payload(endpoint: str, payload: object) -> str:
@@ -108,6 +133,8 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     endpoints = tuple(args.endpoint or DEFAULT_ENDPOINTS)
+    if args.ppi_samples and "ppi-samples" not in endpoints:
+        endpoints = (*endpoints, "ppi-samples")
     manifest = {
         "from": args.from_date,
         "to": args.to_date,
@@ -116,6 +143,47 @@ def main() -> int:
     }
 
     for endpoint in endpoints:
+        if endpoint == "ppi-samples" and args.ppi_samples:
+            daily_payloads = []
+            failures = []
+            for day in date_range(args.from_date, args.to_date):
+                next_day = (dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
+                try:
+                    daily_payloads.append(
+                        fetch_json(endpoint, args.token, day, next_day, features=("samples",))
+                    )
+                except urllib.error.HTTPError as error:
+                    body = error.read().decode("utf-8", errors="replace")
+                    failures.append(
+                        {
+                            "date": day,
+                            "status": "http_error",
+                            "code": error.code,
+                            "body_preview": body[:500],
+                        }
+                    )
+                except Exception as error:  # noqa: BLE001 - CLI probe should report all failures.
+                    failures.append({"date": day, "status": "error", "message": str(error)})
+            payload = {
+                "dailyResponses": daily_payloads,
+                "failures": failures,
+                "requestMode": "features=samples_one_day_at_a_time",
+            }
+            output_path = out_dir / f"{endpoint}_samples_{args.from_date}_to_{args.to_date}.json"
+            output_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+            summary = summarize_payload(endpoint, payload)
+            manifest["endpoints"].append(
+                {
+                    "endpoint": endpoint,
+                    "status": "ok" if not failures else "partial",
+                    "summary": summary,
+                    "file": str(output_path),
+                    "features": ["samples"],
+                    "failures": failures,
+                }
+            )
+            print(f"{endpoint} samples: {summary} -> {output_path}")
+            continue
         try:
             payload = fetch_json(endpoint, args.token, args.from_date, args.to_date)
         except urllib.error.HTTPError as error:

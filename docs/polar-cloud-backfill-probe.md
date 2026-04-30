@@ -40,8 +40,14 @@ Then run:
 ```bash
 python3 scripts/polar_accesslink_probe.py \
   --from-date 2026-04-20 \
-  --to-date 2026-04-30
+  --to-date 2026-04-30 \
+  --ppi-samples
 ```
+
+Polar's `ppi-samples` endpoint returns only date/modified metadata unless
+`features=samples` is requested. That feature can only be requested one day at a
+time, so the probe splits PPI sample fetches into daily calls when
+`--ppi-samples` is present.
 
 Outputs are written to `polar-cloud-data/`, also ignored by git.
 
