@@ -79,6 +79,7 @@ import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.model.PolarDeviceInfo
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
@@ -344,7 +345,7 @@ private fun DataScreen(
         item {
             HeroCard(
                 title = "Data status",
-                subtitle = "Normal Loop sync now provides the raw PPI lane. Use Flow only when Polar has not released sleep-derived data yet.",
+                subtitle = "Active review date: ${viewModel.checkInDate}. Normal Loop sync now provides the raw PPI lane.",
                 eyebrow = "Morning"
             )
         }
@@ -433,6 +434,14 @@ private fun FeedbackScreen(
             )
         }
         item {
+            ReviewDatePickerField(
+                selectedDate = viewModel.checkInDate,
+                hasSavedReview = dailyCheckIns.any { it.sourceDate == viewModel.checkInDate },
+                hasFoodImport = viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null,
+                onDateSelected = viewModel::updateCheckInDate
+            )
+        }
+        item {
             SectionCard(title = "Today's note", subtitle = "Morning context") {
                 MorningDataQualityCard(
                     morningRead = morningRead
@@ -446,12 +455,6 @@ private fun FeedbackScreen(
                         textColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
                 }
-                ReviewDatePickerField(
-                    selectedDate = viewModel.checkInDate,
-                    hasSavedReview = dailyCheckIns.any { it.sourceDate == viewModel.checkInDate },
-                    hasFoodImport = viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null,
-                    onDateSelected = viewModel::updateCheckInDate
-                )
                 SectionLabel("Food")
                 if (viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null) {
                     FoodSummaryCard(
@@ -575,15 +578,18 @@ private fun ReviewDatePickerField(
     var showPicker by remember { mutableStateOf(false) }
     val selectedMillis = remember(selectedDate) {
         runCatching {
-            java.time.LocalDate.parse(selectedDate)
+            LocalDate.parse(selectedDate)
                 .atStartOfDay(ZoneOffset.UTC)
                 .toInstant()
                 .toEpochMilli()
         }.getOrNull()
     }
+    val parsedDate = remember(selectedDate) {
+        runCatching { LocalDate.parse(selectedDate) }.getOrNull()
+    }
     val status = listOf(
         if (hasSavedReview) "saved review" else "no saved review",
-                if (hasFoodImport) "import synced" else "no import"
+        if (hasFoodImport) "food synced" else "no food import"
     ).joinToString(" · ")
 
     Card(
@@ -596,20 +602,44 @@ private fun ReviewDatePickerField(
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f))
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
-                Text("Review date", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                Text(selectedDate, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                SupportText(status)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
+                    Text("Active day", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    Text(selectedDate, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    SupportText(status)
+                }
+                OutlinedButton(onClick = { showPicker = true }) {
+                    Text("Pick")
+                }
             }
-            OutlinedButton(onClick = { showPicker = true }) {
-                Text("Change")
+            ButtonRow {
+                OutlinedButton(
+                    onClick = { parsedDate?.minusDays(1)?.toString()?.let(onDateSelected) },
+                    enabled = parsedDate != null
+                ) {
+                    Text("Previous")
+                }
+                OutlinedButton(
+                    onClick = { onDateSelected(LocalDate.now().toString()) }
+                ) {
+                    Text("Today")
+                }
+                OutlinedButton(
+                    onClick = { parsedDate?.plusDays(1)?.toString()?.let(onDateSelected) },
+                    enabled = parsedDate != null
+                ) {
+                    Text("Next")
+                }
             }
         }
     }

@@ -221,11 +221,13 @@ class ProbeViewModel(
 
     fun markAwakeAndSync() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
+        val today = LocalDate.now().toString()
+        selectCheckInDate(today)
         viewModelScope.launch {
             runBusyAction("Recording wake time and syncing…") {
                 val connectedId = connectAndAwaitSelectedDevice(deviceId)
                 repository.recordWakeMarker(
-                    sourceDate = LocalDate.now().toString(),
+                    sourceDate = today,
                     deviceId = connectedId,
                     notes = "I’m awake button"
                 )
