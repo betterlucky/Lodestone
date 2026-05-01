@@ -17,6 +17,8 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+from polar_accesslink_tokens import write_env
+
 
 AUTH_URL = "https://auth.polar.com/oauth/authorize"
 TOKEN_URL = "https://auth.polar.com/oauth/token"
@@ -109,22 +111,6 @@ def exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: s
         return json.loads(response.read().decode("utf-8"))
 
 
-def write_env(path: Path, client_id: str, client_secret: str, redirect_uri: str, tokens: dict[str, object]) -> None:
-    lines = [
-        "# Local Polar AccessLink research credentials. Do not commit.",
-        f"POLAR_CLIENT_ID={client_id}",
-        f"POLAR_CLIENT_SECRET={client_secret}",
-        f"POLAR_REDIRECT_URI={redirect_uri}",
-        f"POLAR_ACCESS_TOKEN={tokens.get('access_token', '')}",
-        f"POLAR_REFRESH_TOKEN={tokens.get('refresh_token', '')}",
-        f"POLAR_TOKEN_SCOPE={tokens.get('scope', '')}",
-        f"POLAR_TOKEN_EXPIRES_IN={tokens.get('expires_in', '')}",
-        "",
-    ]
-    path.write_text("\n".join(lines))
-    path.chmod(0o600)
-
-
 def main() -> int:
     env_path = Path(".env.polar")
     load_local_env(env_path)
@@ -173,7 +159,15 @@ def main() -> int:
         tokens = exchange_code(client_id, client_secret, server.authorization_code, args.redirect_uri)
 
     output_path = Path(args.env_file)
-    write_env(output_path, client_id, client_secret, args.redirect_uri, tokens)
+    write_env(
+        output_path,
+        {
+            "POLAR_CLIENT_ID": client_id,
+            "POLAR_CLIENT_SECRET": client_secret,
+            "POLAR_REDIRECT_URI": args.redirect_uri,
+        },
+        tokens,
+    )
     print(f"Wrote tokens to {output_path} with mode 600.")
     print("Access token expires in", tokens.get("expires_in"), "seconds.")
     return 0

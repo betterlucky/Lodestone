@@ -7,6 +7,9 @@ import com.daveharris.healthmonitor.polar.PolarProbeManager
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.polar.sdk.api.PolarBleApi
+import com.polar.sdk.api.model.PolarDiskSpaceData
+import com.polar.sdk.api.model.PolarOfflineRecordingData
+import com.polar.sdk.api.model.PolarOfflineRecordingEntry
 import com.polar.sdk.api.model.activity.Polar247HrSamplesData
 import com.polar.sdk.api.model.activity.Polar247PPiSamplesData
 import com.polar.sdk.api.model.activity.PolarActivitySamplesDayData
@@ -33,6 +36,7 @@ import java.time.LocalTime
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
 import kotlin.math.max
 
 class ProbeRepository(
@@ -245,6 +249,7 @@ class ProbeRepository(
                         DomainPersistenceResult(data.size, shapeForActivitySamples(data), PayloadMappers.activitySamplesList(data))
                     }
                 }
+                runPostSyncStorageMaintenance(syncRunId, deviceId)
 
                 val existingRun = dao.getSyncRun(syncRunId)
                 if (existingRun != null) {
@@ -271,6 +276,445 @@ class ProbeRepository(
             }
 
             syncRunId
+        }
+    }
+
+    suspend fun runPpi247RangeProbe(deviceId: String, from: LocalDate, to: LocalDate): Result<Long> = withContext(Dispatchers.IO) {
+        require(!to.isBefore(from)) { "PPI range end must be on or after start" }
+        runCatching {
+            val syncRunId = dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = System.currentTimeMillis(),
+                    endedAtEpochMs = null,
+                    status = "running",
+                    notes = "explicit PPI_247 range probe"
+                )
+            )
+
+            try {
+                runWithinSyncSession(deviceId, "ppi247_range_probe") {
+                    syncDomain(syncRunId, deviceId, ProbeDomain.PPI_247, from, to) {
+                        val data = polarManager.fetch247Ppi(deviceId, it.first, it.second)
+                        persistPpi(deviceId, data, "${it.first}..${it.second}")
+                        DomainPersistenceResult(data.size, shapeForPpi(data), PayloadMappers.ppiList(data))
+                    }
+                }
+
+                val existingRun = dao.getSyncRun(syncRunId)
+                if (existingRun != null) {
+                    dao.updateSyncRun(
+                        existingRun.copy(
+                            endedAtEpochMs = System.currentTimeMillis(),
+                            status = "success",
+                            notes = "explicit PPI_247 range probe completed"
+                        )
+                    )
+                }
+            } catch (error: Throwable) {
+                val existingRun = dao.getSyncRun(syncRunId)
+                if (existingRun != null) {
+                    dao.updateSyncRun(
+                        existingRun.copy(
+                            endedAtEpochMs = System.currentTimeMillis(),
+                            status = "partial_failure",
+                            notes = error.message
+                        )
+                    )
+                }
+                throw error
+            }
+
+            syncRunId
+        }
+    }
+
+    suspend fun startOfflinePpiProbe(deviceId: String, minimumBatteryPercent: Int = 20): Result<Long> = withContext(Dispatchers.IO) {
+        runCatching {
+            val battery = runtimeState.value.batteryLevel
+            check(battery == null || battery >= minimumBatteryPercent) {
+                "Offline PPI start blocked: Loop battery is $battery%, below $minimumBatteryPercent%."
+            }
+
+            val availableTypes = polarManager.getAvailableOfflineRecordingDataTypes(deviceId)
+            check(PolarBleApi.PolarDeviceDataType.PPI in availableTypes) {
+                "Offline PPI is not available. Available: ${availableTypes.joinToString { it.name }}"
+            }
+            val activeBefore = runCatching { polarManager.getOfflineRecordingStatus(deviceId) }.getOrDefault(emptyList())
+            check(PolarBleApi.PolarDeviceDataType.PPI !in activeBefore) {
+                "Offline PPI recording is already active."
+            }
+            val settings = runCatching {
+                polarManager.requestOfflineRecordingSettings(deviceId, PolarBleApi.PolarDeviceDataType.PPI).toString()
+            }.getOrNull()
+
+            val startedAt = System.currentTimeMillis()
+            polarManager.startOfflineRecording(deviceId, PolarBleApi.PolarDeviceDataType.PPI)
+            val activeAfter = runCatching { polarManager.getOfflineRecordingStatus(deviceId) }.getOrDefault(emptyList())
+            val payload = mapOf(
+                "purpose" to "overnight_safety_net_offline_ppi_start",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to startedAt,
+                "minimumBatteryPercent" to minimumBatteryPercent,
+                "batteryPercent" to battery,
+                "availableTypes" to availableTypes.map { it.name },
+                "activeBefore" to activeBefore.map { it.name },
+                "activeAfter" to activeAfter.map { it.name },
+                "settings" to settings,
+                "mode" to "normal_mode_no_sdk_mode",
+                "sdkModeUsed" to false
+            )
+            val syncRunId = dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    status = "running",
+                    notes = "offline PPI start scheduled/manual"
+                )
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.PPI_247.name,
+                    requestedRange = "offline_ppi_start",
+                    status = ProbeStatus.SUPPORTED.name,
+                    recordCount = 0,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "started normal-mode offline PPI",
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = null,
+                    errorMessage = null
+                )
+            )
+            syncRunId
+        }
+    }
+
+    suspend fun stopAndFetchOfflinePpiProbe(deviceId: String): Result<Long> = withContext(Dispatchers.IO) {
+        runCatching {
+            val matchedRun = dao.getLatestOfflinePpiStartRun(deviceId)
+            val fetchStartedAt = System.currentTimeMillis()
+            val runStartedAt = matchedRun?.startedAtEpochMs ?: (fetchStartedAt - 18 * 60 * 60 * 1000L)
+            val syncRunId = matchedRun?.id ?: dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = fetchStartedAt,
+                    endedAtEpochMs = null,
+                    status = "running",
+                    notes = "offline PPI stop/fetch without matched start"
+                )
+            )
+
+            val stopError = runCatching {
+                polarManager.stopOfflineRecording(deviceId, PolarBleApi.PolarDeviceDataType.PPI)
+            }.exceptionOrNull()
+            delay(2_000)
+
+            val regularEntries = runCatching { polarManager.listOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            val splitEntries = runCatching { polarManager.listSplitOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            val candidates = selectOfflinePpiEntriesForRun(runStartedAt, regularEntries, splitEntries)
+            val fetched = candidates.map { candidate ->
+                val result = runCatching {
+                    if (candidate.kind == "split") {
+                        polarManager.fetchSplitOfflineRecord(deviceId, candidate.entry)
+                    } else {
+                        polarManager.fetchOfflineRecord(deviceId, candidate.entry)
+                    }
+                }
+                offlineFetchSummary(candidate.kind, candidate.entry, result)
+            }
+            val totalSamples = fetched.sumOf { (it["sampleCount"] as? Int) ?: 0 }
+            val payload = mapOf(
+                "purpose" to "overnight_safety_net_offline_ppi_stop_fetch",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to runStartedAt,
+                "stoppedAtEpochMs" to fetchStartedAt,
+                "stopError" to (stopError?.message ?: stopError?.javaClass?.simpleName),
+                "regularEntries" to regularEntries.map(::offlineEntrySummary),
+                "splitEntries" to splitEntries.map(::offlineEntrySummary),
+                "candidateEntries" to candidates.map { offlineEntrySummary(it.entry) + ("recordingListKind" to it.kind) },
+                "fetchedRecords" to fetched,
+                "totalSamples" to totalSamples,
+                "mode" to "normal_mode_no_sdk_mode",
+                "sdkModeUsed" to false
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.PPI_247.name,
+                    requestedRange = "offline_ppi_stop_fetch",
+                    status = if (totalSamples > 0) ProbeStatus.SUPPORTED.name else ProbeStatus.EMPTY.name,
+                    recordCount = candidates.size,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "offline PPI candidates=${candidates.size}, samples=$totalSamples",
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = null,
+                    startedAtEpochMs = fetchStartedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = stopError?.javaClass?.simpleName,
+                    errorMessage = stopError?.message
+                )
+            )
+            val existingRun = dao.getSyncRun(syncRunId)
+            if (existingRun != null) {
+                dao.updateSyncRun(
+                    existingRun.copy(
+                        endedAtEpochMs = System.currentTimeMillis(),
+                        status = if (totalSamples > 0) "success" else "partial_failure",
+                        notes = "offline PPI stop/fetch completed"
+                    )
+                )
+            }
+            syncRunId
+        }
+    }
+
+    suspend fun runDiskSpaceProbe(deviceId: String): Result<Long> = withContext(Dispatchers.IO) {
+        runCatching {
+            val startedAt = System.currentTimeMillis()
+            val diskSpace = polarManager.getDiskSpace(deviceId)
+            val usedSpace = diskSpace.totalSpace - diskSpace.freeSpace
+            val usedPercent = if (diskSpace.totalSpace > 0L) {
+                usedSpace.toDouble() / diskSpace.totalSpace.toDouble() * 100.0
+            } else {
+                null
+            }
+            val payload = mapOf(
+                "deviceId" to deviceId,
+                "totalSpaceBytes" to diskSpace.totalSpace,
+                "freeSpaceBytes" to diskSpace.freeSpace,
+                "usedSpaceBytes" to usedSpace,
+                "usedPercent" to usedPercent,
+                "checkedAtEpochMs" to startedAt
+            )
+            val syncRunId = dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    status = "success",
+                    notes = "disk space probe"
+                )
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.DAILY_SUMMARY.name,
+                    requestedRange = "disk_space",
+                    status = ProbeStatus.SUPPORTED.name,
+                    recordCount = 1,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "free=${diskSpace.freeSpace}, total=${diskSpace.totalSpace}, usedPercent=${usedPercent?.let { String.format(java.util.Locale.UK, "%.1f", it) } ?: "unknown"}",
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = null,
+                    errorMessage = null
+                )
+            )
+            syncRunId
+        }
+    }
+
+    suspend fun removeOfflinePpgExperimentRecords(deviceId: String): Result<Long> = withContext(Dispatchers.IO) {
+        runCatching {
+            val startedAt = System.currentTimeMillis()
+            val diskBefore = polarManager.getDiskSpace(deviceId)
+            val regularEntries = runCatching { polarManager.listOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            val splitEntries = runCatching { polarManager.listSplitOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            val ppgEntries = (regularEntries + splitEntries)
+                .filter { it.type == PolarBleApi.PolarDeviceDataType.PPG }
+                .distinctBy { it.path }
+                .sortedBy { it.date }
+
+            val removals = ppgEntries.map { entry ->
+                val result = runCatching { polarManager.removeOfflineRecord(deviceId, entry) }
+                offlineEntrySummary(entry) + mapOf(
+                    "removed" to result.isSuccess,
+                    "error" to result.exceptionOrNull()?.message
+                )
+            }
+            val diskAfter = polarManager.getDiskSpace(deviceId)
+            val removedBytes = ppgEntries.sumOf { it.size }
+            val failedCount = removals.count { it["removed"] != true }
+            val status = if (failedCount == 0) "success" else "partial_failure"
+            val payload = mapOf(
+                "purpose" to "remove_offline_ppg_experiment_records",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to startedAt,
+                "diskBefore" to diskSpacePayload(diskBefore, startedAt),
+                "diskAfter" to diskSpacePayload(diskAfter, System.currentTimeMillis()),
+                "regularEntriesBefore" to regularEntries.map(::offlineEntrySummary),
+                "splitEntriesBefore" to splitEntries.map(::offlineEntrySummary),
+                "removedEntries" to removals,
+                "removedEntryCount" to ppgEntries.size,
+                "removedBytesAdvertisedByEntries" to removedBytes,
+                "failedRemovalCount" to failedCount
+            )
+            val syncRunId = dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    status = status,
+                    notes = "offline PPG experiment cleanup"
+                )
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.DAILY_SUMMARY.name,
+                    requestedRange = "offline_ppg_cleanup",
+                    status = if (failedCount == 0) ProbeStatus.SUPPORTED.name else ProbeStatus.PARTIAL.name,
+                    recordCount = ppgEntries.size,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "removed=${ppgEntries.size}, failed=$failedCount, advertisedBytes=$removedBytes, freeBefore=${diskBefore.freeSpace}, freeAfter=${diskAfter.freeSpace}",
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = if (failedCount == 0) null else "PARTIAL_REMOVE_FAILURE",
+                    errorMessage = if (failedCount == 0) null else "$failedCount offline PPG entries could not be removed"
+                )
+            )
+            syncRunId
+        }
+    }
+
+    private suspend fun runPostSyncStorageMaintenance(syncRunId: Long, deviceId: String) {
+        val startedAt = System.currentTimeMillis()
+        runCatching {
+            val diskBefore = polarManager.getDiskSpace(deviceId)
+            val beforePayload = diskSpacePayload(diskBefore, startedAt)
+            val usedPercent = beforePayload["usedPercent"] as? Double
+            val cutoffForBulkyValidation = when {
+                usedPercent == null -> null
+                usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT -> LocalDateTime.now().minusDays(1)
+                usedPercent >= SOFT_STORAGE_MAINTENANCE_USED_PERCENT -> LocalDateTime.now().minusDays(7)
+                else -> null
+            }
+            val ppiCutoff = if (usedPercent != null && usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT) {
+                LocalDateTime.now().minusDays(7)
+            } else {
+                null
+            }
+            val regularEntries = if (cutoffForBulkyValidation != null || ppiCutoff != null) {
+                runCatching { polarManager.listOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
+            val splitEntries = if (cutoffForBulkyValidation != null || ppiCutoff != null) {
+                runCatching { polarManager.listSplitOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            } else {
+                emptyList()
+            }
+            val removalCandidates = (regularEntries + splitEntries)
+                .distinctBy { it.path }
+                .filter { entry ->
+                    when (entry.type) {
+                        PolarBleApi.PolarDeviceDataType.PPG,
+                        PolarBleApi.PolarDeviceDataType.ACC,
+                        PolarBleApi.PolarDeviceDataType.SKIN_TEMPERATURE -> cutoffForBulkyValidation != null && entry.date.isBefore(cutoffForBulkyValidation)
+                        PolarBleApi.PolarDeviceDataType.PPI -> ppiCutoff != null && entry.date.isBefore(ppiCutoff)
+                        else -> false
+                    }
+                }
+                .sortedBy { it.date }
+            val removals = removalCandidates.map { entry ->
+                val result = runCatching { polarManager.removeOfflineRecord(deviceId, entry) }
+                offlineEntrySummary(entry) + mapOf(
+                    "removed" to result.isSuccess,
+                    "error" to result.exceptionOrNull()?.message
+                )
+            }
+            val diskAfter = polarManager.getDiskSpace(deviceId)
+            val failedCount = removals.count { it["removed"] != true }
+            val removedBytes = removalCandidates.sumOf { it.size }
+            val payload = mapOf(
+                "purpose" to "post_sync_storage_maintenance",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to startedAt,
+                "softUsedPercentThreshold" to SOFT_STORAGE_MAINTENANCE_USED_PERCENT,
+                "hardUsedPercentThreshold" to HARD_STORAGE_MAINTENANCE_USED_PERCENT,
+                "diskBefore" to beforePayload,
+                "diskAfter" to diskSpacePayload(diskAfter, System.currentTimeMillis()),
+                "bulkyValidationCutoff" to cutoffForBulkyValidation?.toString(),
+                "ppiCutoff" to ppiCutoff?.toString(),
+                "candidateEntries" to removalCandidates.map(::offlineEntrySummary),
+                "removedEntries" to removals,
+                "removedEntryCount" to removalCandidates.size,
+                "removedBytesAdvertisedByEntries" to removedBytes,
+                "failedRemovalCount" to failedCount
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.DAILY_SUMMARY.name,
+                    requestedRange = "storage_maintenance",
+                    status = if (failedCount == 0) ProbeStatus.SUPPORTED.name else ProbeStatus.PARTIAL.name,
+                    recordCount = removalCandidates.size,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = storageMaintenanceSummary(usedPercent, removalCandidates.size, failedCount, removedBytes, diskBefore.freeSpace, diskAfter.freeSpace),
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = if (failedCount == 0) null else "PARTIAL_REMOVE_FAILURE",
+                    errorMessage = if (failedCount == 0) null else "$failedCount offline entries could not be removed"
+                )
+            )
+        }.onFailure { error ->
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.DAILY_SUMMARY.name,
+                    requestedRange = "storage_maintenance",
+                    status = ProbeStatus.ERROR.name,
+                    recordCount = 0,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "storage maintenance failed: ${error.message ?: error.javaClass.simpleName}",
+                    rawPayloadJson = GsonProvider.gson.toJson(
+                        mapOf(
+                            "purpose" to "post_sync_storage_maintenance",
+                            "deviceId" to deviceId,
+                            "startedAtEpochMs" to startedAt,
+                            "error" to (error.message ?: error.javaClass.simpleName)
+                        )
+                    ),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = error.javaClass.simpleName,
+                    errorMessage = error.message
+                )
+            )
         }
     }
 
@@ -796,6 +1240,118 @@ class ProbeRepository(
     private fun shapeForActivitySamples(data: List<PolarActivitySamplesDayData>): String =
         "list(size=${data.size}, metSamples=${data.sumOf { day -> day.polarActivitySamplesDataList.orEmpty().sumOf { it.metSamples.size } }}, stepSamples=${data.sumOf { day -> day.polarActivitySamplesDataList.orEmpty().sumOf { it.stepSamples.size } }})"
 
+    private fun offlineEntrySummary(entry: PolarOfflineRecordingEntry): Map<String, Any?> =
+        mapOf(
+            "path" to entry.path,
+            "size" to entry.size,
+            "date" to entry.date.toString(),
+            "type" to entry.type.name
+        )
+
+    private fun storageMaintenanceSummary(
+        usedPercent: Double?,
+        removedCount: Int,
+        failedCount: Int,
+        removedBytes: Long,
+        freeBefore: Long,
+        freeAfter: Long
+    ): String {
+        val used = usedPercent?.let { String.format(java.util.Locale.UK, "%.1f", it) } ?: "unknown"
+        return "usedPercent=$used, removed=$removedCount, failed=$failedCount, advertisedBytes=$removedBytes, freeBefore=$freeBefore, freeAfter=$freeAfter"
+    }
+
+    private fun diskSpacePayload(diskSpace: PolarDiskSpaceData, checkedAtEpochMs: Long): Map<String, Any?> {
+        val usedSpace = diskSpace.totalSpace - diskSpace.freeSpace
+        val usedPercent = if (diskSpace.totalSpace > 0L) {
+            usedSpace.toDouble() / diskSpace.totalSpace.toDouble() * 100.0
+        } else {
+            null
+        }
+        return mapOf(
+            "totalSpaceBytes" to diskSpace.totalSpace,
+            "freeSpaceBytes" to diskSpace.freeSpace,
+            "usedSpaceBytes" to usedSpace,
+            "usedPercent" to usedPercent,
+            "checkedAtEpochMs" to checkedAtEpochMs
+        )
+    }
+
+    private fun selectOfflinePpiEntriesForRun(
+        startedAtEpochMs: Long,
+        regularEntries: List<PolarOfflineRecordingEntry>,
+        splitEntries: List<PolarOfflineRecordingEntry>
+    ): List<OfflineRecordingCandidate> {
+        val localStartedAt = LocalDateTime.ofInstant(
+            Instant.ofEpochMilli(startedAtEpochMs),
+            ZoneId.systemDefault()
+        ).minusMinutes(15)
+        val dateToken = DateTimeFormatter.BASIC_ISO_DATE.format(localStartedAt.toLocalDate())
+
+        fun isCandidate(entry: PolarOfflineRecordingEntry): Boolean =
+            entry.type == PolarBleApi.PolarDeviceDataType.PPI &&
+                (!entry.date.isBefore(localStartedAt) || entry.path.contains(dateToken))
+
+        val split = splitEntries.filter(::isCandidate).map { OfflineRecordingCandidate("split", it) }
+        val regular = regularEntries.filter(::isCandidate).map { OfflineRecordingCandidate("regular", it) }
+        return (split + regular)
+            .distinctBy { "${it.kind}:${it.entry.path}:${it.entry.size}" }
+            .sortedByDescending { it.entry.date }
+    }
+
+    private fun offlineFetchSummary(
+        kind: String,
+        entry: PolarOfflineRecordingEntry,
+        result: Result<PolarOfflineRecordingData>
+    ): Map<String, Any?> =
+        result.fold(
+            onSuccess = { data ->
+                val sampleSummary = offlineRecordingDataSummary(data)
+                offlineEntrySummary(entry) + mapOf(
+                    "recordingListKind" to kind,
+                    "fetchStatus" to ProbeStatus.SUPPORTED.name,
+                    "dataClass" to data.javaClass.simpleName,
+                    "sampleCount" to sampleSummary.sampleCount,
+                    "samplePreview" to sampleSummary.samplePreview,
+                    "samples" to sampleSummary.samples,
+                    "notes" to sampleSummary.notes
+                )
+            },
+            onFailure = { error ->
+                offlineEntrySummary(entry) + mapOf(
+                    "recordingListKind" to kind,
+                    "fetchStatus" to ProbeStatus.ERROR.name,
+                    "error" to (error.message ?: error.javaClass.simpleName)
+                )
+            }
+        )
+
+    private fun offlineRecordingDataSummary(data: PolarOfflineRecordingData): OfflineRecordingDataSummary =
+        when (data) {
+            is PolarOfflineRecordingData.PpiOfflineRecording -> OfflineRecordingDataSummary(
+                sampleCount = data.data.samples.size,
+                samplePreview = data.data.samples.take(20).map(::ppiSampleSummary),
+                samples = data.data.samples.map(::ppiSampleSummary),
+                notes = mapOf("primaryValue" to "ppi_ms", "hrvCandidate" to true)
+            )
+            else -> OfflineRecordingDataSummary(
+                sampleCount = 0,
+                samplePreview = listOf(data.toString().take(1_000)),
+                samples = null,
+                notes = mapOf("unsupportedSummaryType" to data.javaClass.simpleName)
+            )
+        }
+
+    private fun ppiSampleSummary(sample: com.polar.sdk.api.model.PolarPpiData.PolarPpiSample): Map<String, Any?> =
+        mapOf(
+            "ppi" to sample.ppi,
+            "errorEstimate" to sample.errorEstimate,
+            "hr" to sample.hr,
+            "blockerBit" to sample.blockerBit,
+            "skinContactStatus" to sample.skinContactStatus,
+            "skinContactSupported" to sample.skinContactSupported,
+            "timeStamp" to sample.timeStamp
+        )
+
     private fun extractSourceDate(rawPayloadJson: String, requestedRange: String): String {
         val json = runCatching { GsonProvider.gson.fromJson(rawPayloadJson, JsonObject::class.java) }.getOrNull()
         val candidates = listOf("date", "sleepResultDate")
@@ -1132,6 +1688,9 @@ data class DomainPersistenceResult(
     val rawPayloadJson: String
 )
 
+private const val SOFT_STORAGE_MAINTENANCE_USED_PERCENT = 70.0
+private const val HARD_STORAGE_MAINTENANCE_USED_PERCENT = 85.0
+
 private data class Ppi247WindowSummary(
     val averageRmssdMs: Double,
     val minRmssdMs: Double?,
@@ -1140,6 +1699,18 @@ private data class Ppi247WindowSummary(
     val poorEpochCount: Int,
     val coverageHours: Double,
     val lateMinusEarlyRmssdMs: Double?
+)
+
+private data class OfflineRecordingCandidate(
+    val kind: String,
+    val entry: PolarOfflineRecordingEntry
+)
+
+private data class OfflineRecordingDataSummary(
+    val sampleCount: Int,
+    val samplePreview: List<Any?>,
+    val samples: List<Any?>?,
+    val notes: Map<String, Any?>
 )
 
 private fun SleepNightRawEntity.hasResolvedSleepWindow(): Boolean {

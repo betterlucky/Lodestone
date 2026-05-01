@@ -18,6 +18,8 @@ import com.polar.sdk.api.PolarBleApiCallback
 import com.polar.sdk.api.PolarBleApiDefaultImpl
 import com.polar.sdk.api.model.PolarDeviceInfo
 import com.polar.sdk.api.model.PolarHealthThermometerData
+import com.polar.sdk.api.model.PolarOfflineRecordingData
+import com.polar.sdk.api.model.PolarOfflineRecordingEntry
 import com.polar.sdk.api.model.PolarPhysicalConfiguration
 import com.polar.sdk.api.model.activity.Polar247HrSamplesData
 import com.polar.sdk.api.model.activity.Polar247PPiSamplesData
@@ -69,6 +71,8 @@ class PolarProbeManager(
         PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_DEVICE_TIME_SETUP,
         PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_ACTIVITY_DATA,
         PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_SLEEP_DATA,
+        PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_OFFLINE_RECORDING,
+        PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_TRAINING_DATA,
         PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_TEMPERATURE_DATA,
         PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_DEVICE_CONTROL,
         PolarBleApi.PolarBleSdkFeature.FEATURE_POLAR_FEATURES_CONFIGURATION_SERVICE
@@ -130,6 +134,49 @@ class PolarProbeManager(
 
     suspend fun fetchActivitySamples(deviceId: String, from: LocalDate, to: LocalDate): List<PolarActivitySamplesDayData> =
         api.getActivitySampleData(deviceId, from, to)
+
+    suspend fun getDiskSpace(deviceId: String) = api.getDiskSpace(deviceId)
+
+    suspend fun getAvailableOfflineRecordingDataTypes(deviceId: String): Set<PolarBleApi.PolarDeviceDataType> =
+        api.getAvailableOfflineRecordingDataTypes(deviceId)
+
+    suspend fun requestOfflineRecordingSettings(
+        deviceId: String,
+        dataType: PolarBleApi.PolarDeviceDataType
+    ) = api.requestOfflineRecordingSettings(deviceId, dataType)
+
+    suspend fun getOfflineRecordingStatus(deviceId: String): List<PolarBleApi.PolarDeviceDataType> =
+        api.getOfflineRecordingStatus(deviceId)
+
+    suspend fun startOfflineRecording(
+        deviceId: String,
+        dataType: PolarBleApi.PolarDeviceDataType
+    ) {
+        val settings = runCatching { api.requestOfflineRecordingSettings(deviceId, dataType).maxSettings() }.getOrNull()
+        api.startOfflineRecording(deviceId, dataType, settings)
+    }
+
+    suspend fun stopOfflineRecording(deviceId: String, dataType: PolarBleApi.PolarDeviceDataType) =
+        api.stopOfflineRecording(deviceId, dataType)
+
+    suspend fun listOfflineRecordings(deviceId: String): List<PolarOfflineRecordingEntry> =
+        api.listOfflineRecordings(deviceId).toList()
+
+    suspend fun listSplitOfflineRecordings(deviceId: String): List<PolarOfflineRecordingEntry> =
+        api.listSplitOfflineRecordings(deviceId).toList()
+
+    suspend fun fetchOfflineRecord(
+        deviceId: String,
+        entry: PolarOfflineRecordingEntry
+    ): PolarOfflineRecordingData = api.getOfflineRecord(deviceId, entry)
+
+    suspend fun fetchSplitOfflineRecord(
+        deviceId: String,
+        entry: PolarOfflineRecordingEntry
+    ): PolarOfflineRecordingData = api.getSplitOfflineRecord(deviceId, entry)
+
+    suspend fun removeOfflineRecord(deviceId: String, entry: PolarOfflineRecordingEntry) =
+        api.removeOfflineRecord(deviceId, entry)
 
     override fun blePowerStateChanged(powered: Boolean) {
         _runtimeState.value = _runtimeState.value.copy(bluetoothPowered = powered)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
+from math import sqrt
 from statistics import mean, median
 from typing import Any
 
@@ -26,6 +27,13 @@ def parse_local_date(value: str | None) -> date | None:
 
 def safe_mean(values: list[float]) -> float | None:
     return mean(values) if values else None
+
+
+def rmssd(values: list[float]) -> float | None:
+    if len(values) < 2:
+        return None
+    diffs = [values[index] - values[index - 1] for index in range(1, len(values))]
+    return sqrt(mean([diff * diff for diff in diffs])) if diffs else None
 
 
 def latest_recharge_payload(rows: list[dict[str, Any]], source_date: str) -> dict[str, Any]:
@@ -62,6 +70,10 @@ def is_after(timestamp_value: str | None, boundary_value: str | None) -> bool:
     boundary = ms.parse_iso_datetime(boundary_value)
     if not ts or not boundary:
         return False
+    if ts.tzinfo is None and boundary.tzinfo is not None:
+        ts = ts.replace(tzinfo=boundary.tzinfo)
+    elif ts.tzinfo is not None and boundary.tzinfo is None:
+        boundary = boundary.replace(tzinfo=ts.tzinfo)
     return ts > boundary
 
 
@@ -71,7 +83,37 @@ def is_in_window(timestamp_value: str | None, start_value: str | None, end_value
     end = ms.parse_iso_datetime(end_value)
     if not ts or not start or not end:
         return False
+    if ts.tzinfo is None and start.tzinfo is not None:
+        ts = ts.replace(tzinfo=start.tzinfo)
+    elif ts.tzinfo is not None and start.tzinfo is None:
+        start = start.replace(tzinfo=ts.tzinfo)
+    if end.tzinfo is None and ts.tzinfo is not None:
+        end = end.replace(tzinfo=ts.tzinfo)
+    elif end.tzinfo is not None and ts.tzinfo is None:
+        ts = ts.replace(tzinfo=end.tzinfo)
     return start <= ts <= end
+
+
+def sample_time_for_date(source_date: str, timestamp_value: str | None) -> str | None:
+    if not timestamp_value:
+        return None
+    if "T" in timestamp_value:
+        return timestamp_value
+    return f"{source_date}T{timestamp_value}"
+
+
+def hours_between(first_value: str | None, last_value: str | None) -> float | None:
+    first = ms.parse_iso_datetime(first_value)
+    last = ms.parse_iso_datetime(last_value)
+    if not first or not last:
+        return None
+    if first.tzinfo is None and last.tzinfo is not None:
+        first = first.replace(tzinfo=last.tzinfo)
+    elif first.tzinfo is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=first.tzinfo)
+    if last < first:
+        return None
+    return (last - first).total_seconds() / 3600.0
 
 
 def score_from_thresholds(value: float | None, bands: tuple[float, float, float], inverse: bool = False) -> float | None:
@@ -199,12 +241,13 @@ def build_raw_daytime_autonomic_lane(rows: list[dict[str, Any]], source_date: st
     online_count = 0
     ppi_batch_count = 0
     ppi_start_times: list[str] = []
-    for row in ms.latest_cluster_rows(ms.rows_for_date(rows, "ppi247", source_date)):
+    for row in ms.unique_rows(ms.rows_for_date(rows, "ppi247", source_date)):
         payload = ms.parse_payload(row)
         samples = payload.get("samples") or {}
-        if is_after(samples.get("startTime"), sleep_window["end"]):
+        start_time = sample_time_for_date(source_date, samples.get("startTime"))
+        if is_after(start_time, sleep_window["end"]):
             ppi_batch_count += 1
-            ppi_start_times.append(samples.get("startTime"))
+            ppi_start_times.append(start_time)
             ppi_values.extend(float(value) for value in (samples.get("ppiValueList") or []))
             ppi_errors.extend(float(value) for value in (samples.get("ppiErrorEstimateList") or []))
             statuses = samples.get("statusList") or []
@@ -242,6 +285,62 @@ def build_raw_daytime_autonomic_lane(rows: list[dict[str, Any]], source_date: st
     }
 
 
+def build_raw_overnight_ppi_lane(rows: list[dict[str, Any]], source_date: str, sleep_window: dict[str, Any] | None) -> dict[str, Any]:
+    if not sleep_window:
+        return {
+            "available": False,
+            "batch_count": 0,
+            "interval_count": 0,
+        }
+
+    ppi_values: list[float] = []
+    error_values: list[float] = []
+    movement_count = 0
+    skin_contact_count = 0
+    online_count = 0
+    batch_count = 0
+    start_times: list[str] = []
+    per_batch_rmssd: list[float] = []
+
+    for row in ms.unique_rows(ms.rows_for_date(rows, "ppi247", source_date)):
+        payload = ms.parse_payload(row)
+        samples = payload.get("samples") or {}
+        start_time = sample_time_for_date(source_date, samples.get("startTime"))
+        if not is_in_window(start_time, sleep_window["start"], sleep_window["end"]):
+            continue
+        values = [float(value) for value in (samples.get("ppiValueList") or [])]
+        if not values:
+            continue
+        batch_count += 1
+        start_times.append(start_time)
+        ppi_values.extend(values)
+        error_values.extend(float(value) for value in (samples.get("ppiErrorEstimateList") or []))
+        statuses = samples.get("statusList") or []
+        movement_count += sum(1 for item in statuses if item.get("movement") != "MOVING_NOT_DETECTED")
+        skin_contact_count += sum(1 for item in statuses if item.get("skinContact") == "SKIN_CONTACT_DETECTED")
+        online_count += sum(1 for item in statuses if item.get("intervalStatus") == "INTERVAL_IS_ONLINE")
+        batch_rmssd = rmssd(values)
+        if batch_rmssd is not None:
+            per_batch_rmssd.append(batch_rmssd)
+
+    interval_count = len(ppi_values)
+    observed_hours = hours_between(min(start_times) if start_times else None, max(start_times) if start_times else None)
+    return {
+        "available": interval_count > 0,
+        "batch_count": batch_count,
+        "start_times": start_times,
+        "interval_count": interval_count,
+        "avg_ppi_ms": round_number(safe_mean(ppi_values), 2),
+        "rmssd_ms": round_number(rmssd(ppi_values), 2),
+        "mean_batch_rmssd_ms": round_number(safe_mean(per_batch_rmssd), 2),
+        "avg_error_estimate": round_number(safe_mean(error_values), 2),
+        "skin_contact_ratio": round_number((skin_contact_count / interval_count) if interval_count else None, 4),
+        "movement_ratio": round_number((movement_count / interval_count) if interval_count else None, 4),
+        "online_ratio": round_number((online_count / interval_count) if interval_count else None, 4),
+        "coverage_hours_estimate": round_number(observed_hours, 2),
+    }
+
+
 def compare_to_baseline(current: float | None, baseline_values: list[float]) -> dict[str, Any] | None:
     if current is None or not baseline_values:
         return None
@@ -262,14 +361,16 @@ def build_night_lanes(rows: list[dict[str, Any]], source_date: str) -> dict[str,
     raw_sleep = build_raw_sleep_and_context_lane(rows, source_date)
     nightly = build_semi_derived_overnight_autonomic_lane(rows, source_date)
     daytime = build_raw_daytime_autonomic_lane(rows, source_date, raw_sleep.get("sleep_window"))
+    raw_overnight_ppi = build_raw_overnight_ppi_lane(rows, source_date, raw_sleep.get("sleep_window"))
     overnight_hr = raw_sleep.get("overnight_hr_context") or {}
-    overnight_raw_ppi_available = False
+    overnight_raw_ppi_available = raw_overnight_ppi.get("available") is True
     overnight_autonomic_source = "nightly_recharge_summary" if nightly.get("available") else "none"
     if overnight_raw_ppi_available:
-        overnight_autonomic_source = "raw_overnight_ppi"
+        overnight_autonomic_source = "raw_overnight_ppi_plus_nightly_recharge_summary" if nightly.get("available") else "raw_overnight_ppi"
     return {
         "raw_sleep_and_context_lane": raw_sleep,
         "semi_derived_overnight_autonomic_lane": nightly,
+        "raw_overnight_ppi_lane": raw_overnight_ppi,
         "raw_daytime_autonomic_lane": daytime,
         "overnight_raw_ppi_available": overnight_raw_ppi_available,
         "overnight_autonomic_source": overnight_autonomic_source,
@@ -394,13 +495,15 @@ def build_sleep_subscore(raw_lane: dict[str, Any], reasons: list[tuple[float, st
 
 def build_nightly_autonomic_subscore(
     nightly_lane: dict[str, Any],
+    raw_overnight_ppi_lane: dict[str, Any],
     baseline_features: dict[str, Any],
     reasons: list[tuple[float, str]],
 ) -> float | None:
     rmssd = nightly_lane.get("mean_nightly_recovery_rmssd")
     rri = nightly_lane.get("mean_nightly_recovery_rri")
     respiration = nightly_lane.get("mean_nightly_recovery_respiration_interval")
-    if rmssd is None and rri is None and respiration is None:
+    raw_ppi_rmssd = raw_overnight_ppi_lane.get("mean_batch_rmssd_ms") or raw_overnight_ppi_lane.get("rmssd_ms")
+    if rmssd is None and rri is None and respiration is None and raw_ppi_rmssd is None:
         return None
 
     baseline_metrics = []
@@ -418,12 +521,18 @@ def build_nightly_autonomic_subscore(
 
     rmssd_score = None
     rmssd_delta = metric_delta("nightly_rmssd")
-    if rmssd_delta is not None:
+    if raw_ppi_rmssd is not None:
+        rmssd_score = score_from_thresholds(raw_ppi_rmssd, (30, 45, 60), inverse=True)
+        if raw_overnight_ppi_lane.get("coverage_hours_estimate", 0) < 3:
+            reasons.append((1.0, "Raw overnight PPI was present, but coverage was short enough to treat it cautiously."))
+    elif rmssd_delta is not None:
         rmssd_score = 0.0 if rmssd_delta >= -0.05 else 1.0 if rmssd_delta >= -0.15 else 2.0 if rmssd_delta >= -0.25 else 3.0
     else:
         rmssd_score = score_from_thresholds(rmssd, (30, 45, 60), inverse=True)
     if rmssd_score is not None and rmssd_score >= 2.0:
-        reasons.append((rmssd_score, f"Nightly recovery RMSSD looked subdued at {round_number(rmssd, 1)} ms."))
+        source_label = "raw overnight PPI RMSSD" if raw_ppi_rmssd is not None else "nightly recovery RMSSD"
+        value = raw_ppi_rmssd if raw_ppi_rmssd is not None else rmssd
+        reasons.append((rmssd_score, f"{source_label.capitalize()} looked subdued at {round_number(value, 1)} ms."))
 
     rri_score = None
     if rri is not None:
@@ -487,12 +596,13 @@ def build_baseline_subscore(baseline_features: dict[str, Any], reasons: list[tup
 def determine_confidence(
     raw_lane: dict[str, Any],
     nightly_lane: dict[str, Any],
+    raw_overnight_ppi_lane: dict[str, Any],
     baseline_features: dict[str, Any],
     include_baseline: bool,
 ) -> str:
     if not (raw_lane.get("sleep_window") or {}).get("valid"):
         return "low"
-    if not nightly_lane.get("available"):
+    if not nightly_lane.get("available") and not raw_overnight_ppi_lane.get("available"):
         return "low"
 
     confidence = "high"
@@ -525,6 +635,7 @@ def build_candidate_result(
     model_name: str,
     raw_lane: dict[str, Any],
     nightly_lane: dict[str, Any],
+    raw_overnight_ppi_lane: dict[str, Any],
     daytime_lane: dict[str, Any],
     baseline_features: dict[str, Any],
     include_nightly: bool,
@@ -538,10 +649,10 @@ def build_candidate_result(
     if sleep_subscore is None:
         missing_inputs.append("raw_sleep_and_context_lane.sleep_structure")
 
-    nightly_autonomic_subscore = build_nightly_autonomic_subscore(nightly_lane, baseline_features, reasons) if include_nightly else None
+    nightly_autonomic_subscore = build_nightly_autonomic_subscore(nightly_lane, raw_overnight_ppi_lane, baseline_features, reasons) if include_nightly else None
     if include_nightly and nightly_autonomic_subscore is None:
-        missing_inputs.append("semi_derived_overnight_autonomic_lane")
-        reasons.append((3.0, "Nightly recharge summary was not available, so overnight autonomic evidence is limited."))
+        missing_inputs.append("overnight_autonomic_lane")
+        reasons.append((3.0, "Overnight autonomic evidence was not available."))
 
     context_subscore = build_context_subscore(raw_lane, reasons)
     if include_daytime_augmented and daytime_lane.get("available"):
@@ -572,8 +683,8 @@ def build_candidate_result(
             "baseline_subscore": 0.15,
         },
     )
-    confidence = determine_confidence(raw_lane, nightly_lane, baseline_features, include_baseline)
-    if model_name == "sleep_context_only" and not nightly_lane.get("available"):
+    confidence = determine_confidence(raw_lane, nightly_lane, raw_overnight_ppi_lane, baseline_features, include_baseline)
+    if model_name == "sleep_context_only" and not nightly_lane.get("available") and not raw_overnight_ppi_lane.get("available"):
         confidence = "medium" if (raw_lane.get("sleep_window") or {}).get("valid") else "low"
     if model_name == "comparison_raw_daytime_augmented" and daytime_lane.get("available") and confidence == "high":
         confidence = "medium"
@@ -586,12 +697,25 @@ def build_candidate_result(
     if not top_reasons:
         top_reasons = ["No major warning pattern stood out in the available overnight evidence."]
 
-    if not nightly_lane.get("baseline_ready") or not nightly_lane.get("ans_available") or not nightly_lane.get("recovery_available"):
+    if (
+        not raw_overnight_ppi_lane.get("available")
+        and (
+            not nightly_lane.get("baseline_ready")
+            or not nightly_lane.get("ans_available")
+            or not nightly_lane.get("recovery_available")
+        )
+    ):
         top_reasons.insert(0, "Nightly autonomic summary values are present, but Polar's higher-level readiness interpretation is not mature yet.")
         top_reasons = top_reasons[:3]
 
-    if model_name == "comparison_raw_daytime_augmented":
-        autonomic_source = "nightly_recharge_summary_plus_post_wake_daytime"
+    if not include_nightly:
+        autonomic_source = "sleep_context_only"
+    elif model_name == "comparison_raw_daytime_augmented":
+        autonomic_source = "raw_overnight_ppi_plus_nightly_recharge_plus_post_wake_daytime" if raw_overnight_ppi_lane.get("available") else "nightly_recharge_summary_plus_post_wake_daytime"
+    elif raw_overnight_ppi_lane.get("available") and include_nightly and nightly_lane.get("available"):
+        autonomic_source = "raw_overnight_ppi_plus_nightly_recharge_summary"
+    elif raw_overnight_ppi_lane.get("available"):
+        autonomic_source = "raw_overnight_ppi"
     elif include_nightly and nightly_lane.get("available"):
         autonomic_source = "nightly_recharge_summary"
     else:
@@ -605,7 +729,7 @@ def build_candidate_result(
         "missing_inputs": sorted(set(missing_inputs)),
         "model_version": "v1",
         "overnight_autonomic_source": autonomic_source,
-        "overnight_raw_ppi_available": False,
+        "overnight_raw_ppi_available": raw_overnight_ppi_lane.get("available") is True,
         "subscores": {key: round_number(value, 3) for key, value in subscores.items() if value is not None},
         "total_score": round_number(total_score, 3),
     }
@@ -663,6 +787,7 @@ def build_model_package(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "sleep_context_only",
             lanes["raw_sleep_and_context_lane"],
             lanes["semi_derived_overnight_autonomic_lane"],
+            lanes["raw_overnight_ppi_lane"],
             lanes["raw_daytime_autonomic_lane"],
             baseline_features,
             include_nightly=False,
@@ -673,6 +798,7 @@ def build_model_package(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "sleep_plus_nightly_autonomic",
             lanes["raw_sleep_and_context_lane"],
             lanes["semi_derived_overnight_autonomic_lane"],
+            lanes["raw_overnight_ppi_lane"],
             lanes["raw_daytime_autonomic_lane"],
             baseline_features,
             include_nightly=True,
@@ -683,6 +809,7 @@ def build_model_package(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "sleep_plus_nightly_autonomic_plus_baseline",
             lanes["raw_sleep_and_context_lane"],
             lanes["semi_derived_overnight_autonomic_lane"],
+            lanes["raw_overnight_ppi_lane"],
             lanes["raw_daytime_autonomic_lane"],
             baseline_features,
             include_nightly=True,
@@ -693,6 +820,7 @@ def build_model_package(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "comparison_raw_daytime_augmented",
             lanes["raw_sleep_and_context_lane"],
             lanes["semi_derived_overnight_autonomic_lane"],
+            lanes["raw_overnight_ppi_lane"],
             lanes["raw_daytime_autonomic_lane"],
             baseline_features,
             include_nightly=True,
@@ -712,6 +840,7 @@ def build_model_package(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "source_date": source_date,
         "raw_sleep_and_context_lane": lanes["raw_sleep_and_context_lane"],
         "semi_derived_overnight_autonomic_lane": lanes["semi_derived_overnight_autonomic_lane"],
+        "raw_overnight_ppi_lane": lanes["raw_overnight_ppi_lane"],
         "raw_daytime_autonomic_lane": lanes["raw_daytime_autonomic_lane"],
         "overnight_raw_ppi_available": lanes["overnight_raw_ppi_available"],
         "overnight_autonomic_source": lanes["overnight_autonomic_source"],

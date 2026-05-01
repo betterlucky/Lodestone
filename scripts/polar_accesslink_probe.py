@@ -17,6 +17,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from polar_accesslink_tokens import get_access_token, load_local_env
+
 
 BASE_URL = "https://www.polaraccesslink.com/v4/data"
 DEFAULT_ENDPOINTS = (
@@ -46,8 +48,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--token",
-        default=os.environ.get("POLAR_ACCESS_TOKEN"),
-        help="AccessLink bearer token. Prefer POLAR_ACCESS_TOKEN or .env.polar locally.",
+        default=None,
+        help="AccessLink bearer token override. By default, .env.polar is loaded and refreshed when needed.",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=".env.polar",
+        help="Local Polar env file containing client credentials and refresh token.",
+    )
+    parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Refresh the access token before fetching.",
     )
     parser.add_argument(
         "--ppi-samples",
@@ -55,18 +67,6 @@ def parse_args() -> argparse.Namespace:
         help="Fetch /ppi-samples with features=samples one day at a time.",
     )
     return parser.parse_args()
-
-
-def load_local_env() -> None:
-    env_path = Path(".env.polar")
-    if not env_path.exists():
-        return
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
 def fetch_json(
@@ -120,12 +120,18 @@ def summarize_payload(endpoint: str, payload: object) -> str:
 
 
 def main() -> int:
-    load_local_env()
     args = parse_args()
-    if not args.token:
+    load_local_env(Path(args.env_file))
+    token = args.token
+    if not token:
+        try:
+            token = get_access_token(args.env_file, force_refresh=args.force_refresh)
+        except Exception as error:  # noqa: BLE001 - CLI should provide a clear setup message.
+            print(str(error), file=sys.stderr)
+            return 2
+    if not token:
         print(
-            "Missing token. Set POLAR_ACCESS_TOKEN or create .env.polar with "
-            "POLAR_ACCESS_TOKEN=...",
+            "Missing token. Create .env.polar with polar_accesslink_oauth.py.",
             file=sys.stderr,
         )
         return 2
@@ -150,9 +156,15 @@ def main() -> int:
                 next_day = (dt.date.fromisoformat(day) + dt.timedelta(days=1)).isoformat()
                 try:
                     daily_payloads.append(
-                        fetch_json(endpoint, args.token, day, next_day, features=("samples",))
+                        fetch_json(endpoint, token, day, next_day, features=("samples",))
                     )
                 except urllib.error.HTTPError as error:
+                    if error.code == 401 and not args.token:
+                        token = get_access_token(args.env_file, force_refresh=True)
+                        daily_payloads.append(
+                            fetch_json(endpoint, token, day, next_day, features=("samples",))
+                        )
+                        continue
                     body = error.read().decode("utf-8", errors="replace")
                     failures.append(
                         {
@@ -185,19 +197,23 @@ def main() -> int:
             print(f"{endpoint} samples: {summary} -> {output_path}")
             continue
         try:
-            payload = fetch_json(endpoint, args.token, args.from_date, args.to_date)
+            payload = fetch_json(endpoint, token, args.from_date, args.to_date)
         except urllib.error.HTTPError as error:
-            body = error.read().decode("utf-8", errors="replace")
-            manifest["endpoints"].append(
-                {
-                    "endpoint": endpoint,
-                    "status": "http_error",
-                    "code": error.code,
-                    "body_preview": body[:500],
-                }
-            )
-            print(f"{endpoint}: HTTP {error.code}", file=sys.stderr)
-            continue
+            if error.code == 401 and not args.token:
+                token = get_access_token(args.env_file, force_refresh=True)
+                payload = fetch_json(endpoint, token, args.from_date, args.to_date)
+            else:
+                body = error.read().decode("utf-8", errors="replace")
+                manifest["endpoints"].append(
+                    {
+                        "endpoint": endpoint,
+                        "status": "http_error",
+                        "code": error.code,
+                        "body_preview": body[:500],
+                    }
+                )
+                print(f"{endpoint}: HTTP {error.code}", file=sys.stderr)
+                continue
         except Exception as error:  # noqa: BLE001 - CLI probe should report all failures.
             manifest["endpoints"].append(
                 {

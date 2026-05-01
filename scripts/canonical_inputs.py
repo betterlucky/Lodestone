@@ -203,6 +203,7 @@ def main() -> None:
         "daytime_monitor_inputs": daytime_inputs(rows),
         "raw_sleep_and_context_lane": model_package.get("raw_sleep_and_context_lane"),
         "semi_derived_overnight_autonomic_lane": model_package.get("semi_derived_overnight_autonomic_lane"),
+        "raw_overnight_ppi_lane": model_package.get("raw_overnight_ppi_lane"),
         "raw_daytime_autonomic_lane": model_package.get("raw_daytime_autonomic_lane"),
         "overnight_raw_ppi_available": model_package.get("overnight_raw_ppi_available"),
         "overnight_autonomic_source": model_package.get("overnight_autonomic_source"),

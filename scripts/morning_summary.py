@@ -129,7 +129,10 @@ def aggregate_ppi(rows: list[dict[str, Any]], source_date: str) -> dict[str, Any
     skin_contact_count = 0
     online_count = 0
 
-    for row in latest_cluster_rows(rows_for_date(rows, "ppi247", source_date)):
+    # PPI_247 rows are additive batches rather than one complete daily snapshot.
+    # A later sync can contain only a small tail of new batches, so using only
+    # the latest sync cluster under-counts the day/overnight trajectory.
+    for row in unique_rows(rows_for_date(rows, "ppi247", source_date)):
         payload = parse_payload(row)
         summary = payload.get("summary") or {}
         samples = payload.get("samples") or {}

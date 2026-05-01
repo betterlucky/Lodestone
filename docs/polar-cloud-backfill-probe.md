@@ -30,10 +30,31 @@ If yes, compare those samples against the local Lodestone database:
 Create a private `.env.polar` file in the repository root:
 
 ```bash
+POLAR_CLIENT_ID=...
+POLAR_CLIENT_SECRET=...
+POLAR_REDIRECT_URI=http://localhost:8765/callback
 POLAR_ACCESS_TOKEN=...
+POLAR_REFRESH_TOKEN=...
 ```
 
 Do not commit this file. It is ignored by git.
+
+Use the OAuth helper for the first login:
+
+```bash
+python3 scripts/polar_accesslink_oauth.py
+```
+
+The probe script refreshes the access token automatically when it is missing,
+near expiry, or when Polar returns `401`. A forced refresh can be tested with:
+
+```bash
+python3 scripts/polar_accesslink_probe.py \
+  --from-date 2026-04-30 \
+  --to-date 2026-05-01 \
+  --endpoint sleeps \
+  --force-refresh
+```
 
 Then run:
 

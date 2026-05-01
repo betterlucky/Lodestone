@@ -160,6 +160,9 @@ interface ProbeDao {
     @Query("SELECT * FROM sync_run WHERE id = :id LIMIT 1")
     suspend fun getSyncRun(id: Long): SyncRunEntity?
 
+    @Query("SELECT * FROM sync_run WHERE deviceId = :deviceId AND notes LIKE 'offline PPI start%' ORDER BY startedAtEpochMs DESC LIMIT 1")
+    suspend fun getLatestOfflinePpiStartRun(deviceId: String): SyncRunEntity?
+
     @Query("SELECT LENGTH(rawPayloadJson) FROM sync_domain_result WHERE id = :id")
     suspend fun getSyncDomainResultPayloadLength(id: Long): Int?
 
