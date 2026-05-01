@@ -76,6 +76,10 @@ class ProbeViewModel(
         private set
     var currentDailyWeight by mutableStateOf<DailyWeightEntity?>(null)
         private set
+    var showOutcomeValidation by mutableStateOf(false)
+        private set
+    var saveSuccessFlash by mutableStateOf(false)
+        private set
     private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
 
@@ -312,6 +316,9 @@ class ProbeViewModel(
 
     fun setEveningOutcome(status: TrafficLightStatus?) {
         eveningOutcomeDraft = status
+        if (status != null) {
+            showOutcomeValidation = false
+        }
     }
 
     fun setApproachToDay(status: TrafficLightStatus?) {
@@ -345,23 +352,69 @@ class ProbeViewModel(
 
     fun saveDailyCheckIn() {
         viewModelScope.launch {
+            if (eveningOutcomeDraft == null) {
+                showOutcomeValidation = true
+                statusMessage = "Select how the day ended before saving."
+                return@launch
+            }
+            showOutcomeValidation = false
             runBusyAction("Saving evening check-in…") {
-                val outcome = eveningOutcomeDraft ?: error("Select how the day ended before saving.")
+                val context = getApplication<Application>()
+                val savedDate = checkInDate
+                val foodImportResult = runCatching {
+                    dailyReviewRepository.importLatestFoodCsvFromDownloads(context, savedDate).getOrThrow()
+                }
+                currentFoodSummary = dailyReviewRepository.getFoodDailySummary(savedDate)
+                currentDailyWeight = dailyReviewRepository.getDailyWeight(savedDate)
+
+                val outcome = eveningOutcomeDraft!!
                 dailyReviewRepository.saveDailyCheckIn(
-                    sourceDate = checkInDate,
+                    sourceDate = savedDate,
                     eveningOutcome = outcome.name,
                     approachToDay = approachToDayDraft?.name,
                     muscleWeaknessToday = muscleWeaknessTodayDraft,
                     notes = notesDraft
                 )
-                val savedDate = checkInDate
                 eveningOutcomeDraft = null
                 approachToDayDraft = null
                 muscleWeaknessTodayDraft = false
                 notesDraft = ""
-                statusMessage = "Saved review for $savedDate. Entry fields cleared."
+                saveSuccessFlash = true
+                statusMessage = buildSaveStatusMessage(savedDate, foodImportResult)
             }
         }
+    }
+
+    fun clearOutcomeValidation() {
+        showOutcomeValidation = false
+    }
+
+    fun clearSaveSuccessFlash() {
+        saveSuccessFlash = false
+    }
+
+    private fun buildSaveStatusMessage(savedDate: String, foodImportResult: Result<Int>): String {
+        val foodMessage = when {
+            foodImportResult.isSuccess && foodImportResult.getOrDefault(0) > 0 -> {
+                val parts = listOfNotNull(
+                    currentFoodSummary?.totalCaloriesKcal?.let { "$it kcal" },
+                    currentFoodSummary?.eventCount?.let { "$it items" },
+                    currentDailyWeight?.weightKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) }
+                )
+                if (parts.isEmpty()) " Imported food log." else " Imported food log (${parts.joinToString(", ")})."
+            }
+            foodImportResult.isFailure && foodImportResult.exceptionOrNull()?.message?.contains("No food_log CSV", ignoreCase = true) == true ->
+                if (currentFoodSummary != null || currentDailyWeight != null) {
+                    " No new food log found; existing food data left unchanged."
+                } else {
+                    " No food log found for that date."
+                }
+            foodImportResult.isFailure ->
+                " Food import failed: ${foodImportResult.exceptionOrNull()?.message ?: "unknown error"}."
+            else ->
+                " No dated food entries were imported."
+        }
+        return "Saved review for $savedDate.$foodMessage Entry fields cleared."
     }
 
     fun importLatestFoodCsvFromDownloads() {

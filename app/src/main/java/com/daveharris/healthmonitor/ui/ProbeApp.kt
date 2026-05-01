@@ -24,22 +24,28 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bluetooth
-import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.ChevronLeft
+import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.RateReview
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DisplayMode
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -48,6 +54,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
@@ -55,9 +62,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,6 +72,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,10 +91,11 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.launch
 
 private enum class ProbeTab(val title: String) {
     DEVICE("Device"),
-    DATA("Data"),
+    DATA("Today"),
     FEEDBACK("Review")
 }
 
@@ -108,7 +117,14 @@ fun ProbeApp(
     val dailyWeights by viewModel.dailyWeights.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val pagerState = rememberPagerState(pageCount = { ProbeTab.entries.size })
+    val pagerScope = rememberCoroutineScope()
+    val selectedTab = pagerState.currentPage
+    var showSettings by remember { mutableStateOf(false) }
+    val tabFlingBehavior = PagerDefaults.flingBehavior(
+        state = pagerState,
+        snapPositionalThreshold = 0.42f
+    )
 
     LaunchedEffect(viewModel.statusMessage) {
         viewModel.statusMessage?.let {
@@ -142,12 +158,17 @@ fun ProbeApp(
                         ProbeTab.entries.forEachIndexed { index, tab ->
                             NavigationBarItem(
                                 selected = selectedTab == index,
-                                onClick = { selectedTab = index },
+                                onClick = {
+                                    showSettings = false
+                                    pagerScope.launch {
+                                        pagerState.animateScrollToPage(index)
+                                    }
+                                },
                                 icon = {
                                     when (tab) {
                                         ProbeTab.DEVICE -> Icon(Icons.Outlined.Bluetooth, contentDescription = null)
-                                        ProbeTab.DATA -> Icon(Icons.Outlined.Refresh, contentDescription = null)
-                                        ProbeTab.FEEDBACK -> Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                        ProbeTab.DATA -> Icon(Icons.Outlined.FavoriteBorder, contentDescription = null)
+                                        ProbeTab.FEEDBACK -> Icon(Icons.Outlined.RateReview, contentDescription = null)
                                     }
                                 },
                                 label = { Text(tab.title) }
@@ -159,8 +180,8 @@ fun ProbeApp(
                 if (!permissionsGranted) {
                     MissingPermissionsScreen(padding, onRequestPermissions)
                 } else {
-                    when (ProbeTab.entries[selectedTab]) {
-                        ProbeTab.DEVICE -> DeviceScreen(
+                    if (showSettings) {
+                        SettingsScreen(
                             padding = padding,
                             runtime = runtime,
                             deviceProfile = deviceProfile,
@@ -170,23 +191,43 @@ fun ProbeApp(
                                 "selected=${it.selectedDeviceId ?: "none"}, windows=${it.sleepDays}/${it.nightlyRechargeDays}/${it.hrDays}/${it.ppiDays}"
                             },
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
-                            viewModel = viewModel
-                        )
-                        ProbeTab.DATA -> DataScreen(
-                            padding = padding,
-                            runtime = runtime,
-                            morningRead = morningRead,
-                            viewModel = viewModel
-                        )
-                        ProbeTab.FEEDBACK -> FeedbackScreen(
-                            padding = padding,
-                            morningRead = morningRead,
-                            dailyCheckIns = dailyCheckIns,
-                            foodDailySummaries = foodDailySummaries,
-                            dailyWeights = dailyWeights,
                             viewModel = viewModel,
-                            onImportFoodCsv = onImportFoodCsv
+                            onSetFoodFolder = onSetFoodFolder,
+                            onClose = { showSettings = false }
                         )
+                    } else {
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize(),
+                            flingBehavior = tabFlingBehavior,
+                            beyondViewportPageCount = 0
+                        ) { page ->
+                            when (ProbeTab.entries[page]) {
+                                ProbeTab.DEVICE -> DeviceScreen(
+                                    padding = padding,
+                                    runtime = runtime,
+                                    viewModel = viewModel,
+                                    onOpenSettings = { showSettings = true }
+                                )
+                                ProbeTab.DATA -> DataScreen(
+                                    padding = padding,
+                                    runtime = runtime,
+                                    morningRead = morningRead,
+                                    viewModel = viewModel,
+                                    onOpenSettings = { showSettings = true }
+                                )
+                                ProbeTab.FEEDBACK -> FeedbackScreen(
+                                    padding = padding,
+                                    morningRead = morningRead,
+                                    dailyCheckIns = dailyCheckIns,
+                                    foodDailySummaries = foodDailySummaries,
+                                    dailyWeights = dailyWeights,
+                                    viewModel = viewModel,
+                                    onImportFoodCsv = onImportFoodCsv,
+                                    onOpenSettings = { showSettings = true }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -217,12 +258,8 @@ private fun MissingPermissionsScreen(padding: PaddingValues, onRequestPermission
 private fun DeviceScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
-    deviceProfile: DeviceProfileEntity?,
-    ftuProfile: FtuProfileEntity?,
-    capabilities: List<ObservedCapabilityEntity>,
-    appSettingsSummary: String?,
-    firmwareRediscoveryNeeded: Boolean,
-    viewModel: ProbeViewModel
+    viewModel: ProbeViewModel,
+    onOpenSettings: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier
@@ -235,7 +272,9 @@ private fun DeviceScreen(
             HeroCard(
                 title = "Lodestone",
                 subtitle = "A daily pacing compass for Loop connection, morning signals, and end-of-day review.",
-                eyebrow = "Device"
+                eyebrow = "Device",
+                actionLabel = "Settings",
+                onAction = onOpenSettings
             )
         }
         item {
@@ -263,7 +302,6 @@ private fun DeviceScreen(
                 DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
                 DetailRow("Connected", runtime.connectedDevice?.name ?: "None")
                 DetailRow("Firmware", runtime.firmwareVersion ?: "Unknown")
-                DetailRow("Saved sync profile", appSettingsSummary ?: "none")
                 if (runtime.connectedDevice == null || runtime.connectionPhase == "connecting") {
                     BannerNote(
                         text = "Connection tip: Android does not let Lodestone disable Polar Flow's Bluetooth session automatically. If the Loop is missing or connection stalls, close Polar Flow or disable Flow's Bluetooth/device access, then try Connect again.",
@@ -285,9 +323,175 @@ private fun DeviceScreen(
                 }
             }
         }
+        item { SectionLabel("Discovered devices") }
+        if (runtime.scannedDevices.isEmpty()) {
+            item {
+                BannerNote(
+                    text = "No devices listed yet. Tap Scan above, then choose your Loop when it appears.",
+                    tint = MaterialTheme.colorScheme.secondaryContainer,
+                    textColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
+        itemsIndexed(runtime.scannedDevices, key = { index, device -> "${device.deviceId}-$index" }) { _, device ->
+            DeviceRow(
+                device = device,
+                selected = viewModel.selectedDeviceId == device.deviceId,
+                onSelect = { viewModel.selectDevice(device.deviceId) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun DataScreen(
+    padding: PaddingValues,
+    runtime: DeviceRuntimeState,
+    morningRead: MorningReadSnapshot?,
+    viewModel: ProbeViewModel,
+    onOpenSettings: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         item {
-            SectionCard(title = "Setup & repair", subtitle = "Only when needed") {
-                SupportText("Most days you can ignore this section. Use it when pairing a device, refreshing capabilities after firmware changes, or checking stored device state.")
+            HeroCard(
+                title = "Today",
+                subtitle = "Morning sync, sleep readiness, and overnight HRV signal coverage for ${viewModel.checkInDate}.",
+                eyebrow = "Morning",
+                actionLabel = "Settings",
+                onAction = onOpenSettings
+            )
+        }
+        item {
+            SectionCard(title = "Morning sync", subtitle = "User-controlled wake flow") {
+                SupportText("Use I’m awake when you are ready to mark the day and run the normal Lodestone sync. If Polar has not released the sleep window yet, Lodestone will keep checking.")
+                DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
+                DetailRow("Connection", if (runtime.connectedDevice != null) "Live" else "Not connected")
+                DetailRow("Sleep report", if (morningRead?.sleepDataReady == true) "Present" else "Waiting")
+                DetailRow("Autonomic source", morningRead?.overnightAutonomicSource ?: "none")
+                ButtonRow {
+                    Button(
+                        onClick = viewModel::markAwakeAndSync,
+                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                    ) {
+                        Text("I’m awake")
+                    }
+                }
+            }
+        }
+        item {
+            SectionCard(title = "Overnight HRV detail", subtitle = "Signal coverage from normal Loop sync") {
+                val goodEpochs = morningRead?.rawPpiGoodEpochCount
+                if (goodEpochs == null) {
+                    SupportText("The raw overnight signal is stored from normal sync, but there is no resolved sleep-window alignment for today yet.")
+                } else {
+                    DetailRow("Usable windows", goodEpochs.toString())
+                    DetailRow("Coverage", morningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
+                    if ((morningRead.rawPpiPoorEpochCount ?: 0) > 0) {
+                        DetailRow("Flagged windows", morningRead.rawPpiPoorEpochCount.toString())
+                    }
+                }
+                ButtonRow {
+                    OutlinedButton(onClick = viewModel::runManualSync, enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null) {
+                        Text("Run sync")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsScreen(
+    padding: PaddingValues,
+    runtime: DeviceRuntimeState,
+    deviceProfile: DeviceProfileEntity?,
+    ftuProfile: FtuProfileEntity?,
+    capabilities: List<ObservedCapabilityEntity>,
+    appSettingsSummary: String?,
+    firmwareRediscoveryNeeded: Boolean,
+    viewModel: ProbeViewModel,
+    onSetFoodFolder: () -> Unit,
+    onClose: () -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(padding),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            HeroCard(
+                title = "Settings & tools",
+                subtitle = "Configuration, Flow handoff, and repair controls that should not clutter the daily flow.",
+                eyebrow = "Settings",
+                actionLabel = "Done",
+                onAction = onClose
+            )
+        }
+        item {
+            SectionCard(title = "Daily setup", subtitle = "Things that shape the normal ritual") {
+                DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
+                DetailRow("Connected now", runtime.connectedDevice?.name ?: "None")
+                DetailRow("Saved sync profile", appSettingsSummary ?: "none")
+                ButtonRow {
+                    Button(onClick = onSetFoodFolder, enabled = !viewModel.isBusy) {
+                        Text("Set FoodLogData folder")
+                    }
+                    OutlinedButton(
+                        onClick = viewModel::prepareForPolarFlowUpdate,
+                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                    ) {
+                        Text("Prepare for Flow")
+                    }
+                }
+                SupportText("Flow remains useful for firmware and occasional sleep finalisation. Prepare disconnects Lodestone so Flow can take the Loop cleanly.")
+            }
+        }
+        item {
+            SectionCard(title = "Sync windows", subtitle = "How much history Lodestone asks the Loop for") {
+                val config = viewModel.syncWindowConfig
+                DetailRow("Sleep / Nightly Recharge", "${config.sleepDays}d / ${config.nightlyRechargeDays}d")
+                DetailRow("HR / PPI", "${config.hrDays}d / ${config.ppiDays}d")
+                ButtonRow {
+                    Button(
+                        onClick = {
+                            viewModel.updateSyncDays(
+                                sleepDays = 7,
+                                nightlyRechargeDays = 7,
+                                hrDays = 3,
+                                ppiDays = 3
+                            )
+                        },
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Normal")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            viewModel.updateSyncDays(
+                                sleepDays = 14,
+                                nightlyRechargeDays = 14,
+                                hrDays = 7,
+                                ppiDays = 7
+                            )
+                        },
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Extended")
+                    }
+                }
+                SupportText("Normal is lighter for daily use. Extended is useful after missed syncs or data investigations.")
+            }
+        }
+        item {
+            SectionCard(title = "Loop setup & repair", subtitle = "Rare controls for firmware changes, factory reset, or investigation") {
                 if (firmwareRediscoveryNeeded) {
                     BannerNote(
                         text = "Firmware appears to have changed since the last stored settings. Refresh capabilities before trusting sync results.",
@@ -317,88 +521,6 @@ private fun DeviceScreen(
                 }
             }
         }
-        item { SectionLabel("Discovered devices") }
-        itemsIndexed(runtime.scannedDevices, key = { index, device -> "${device.deviceId}-$index" }) { _, device ->
-            DeviceRow(
-                device = device,
-                selected = viewModel.selectedDeviceId == device.deviceId,
-                onSelect = { viewModel.selectDevice(device.deviceId) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun DataScreen(
-    padding: PaddingValues,
-    runtime: DeviceRuntimeState,
-    morningRead: MorningReadSnapshot?,
-    viewModel: ProbeViewModel
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            HeroCard(
-                title = "Data status",
-                subtitle = "Active review date: ${viewModel.checkInDate}. Normal Loop sync now provides the raw PPI lane.",
-                eyebrow = "Morning"
-            )
-        }
-        item {
-            SectionCard(title = "Morning sync", subtitle = "User-controlled wake flow") {
-                SupportText("Use I’m awake when you are ready to mark the day and run the normal Lodestone sync. If Polar has not released the sleep window yet, Lodestone will keep checking.")
-                DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
-                DetailRow("Connection", if (runtime.connectedDevice != null) "Live" else "Not connected")
-                DetailRow("Sleep report", if (morningRead?.sleepDataReady == true) "Present" else "Waiting")
-                DetailRow("Autonomic source", morningRead?.overnightAutonomicSource ?: "none")
-                ButtonRow {
-                    Button(
-                        onClick = viewModel::markAwakeAndSync,
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("I’m awake")
-                    }
-                }
-            }
-        }
-        item {
-            SectionCard(title = "Polar Flow update", subtitle = "When sleep-derived data is stuck") {
-                SupportText("Flow appears to help finalise the sleep report. This is a guided fallback, not the normal data path.")
-                ButtonRow {
-                    Button(
-                        onClick = viewModel::prepareForPolarFlowUpdate,
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("Prepare for Flow")
-                    }
-                }
-                SupportText("Steps: tap Prepare, open Polar Flow and sync, close Flow, return here, then run Lodestone sync.")
-            }
-        }
-        item {
-            SectionCard(title = "Raw PPI coverage", subtitle = "Normal sync-derived HRV lane") {
-                val goodEpochs = morningRead?.rawPpiGoodEpochCount
-                if (goodEpochs == null) {
-                    SupportText("Raw PPI is stored from normal sync, but there is no resolved sleep-window alignment for today yet.")
-                } else {
-                    DetailRow("Good epochs", goodEpochs.toString())
-                    DetailRow("Coverage", morningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
-                    if ((morningRead.rawPpiPoorEpochCount ?: 0) > 0) {
-                        DetailRow("Flagged windows", morningRead.rawPpiPoorEpochCount.toString())
-                    }
-                }
-                ButtonRow {
-                    OutlinedButton(onClick = viewModel::runManualSync, enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null) {
-                        Text("Run sync")
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -411,7 +533,8 @@ private fun FeedbackScreen(
     foodDailySummaries: List<FoodDailySummaryEntity>,
     dailyWeights: List<DailyWeightEntity>,
     viewModel: ProbeViewModel,
-    onImportFoodCsv: () -> Unit
+    onImportFoodCsv: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val foodSummariesByDate = remember(foodDailySummaries) {
         foodDailySummaries.associateBy { it.sourceDate }
@@ -419,71 +542,72 @@ private fun FeedbackScreen(
     val weightsByDate = remember(dailyWeights) {
         dailyWeights.associateBy { it.sourceDate }
     }
+    val hasSavedReview = dailyCheckIns.any { it.sourceDate == viewModel.checkInDate }
+    val hasFoodImport = viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(padding),
         contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
             HeroCard(
                 title = "Day Review",
-                subtitle = "Use the bedtime outcome as the main truth, then add how you approached the day if that helps explain the result.",
-                eyebrow = "Review"
+                subtitle = "A low-friction evening check-in with the morning signal nearby for context.",
+                eyebrow = "Review",
+                actionLabel = "Settings",
+                onAction = onOpenSettings
             )
         }
         item {
             ReviewDatePickerField(
                 selectedDate = viewModel.checkInDate,
-                hasSavedReview = dailyCheckIns.any { it.sourceDate == viewModel.checkInDate },
-                hasFoodImport = viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null,
+                hasSavedReview = hasSavedReview,
+                hasFoodImport = hasFoodImport,
+                flashSuccess = viewModel.saveSuccessFlash,
+                onClearFlash = viewModel::clearSaveSuccessFlash,
                 onDateSelected = viewModel::updateCheckInDate
             )
         }
         item {
-            SectionCard(title = "Today's note", subtitle = "Morning context") {
-                MorningDataQualityCard(
-                    morningRead = morningRead
+            if (morningRead != null) {
+                MorningReadCard(morningRead)
+            } else {
+                BannerNote(
+                    text = "No morning read is available yet. You can still record how the day ended.",
+                    tint = MaterialTheme.colorScheme.secondaryContainer,
+                    textColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )
-                if (morningRead != null) {
-                    MorningReadCard(morningRead)
-                } else {
-                    BannerNote(
-                        text = "No morning read is available yet. You can still record how the day ended.",
-                        tint = MaterialTheme.colorScheme.secondaryContainer,
-                        textColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
+            }
+        }
+        item {
+            SectionCard(title = "Evening check-in", subtitle = null) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("How did the day actually end?", fontWeight = FontWeight.SemiBold)
+                    Text("(required)", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                 }
-                SectionLabel("Food")
-                if (viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null) {
-                    FoodSummaryCard(
-                        summary = viewModel.currentFoodSummary,
-                        weight = viewModel.currentDailyWeight
-                    )
-                } else {
-                    BannerNote(
-                        text = "No food log has been synced for this date yet.",
-                        tint = MaterialTheme.colorScheme.secondaryContainer,
-                        textColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-                ButtonRow {
-                    Button(onClick = viewModel::importLatestFoodCsvFromDownloads, enabled = !viewModel.isBusy) {
-                        Text("Sync food log")
-                    }
-                    OutlinedButton(onClick = onImportFoodCsv, enabled = !viewModel.isBusy) {
-                        Text("Choose file")
-                    }
-                }
-                SupportText("Sync imports the FoodLogData CSV for the selected date. Choose file remains the fallback.")
-                SectionLabel("How did the day actually end?")
                 StatusChipRow(
                     selected = viewModel.eveningOutcomeDraft,
-                    onSelect = viewModel::setEveningOutcome,
-                    onClear = { viewModel.setEveningOutcome(null) }
+                    onSelect = {
+                        viewModel.setEveningOutcome(it)
+                        viewModel.clearOutcomeValidation()
+                    },
+                    onClear = {
+                        viewModel.setEveningOutcome(null)
+                        viewModel.clearOutcomeValidation()
+                    }
                 )
-                SupportText(feedbackCopyFor(viewModel.eveningOutcomeDraft))
+                if (viewModel.showOutcomeValidation && viewModel.eveningOutcomeDraft == null) {
+                    Text(
+                        "Select an outcome before saving.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (viewModel.eveningOutcomeDraft != null) {
+                    SupportText(feedbackCopyFor(viewModel.eveningOutcomeDraft))
+                }
                 MuscleWeaknessToggle(
                     checked = viewModel.muscleWeaknessTodayDraft,
                     onCheckedChange = viewModel::updateMuscleWeaknessToday
@@ -498,7 +622,9 @@ private fun FeedbackScreen(
                     },
                     onClear = { viewModel.setApproachToDay(null) }
                 )
-                SupportText(approachCopyFor(viewModel.approachToDayDraft))
+                if (viewModel.approachToDayDraft != null) {
+                    SupportText(approachCopyFor(viewModel.approachToDayDraft))
+                }
                 SectionLabel("Notes")
                 NotesField(
                     value = viewModel.notesDraft,
@@ -507,15 +633,24 @@ private fun FeedbackScreen(
                 ButtonRow {
                     Button(
                         onClick = viewModel::saveDailyCheckIn,
-                        enabled = !viewModel.isBusy && viewModel.eveningOutcomeDraft != null
+                        enabled = !viewModel.isBusy
                     ) {
-                        Text("Save ${viewModel.checkInDate}")
+                        Text(if (hasSavedReview) "Update ${viewModel.checkInDate}" else "Save ${viewModel.checkInDate}")
                     }
                     OutlinedButton(onClick = viewModel::resetSelectedReviewDate, enabled = !viewModel.isBusy) {
                         Text("Reset")
                     }
                 }
             }
+        }
+        item {
+            FoodSection(
+                foodSummary = viewModel.currentFoodSummary,
+                weight = viewModel.currentDailyWeight,
+                onSyncFood = viewModel::importLatestFoodCsvFromDownloads,
+                onChooseFile = onImportFoodCsv,
+                isBusy = viewModel.isBusy
+            )
         }
         item { SectionLabel("Recent reviews") }
         items(
@@ -524,28 +659,12 @@ private fun FeedbackScreen(
         ) { checkIn ->
             val foodSummary = foodSummariesByDate[checkIn.sourceDate]
             val weight = weightsByDate[checkIn.sourceDate]
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { viewModel.loadDailyCheckIn(checkIn.sourceDate) },
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.96f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(checkIn.sourceDate, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                    StatusLine("Outcome", checkIn.eveningOutcome)
-                    DetailRow("Approach", checkIn.approachToDay?.let(::labelForStatus) ?: "Not recorded")
-                    DetailRow("Muscle weakness", if (checkIn.muscleWeaknessToday) "Yes" else "No")
-                    DetailRow("Food", reviewFoodImportSummary(foodSummary, weight))
-                    if (!checkIn.notes.isNullOrBlank()) {
-                        DetailRow("Notes", checkIn.notes)
-                    }
-                    DetailRow("Updated", formatEpochMs(checkIn.updatedAtEpochMs))
-                    SupportText("Tap to load this review")
-                }
-            }
+            ReviewHistoryItem(
+                checkIn = checkIn,
+                foodSummary = foodSummary,
+                weight = weight,
+                onTap = { viewModel.loadDailyCheckIn(checkIn.sourceDate) }
+            )
         }
     }
 }
@@ -569,10 +688,124 @@ private fun reviewFoodImportSummary(
 }
 
 @Composable
+private fun FoodSection(
+    foodSummary: FoodDailySummaryEntity?,
+    weight: DailyWeightEntity?,
+    onSyncFood: () -> Unit,
+    onChooseFile: () -> Unit,
+    isBusy: Boolean
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val summaryText = when {
+        foodSummary != null && weight != null -> "${foodSummary.totalCaloriesKcal ?: "n/a"} kcal · ${foodSummary.eventCount ?: "n/a"} items · ${
+            String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg)
+        }"
+        foodSummary != null -> "${foodSummary.totalCaloriesKcal ?: "n/a"} kcal · ${foodSummary.eventCount ?: "n/a"} items"
+        weight != null -> "Weight: ${String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg)}"
+        else -> "No food log synced for this date"
+    }
+
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Food & weight", fontWeight = FontWeight.SemiBold)
+                    Text(summaryText, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { expanded = !expanded }, enabled = !isBusy) {
+                    Text(if (expanded) "Less" else "More")
+                }
+            }
+            if (expanded) {
+                if (foodSummary != null || weight != null) {
+                    FoodSummaryCard(summary = foodSummary, weight = weight)
+                }
+                ButtonRow {
+                    Button(onClick = onSyncFood, enabled = !isBusy) {
+                        Text("Sync food log")
+                    }
+                    OutlinedButton(onClick = onChooseFile, enabled = !isBusy) {
+                        Text("Choose file")
+                    }
+                }
+                SupportText("Saving the check-in also tries to import the FoodLogData CSV for this date.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReviewHistoryItem(
+    checkIn: DailyCheckInEntity,
+    foodSummary: FoodDailySummaryEntity?,
+    weight: DailyWeightEntity?,
+    onTap: () -> Unit
+) {
+    val parsedStatus = checkIn.eveningOutcome.toTrafficLightStatusOrNull()
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onTap),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.96f)
+        )
+    ) {
+        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(checkIn.sourceDate, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                StatusBadge(labelForStatus(checkIn.eveningOutcome), parsedStatus)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(
+                    "Approach: ${checkIn.approachToDay?.let(::labelForStatus) ?: "—"}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Weakness: ${if (checkIn.muscleWeaknessToday) "Yes" else "No"}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            Text(
+                "Food: ${reviewFoodImportSummary(foodSummary, weight)}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (!checkIn.notes.isNullOrBlank()) {
+                Text(
+                    checkIn.notes,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun ReviewDatePickerField(
     selectedDate: String,
     hasSavedReview: Boolean,
     hasFoodImport: Boolean,
+    flashSuccess: Boolean,
+    onClearFlash: () -> Unit,
     onDateSelected: (String) -> Unit
 ) {
     var showPicker by remember { mutableStateOf(false) }
@@ -587,6 +820,20 @@ private fun ReviewDatePickerField(
     val parsedDate = remember(selectedDate) {
         runCatching { LocalDate.parse(selectedDate) }.getOrNull()
     }
+    var successFlashActive by remember { mutableStateOf(false) }
+    LaunchedEffect(flashSuccess) {
+        if (flashSuccess) {
+            successFlashActive = true
+            kotlinx.coroutines.delay(1000)
+            successFlashActive = false
+            onClearFlash()
+        }
+    }
+    val borderColor = when {
+        successFlashActive -> Color(0xFF2E7D60)
+        hasSavedReview -> Color(0xFF2E7D60).copy(alpha = 0.55f)
+        else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f)
+    }
     val status = listOf(
         if (hasSavedReview) "saved review" else "no saved review",
         if (hasFoodImport) "food synced" else "no food import"
@@ -600,7 +847,7 @@ private fun ReviewDatePickerField(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.32f)
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f))
+        border = BorderStroke(if (successFlashActive) 2.dp else 1.dp, borderColor)
     ) {
         Column(
             modifier = Modifier
@@ -610,35 +857,48 @@ private fun ReviewDatePickerField(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text("Active day", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                    Text(
+                        selectedDate,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                    SupportText(status)
+                }
+                if (hasSavedReview) {
+                    StatusBadge("Saved", TrafficLightStatus.GOOD)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.weight(1f)) {
-                    Text("Active day", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
-                    Text(selectedDate, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-                    SupportText(status)
-                }
-                OutlinedButton(onClick = { showPicker = true }) {
-                    Text("Pick")
-                }
-            }
-            ButtonRow {
-                OutlinedButton(
+                IconButton(
                     onClick = { parsedDate?.minusDays(1)?.toString()?.let(onDateSelected) },
                     enabled = parsedDate != null
                 ) {
-                    Text("Previous")
+                    Icon(Icons.Outlined.ChevronLeft, contentDescription = "Previous day")
                 }
                 OutlinedButton(
                     onClick = { onDateSelected(LocalDate.now().toString()) }
                 ) {
                     Text("Today")
                 }
-                OutlinedButton(
+                IconButton(
                     onClick = { parsedDate?.plusDays(1)?.toString()?.let(onDateSelected) },
                     enabled = parsedDate != null
                 ) {
-                    Text("Next")
+                    Icon(Icons.Outlined.ChevronRight, contentDescription = "Next day")
                 }
             }
         }
@@ -714,7 +974,13 @@ private fun DeviceRow(device: PolarDeviceInfo, selected: Boolean, onSelect: () -
 }
 
 @Composable
-private fun HeroCard(title: String, subtitle: String, eyebrow: String) {
+private fun HeroCard(
+    title: String,
+    subtitle: String,
+    eyebrow: String,
+    actionLabel: String? = null,
+    onAction: (() -> Unit)? = null
+) {
     Card(
         shape = RoundedCornerShape(30.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
@@ -733,14 +999,25 @@ private fun HeroCard(title: String, subtitle: String, eyebrow: String) {
                 )
                 .padding(22.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    eyebrow.uppercase(),
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        eyebrow.uppercase(),
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.76f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    )
+                    if (actionLabel != null && onAction != null) {
+                        TextButton(onClick = onAction) {
+                            Text(actionLabel, color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
+                }
                 Text(
                     title,
                     color = MaterialTheme.colorScheme.onPrimary,
@@ -871,46 +1148,71 @@ private fun MorningDataQualityCard(
 
 @Composable
 private fun MorningReadCard(morningRead: MorningReadSnapshot) {
+    if (morningRead.isInterim) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+        ) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Morning signal", fontWeight = FontWeight.SemiBold)
+                    StatusBadge("Pending", null)
+                }
+                Text(
+                    "Morning data is still pending. Check back after Polar releases the sleep report.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        return
+    }
+
     val tone = statusTone(morningRead.status)
+    var expanded by remember { mutableStateOf(false) }
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = tone.copy(alpha = 0.14f)
+            containerColor = tone.copy(alpha = 0.10f)
         ),
-        border = BorderStroke(1.dp, tone.copy(alpha = 0.24f))
+        border = BorderStroke(1.dp, tone.copy(alpha = 0.20f))
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Morning signal", fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (morningRead.isInterim) "Interim morning read" else "Latest morning read",
-                        fontWeight = FontWeight.SemiBold
+                        morningRead.confidence.replaceFirstChar { it.titlecase() },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 13.sp
                     )
-                    SupportText(
-                        if (morningRead.isInterim) {
-                            "Waiting for Polar to release the sleep report"
-                        } else {
-                            "A quick anchor before you score the day"
-                        }
-                    )
-                }
-                if (morningRead.isInterim) {
-                    StatusBadge("Interim", null)
-                } else {
                     StatusBadge(labelForStatus(morningRead.status?.name ?: "unknown"), morningRead.status)
                 }
             }
-            DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
-            DetailRow("Date", morningRead.sourceDate ?: "unknown")
-            DetailRow("Source", morningRead.overnightAutonomicSource)
-            DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
-            DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
-            morningRead.reasons.take(3).forEach { reason ->
-                SupportText("• $reason")
+            morningRead.reasons.take(2).forEach { reason ->
+                Text("• $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { expanded = !expanded }) {
+                Text(if (expanded) "Hide details" else "Show details")
+            }
+            if (expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Date", morningRead.sourceDate ?: "unknown")
+                    DetailRow("Source", morningRead.overnightAutonomicSource)
+                    DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
+                    DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
+                    DetailRow("Raw PPI", "${morningRead.rawPpiGoodEpochCount ?: 0} good epochs")
+                }
             }
         }
     }
@@ -960,14 +1262,15 @@ private fun MuscleWeaknessToggle(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable { onCheckedChange(!checked) }
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("Did you feel muscle weakness today?", fontWeight = FontWeight.SemiBold)
                 SupportText("Optional marker for distinct weakness episodes, separate from fatigue or brain fog.")
             }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
 }
