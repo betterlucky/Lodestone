@@ -29,12 +29,14 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bluetooth
 import androidx.compose.material.icons.outlined.ChevronLeft
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.RateReview
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -69,8 +71,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,6 +95,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import kotlin.math.absoluteValue
 import kotlinx.coroutines.launch
 
 private enum class ProbeTab(val title: String) {
@@ -121,9 +126,11 @@ fun ProbeApp(
     val pagerScope = rememberCoroutineScope()
     val selectedTab = pagerState.currentPage
     var showSettings by remember { mutableStateOf(false) }
+    var blockPostSwipeTaps by remember { mutableStateOf(false) }
+    var hasInitialPagerPage by remember { mutableStateOf(false) }
     val tabFlingBehavior = PagerDefaults.flingBehavior(
         state = pagerState,
-        snapPositionalThreshold = 0.42f
+        snapPositionalThreshold = 0.36f
     )
 
     LaunchedEffect(viewModel.statusMessage) {
@@ -131,6 +138,20 @@ fun ProbeApp(
             snackbarHostState.showSnackbar(it)
             viewModel.consumeMessage()
         }
+    }
+
+    LaunchedEffect(selectedTab) {
+        if (hasInitialPagerPage) {
+            blockPostSwipeTaps = true
+            kotlinx.coroutines.delay(400)
+            blockPostSwipeTaps = false
+        } else {
+            hasInitialPagerPage = true
+        }
+    }
+
+    BackHandler(enabled = showSettings) {
+        showSettings = false
     }
 
     HealthMonitorTheme {
@@ -196,42 +217,78 @@ fun ProbeApp(
                             onClose = { showSettings = false }
                         )
                     } else {
-                        HorizontalPager(
-                            state = pagerState,
-                            modifier = Modifier.fillMaxSize(),
-                            flingBehavior = tabFlingBehavior,
-                            beyondViewportPageCount = 0
-                        ) { page ->
-                            when (ProbeTab.entries[page]) {
-                                ProbeTab.DEVICE -> DeviceScreen(
-                                    padding = padding,
-                                    runtime = runtime,
-                                    viewModel = viewModel,
-                                    onOpenSettings = { showSettings = true }
-                                )
-                                ProbeTab.DATA -> DataScreen(
-                                    padding = padding,
-                                    runtime = runtime,
-                                    morningRead = morningRead,
-                                    viewModel = viewModel,
-                                    onOpenSettings = { showSettings = true }
-                                )
-                                ProbeTab.FEEDBACK -> FeedbackScreen(
-                                    padding = padding,
-                                    morningRead = morningRead,
-                                    dailyCheckIns = dailyCheckIns,
-                                    foodDailySummaries = foodDailySummaries,
-                                    dailyWeights = dailyWeights,
-                                    viewModel = viewModel,
-                                    onImportFoodCsv = onImportFoodCsv,
-                                    onOpenSettings = { showSettings = true }
-                                )
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            HorizontalPager(
+                                state = pagerState,
+                                modifier = Modifier.fillMaxSize(),
+                                flingBehavior = tabFlingBehavior,
+                                beyondViewportPageCount = 0
+                            ) { page ->
+                                val pageOffset = ((pagerState.currentPage - page) + pagerState.currentPageOffsetFraction)
+                                    .coerceIn(-1f, 1f)
+                                ElasticPagerPage(pageOffset = pageOffset) {
+                                    when (ProbeTab.entries[page]) {
+                                        ProbeTab.DEVICE -> DeviceScreen(
+                                            padding = padding,
+                                            runtime = runtime,
+                                            viewModel = viewModel,
+                                            actionsEnabled = !blockPostSwipeTaps,
+                                            onOpenSettings = { showSettings = true }
+                                        )
+                                        ProbeTab.DATA -> DataScreen(
+                                            padding = padding,
+                                            runtime = runtime,
+                                            morningRead = morningRead,
+                                            viewModel = viewModel,
+                                            actionsEnabled = !blockPostSwipeTaps,
+                                            onOpenSettings = { showSettings = true }
+                                        )
+                                        ProbeTab.FEEDBACK -> FeedbackScreen(
+                                            padding = padding,
+                                            morningRead = morningRead,
+                                            dailyCheckIns = dailyCheckIns,
+                                            foodDailySummaries = foodDailySummaries,
+                                            dailyWeights = dailyWeights,
+                                            viewModel = viewModel,
+                                            onImportFoodCsv = onImportFoodCsv,
+                                            actionsEnabled = !blockPostSwipeTaps,
+                                            onOpenSettings = { showSettings = true }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ElasticPagerPage(
+    pageOffset: Float,
+    content: @Composable () -> Unit
+) {
+    val pull = pageOffset.absoluteValue.coerceIn(0f, 1f)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                val direction = if (pageOffset == 0f) 0f else pageOffset / pageOffset.absoluteValue
+                cameraDistance = 18f * density
+                rotationY = -direction * pull * 5.5f
+                scaleX = 1f - (pull * 0.025f)
+                scaleY = 1f - (pull * 0.012f)
+                translationX = -direction * pull * 10f
+                alpha = 1f - (pull * 0.05f)
+                transformOrigin = TransformOrigin(
+                    pivotFractionX = if (direction < 0f) 1f else 0f,
+                    pivotFractionY = 0.5f
+                )
+            }
+    ) {
+        content()
     }
 }
 
@@ -259,6 +316,7 @@ private fun DeviceScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
     viewModel: ProbeViewModel,
+    actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
 ) {
     LazyColumn(
@@ -317,9 +375,19 @@ private fun DeviceScreen(
                     )
                 }
                 ButtonRow {
-                    Button(onClick = viewModel::scanDevices, enabled = !viewModel.isBusy) { Text("Scan") }
-                    Button(onClick = viewModel::connectSelectedDevice, enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null) { Text("Connect") }
-                    OutlinedButton(onClick = viewModel::disconnectSelectedDevice, enabled = !viewModel.isBusy) { Text("Disconnect") }
+                    Button(onClick = { if (actionsEnabled) viewModel.scanDevices() }, enabled = !viewModel.isBusy) { Text("Scan") }
+                    Button(
+                        onClick = { if (actionsEnabled) viewModel.connectSelectedDevice() },
+                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                    ) {
+                        Text("Connect")
+                    }
+                    OutlinedButton(
+                        onClick = { if (actionsEnabled) viewModel.disconnectSelectedDevice() },
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Disconnect")
+                    }
                 }
             }
         }
@@ -349,6 +417,7 @@ private fun DataScreen(
     runtime: DeviceRuntimeState,
     morningRead: MorningReadSnapshot?,
     viewModel: ProbeViewModel,
+    actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
 ) {
     LazyColumn(
@@ -376,7 +445,7 @@ private fun DataScreen(
                 DetailRow("Autonomic source", morningRead?.overnightAutonomicSource ?: "none")
                 ButtonRow {
                     Button(
-                        onClick = viewModel::markAwakeAndSync,
+                        onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
                     ) {
                         Text("I’m awake")
@@ -397,7 +466,10 @@ private fun DataScreen(
                     }
                 }
                 ButtonRow {
-                    OutlinedButton(onClick = viewModel::runManualSync, enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null) {
+                    OutlinedButton(
+                        onClick = { if (actionsEnabled) viewModel.runManualSync() },
+                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                    ) {
                         Text("Run sync")
                     }
                 }
@@ -534,6 +606,7 @@ private fun FeedbackScreen(
     dailyWeights: List<DailyWeightEntity>,
     viewModel: ProbeViewModel,
     onImportFoodCsv: () -> Unit,
+    actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
 ) {
     val foodSummariesByDate = remember(foodDailySummaries) {
@@ -589,12 +662,10 @@ private fun FeedbackScreen(
                 }
                 StatusChipRow(
                     selected = viewModel.eveningOutcomeDraft,
-                    onSelect = {
-                        viewModel.setEveningOutcome(it)
-                        viewModel.clearOutcomeValidation()
-                    },
-                    onClear = {
-                        viewModel.setEveningOutcome(null)
+                    onSelect = { selected ->
+                        viewModel.setEveningOutcome(
+                            if (viewModel.eveningOutcomeDraft == selected) null else selected
+                        )
                         viewModel.clearOutcomeValidation()
                     }
                 )
@@ -608,10 +679,6 @@ private fun FeedbackScreen(
                 if (viewModel.eveningOutcomeDraft != null) {
                     SupportText(feedbackCopyFor(viewModel.eveningOutcomeDraft))
                 }
-                MuscleWeaknessToggle(
-                    checked = viewModel.muscleWeaknessTodayDraft,
-                    onCheckedChange = viewModel::updateMuscleWeaknessToday
-                )
                 SectionLabel("How did you approach the day? Optional.")
                 StatusChipRow(
                     selected = viewModel.approachToDayDraft,
@@ -619,12 +686,15 @@ private fun FeedbackScreen(
                         viewModel.setApproachToDay(
                             if (viewModel.approachToDayDraft == selected) null else selected
                         )
-                    },
-                    onClear = { viewModel.setApproachToDay(null) }
+                    }
                 )
                 if (viewModel.approachToDayDraft != null) {
                     SupportText(approachCopyFor(viewModel.approachToDayDraft))
                 }
+                MuscleWeaknessToggle(
+                    checked = viewModel.muscleWeaknessTodayDraft,
+                    onCheckedChange = viewModel::updateMuscleWeaknessToday
+                )
                 SectionLabel("Notes")
                 NotesField(
                     value = viewModel.notesDraft,
@@ -632,12 +702,15 @@ private fun FeedbackScreen(
                 )
                 ButtonRow {
                     Button(
-                        onClick = viewModel::saveDailyCheckIn,
+                        onClick = { if (actionsEnabled) viewModel.saveDailyCheckIn() },
                         enabled = !viewModel.isBusy
                     ) {
                         Text(if (hasSavedReview) "Update ${viewModel.checkInDate}" else "Save ${viewModel.checkInDate}")
                     }
-                    OutlinedButton(onClick = viewModel::resetSelectedReviewDate, enabled = !viewModel.isBusy) {
+                    OutlinedButton(
+                        onClick = { if (actionsEnabled) viewModel.resetSelectedReviewDate() },
+                        enabled = !viewModel.isBusy
+                    ) {
                         Text("Reset")
                     }
                 }
@@ -647,8 +720,8 @@ private fun FeedbackScreen(
             FoodSection(
                 foodSummary = viewModel.currentFoodSummary,
                 weight = viewModel.currentDailyWeight,
-                onSyncFood = viewModel::importLatestFoodCsvFromDownloads,
-                onChooseFile = onImportFoodCsv,
+                onSyncFood = { if (actionsEnabled) viewModel.importLatestFoodCsvFromDownloads() },
+                onChooseFile = { if (actionsEnabled) onImportFoodCsv() },
                 isBusy = viewModel.isBusy
             )
         }
@@ -1014,7 +1087,15 @@ private fun HeroCard(
                     )
                     if (actionLabel != null && onAction != null) {
                         TextButton(onClick = onAction) {
-                            Text(actionLabel, color = MaterialTheme.colorScheme.onPrimary)
+                            if (actionLabel == "Settings") {
+                                Icon(
+                                    Icons.Outlined.Settings,
+                                    contentDescription = "Settings",
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                Text(actionLabel, color = MaterialTheme.colorScheme.onPrimary)
+                            }
                         }
                     }
                 }
@@ -1304,8 +1385,7 @@ private fun NotesField(value: String, onValueChange: (String) -> Unit) {
 @OptIn(ExperimentalLayoutApi::class)
 private fun StatusChipRow(
     selected: TrafficLightStatus?,
-    onSelect: (TrafficLightStatus) -> Unit,
-    onClear: (() -> Unit)? = null
+    onSelect: (TrafficLightStatus) -> Unit
 ) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1317,11 +1397,6 @@ private fun StatusChipRow(
                 onClick = { onSelect(status) },
                 label = { Text(labelForStatus(status.name)) }
             )
-        }
-        if (onClear != null) {
-            OutlinedButton(onClick = onClear) {
-                Text("Clear")
-            }
         }
     }
 }
