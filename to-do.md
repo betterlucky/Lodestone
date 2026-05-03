@@ -1,0 +1,1 @@
+Today page data-quality summary: “Ready / Waiting / Partial” with exactly what is missing, rather than making you infer it from several fields.

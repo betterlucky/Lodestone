@@ -110,7 +110,9 @@ fun ProbeApp(
     permissionsGranted: Boolean,
     onRequestPermissions: () -> Unit,
     onImportFoodCsv: () -> Unit,
-    onSetFoodFolder: () -> Unit
+    onSetFoodFolder: () -> Unit,
+    onRequestHealthConnectPermissions: () -> Unit,
+    onOpenHealthConnectSettings: () -> Unit
 ) {
     val runtime by viewModel.runtimeState.collectAsState()
     val deviceProfile by viewModel.deviceProfile.collectAsState()
@@ -214,6 +216,8 @@ fun ProbeApp(
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
                             viewModel = viewModel,
                             onSetFoodFolder = onSetFoodFolder,
+                            onRequestHealthConnectPermissions = onRequestHealthConnectPermissions,
+                            onOpenHealthConnectSettings = onOpenHealthConnectSettings,
                             onClose = { showSettings = false }
                         )
                     } else {
@@ -489,6 +493,8 @@ private fun SettingsScreen(
     firmwareRediscoveryNeeded: Boolean,
     viewModel: ProbeViewModel,
     onSetFoodFolder: () -> Unit,
+    onRequestHealthConnectPermissions: () -> Unit,
+    onOpenHealthConnectSettings: () -> Unit,
     onClose: () -> Unit
 ) {
     LazyColumn(
@@ -524,6 +530,32 @@ private fun SettingsScreen(
                     }
                 }
                 SupportText("Flow remains useful for firmware and occasional sleep finalisation. Prepare disconnects Lodestone so Flow can take the Loop cleanly.")
+            }
+        }
+        item {
+            SectionCard(title = "Analysis exports", subtitle = "Temporary calibration data kept out of the main Lodestone database") {
+                DetailRow("Health Connect access", if (viewModel.healthConnectPermissionsGranted) "Granted" else "Not granted")
+                ButtonRow {
+                    Button(
+                        onClick = onRequestHealthConnectPermissions,
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Grant Health Connect")
+                    }
+                    OutlinedButton(
+                        onClick = onOpenHealthConnectSettings,
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Open HC settings")
+                    }
+                    OutlinedButton(
+                        onClick = viewModel::exportHealthConnectSleepAnalysis,
+                        enabled = !viewModel.isBusy && viewModel.healthConnectPermissionsGranted
+                    ) {
+                        Text("Export HC sleep")
+                    }
+                }
+                SupportText("Exports Sleep²/H10 Health Connect records to app files for Mac-side analysis. It does not write to Lodestone's production database.")
             }
         }
         item {

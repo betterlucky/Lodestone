@@ -1,6 +1,8 @@
 # Small Worker Template
 
 Use for a bounded implementation task with a narrow write scope.
+Do not use local Qwen as an autonomous worker. It may draft ideas for a small
+function, but the main agent or a Codex worker must make and verify edits.
 
 ## Role
 

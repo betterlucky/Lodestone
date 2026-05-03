@@ -115,6 +115,33 @@ interface ProbeDao {
     @Query("SELECT rawPayloadJson FROM activity_samples_raw WHERE deviceId = :deviceId")
     suspend fun getExistingActivitySamplePayloads(deviceId: String): List<String>
 
+    @Query(
+        """
+        SELECT sourceDate FROM sleep_night_raw
+        WHERE deviceId = :deviceId AND sourceDate IS NOT NULL AND sourceDate <= :cutoffDate
+        UNION
+        SELECT sourceDate FROM nightly_recharge_raw
+        WHERE deviceId = :deviceId AND sourceDate IS NOT NULL AND sourceDate <= :cutoffDate
+        UNION
+        SELECT sourceDate FROM hr247_day_raw
+        WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
+        UNION
+        SELECT sourceDate FROM ppi247_day_raw
+        WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
+        UNION
+        SELECT sourceDate FROM skin_temperature_raw
+        WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
+        UNION
+        SELECT sourceDate FROM daily_summary_raw
+        WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
+        UNION
+        SELECT sourceDate FROM activity_samples_raw
+        WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
+        ORDER BY sourceDate ASC
+        """
+    )
+    suspend fun getArchivedDeviceSourceDatesAtOrBefore(deviceId: String, cutoffDate: String): List<String>
+
     @Query("DELETE FROM sleep_night_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteSleepRecordsForDate(deviceId: String, sourceDate: String?)
 

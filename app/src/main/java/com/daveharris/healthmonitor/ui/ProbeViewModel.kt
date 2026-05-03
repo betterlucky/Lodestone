@@ -21,6 +21,7 @@ import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ProbeRepository
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
+import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collect
@@ -35,7 +36,8 @@ import java.time.LocalDate
 class ProbeViewModel(
     application: Application,
     private val repository: ProbeRepository,
-    private val dailyReviewRepository: DailyReviewRepository
+    private val dailyReviewRepository: DailyReviewRepository,
+    private val healthConnectAnalysisExporter: HealthConnectAnalysisExporter
 ) : AndroidViewModel(application) {
     val runtimeState = repository.runtimeState.stateIn(
         viewModelScope,
@@ -80,6 +82,8 @@ class ProbeViewModel(
         private set
     var saveSuccessFlash by mutableStateOf(false)
         private set
+    var healthConnectPermissionsGranted by mutableStateOf(false)
+        private set
     private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
 
@@ -104,6 +108,7 @@ class ProbeViewModel(
             }
         }
         refreshFoodImportForDate(checkInDate)
+        refreshHealthConnectPermissions()
     }
 
     fun scanDevices() {
@@ -464,6 +469,39 @@ class ProbeViewModel(
             "discover" -> discoverCapabilities()
             "sync" -> runManualSync()
             "awake_sync" -> markAwakeAndSync()
+            "health_connect_export" -> exportHealthConnectSleepAnalysis()
+        }
+    }
+
+    fun refreshHealthConnectPermissions() {
+        viewModelScope.launch {
+            healthConnectPermissionsGranted = runCatching {
+                healthConnectAnalysisExporter.hasRequiredPermissions()
+            }.getOrDefault(false)
+        }
+    }
+
+    fun handleHealthConnectPermissionResult(granted: Set<String>) {
+        healthConnectPermissionsGranted = granted.containsAll(HealthConnectAnalysisExporter.REQUIRED_PERMISSIONS)
+        statusMessage = if (healthConnectPermissionsGranted) {
+            "Health Connect access granted."
+        } else {
+            "Health Connect access was not granted. Open Health Connect settings and allow Sleep, Heart rate, and HRV for Lodestone."
+        }
+    }
+
+    fun notifyHealthConnectSettingsOpened() {
+        statusMessage = "Opened Health Connect settings. Choose Lodestone under app permissions and allow Sleep, Heart rate, and HRV."
+    }
+
+    fun exportHealthConnectSleepAnalysis() {
+        val date = runCatching { LocalDate.parse(checkInDate) }.getOrElse { LocalDate.now() }
+        viewModelScope.launch {
+            runBusyAction("Exporting Health Connect sleep analysis…") {
+                val file = healthConnectAnalysisExporter.exportSleepAnalysis(date)
+                statusMessage = "Health Connect sleep export saved: ${file.absolutePath}"
+                refreshHealthConnectPermissions()
+            }
         }
     }
 
@@ -546,7 +584,12 @@ class ProbeViewModel(
                 val app = checkNotNull(extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]) as HealthMonitorApp
                 if (modelClass.isAssignableFrom(ProbeViewModel::class.java)) {
                     @Suppress("UNCHECKED_CAST")
-                    return ProbeViewModel(app, app.container.repository, app.container.dailyReviewRepository) as T
+                    return ProbeViewModel(
+                        app,
+                        app.container.repository,
+                        app.container.dailyReviewRepository,
+                        app.container.healthConnectAnalysisExporter
+                    ) as T
                 }
                 error("Unknown ViewModel class: ${modelClass.name}")
             }

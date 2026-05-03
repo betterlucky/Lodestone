@@ -83,6 +83,7 @@ dependencies {
 
     implementation("androidx.datastore:datastore-preferences:1.1.4")
     implementation("androidx.documentfile:documentfile:1.0.1")
+    implementation("androidx.health.connect:connect-client:1.1.0-alpha12")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

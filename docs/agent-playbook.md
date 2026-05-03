@@ -17,8 +17,8 @@ The main agent should preserve ownership of architecture, final decisions, patch
 | Task type | Default route | Effort | Can edit? | Notes |
 |---|---|---:|---|---|
 | Product direction, model design, BLE/Polar SDK reasoning, DB migrations, data safety | Main agent, `gpt-5.5` | medium/high | Yes | Do not delegate final decisions. |
-| Codebase lookup or "where is X handled?" | Explorer subagent, `gpt-5.4-mini` | low/medium | No | Ask for exact files/functions and line refs. |
-| Patch review | Explorer or worker subagent, `gpt-5.4-mini` or `gpt-5.3-codex` | medium | No | Findings only, ordered by severity. |
+| Codebase lookup or "where is X handled?" | Local Qwen for one-file/function questions; otherwise explorer subagent, `gpt-5.4-mini` | low/medium | No | Ask for exact files/functions and line refs. |
+| Patch review | Local Qwen for small diffs; otherwise explorer or worker subagent, `gpt-5.4-mini` or `gpt-5.3-codex` | medium | No | Findings only, ordered by severity. |
 | Small isolated implementation | Worker subagent, `gpt-5.3-codex` | medium | Yes, named files only | Main agent reviews and verifies. |
 | Docs, summaries, changelogs, prompt drafting | Local Qwen when available, otherwise `gpt-5.4-mini` | low | No | Advisory only. |
 | Tests for already-understood logic | Worker subagent, `gpt-5.3-codex` | medium | Yes, test files only | Main agent runs tests. |
@@ -94,9 +94,9 @@ Use the templates in `docs/agent-tasks/`:
 - `small-worker.md`
 - `docs-summary.md`
 
-## Local Qwen / oMLX Future Route
+## Local Qwen / oMLX Sidecar
 
-When a local model is available via CLI or HTTP, add a wrapper script such as `scripts/ask_local_model.py`.
+Use `scripts/ask_local_model.py` when a local OpenAI-compatible model is running.
 
 Local model tasks should be read-only by default:
 
@@ -105,5 +105,21 @@ Local model tasks should be read-only by default:
 - List likely duplicated helpers.
 - Draft non-critical docs.
 - Generate first-pass test ideas.
+- Review a small diff for obvious regressions.
 
 Local model output is advisory. The main agent must still inspect, patch, and verify.
+
+Default local endpoint:
+
+```bash
+scripts/ask_local_model.py --prompt "Question here"
+```
+
+The script defaults to `http://127.0.0.1:8000/v1`, model `Qwen3-Coder-30B-A3B-Instruct-4bit`, and API key `5555`. Override with `LOCAL_MODEL_BASE_URL`, `LOCAL_MODEL_NAME`, or `LOCAL_MODEL_API_KEY`.
+
+Keep local calls small:
+
+- Prefer one file, one function, or one diff hunk.
+- Avoid streaming, huge prompts, concurrent calls, and whole-repo tasks.
+- Do not pass credentials, private exports, pulled phone databases, or personal health payloads.
+- Treat failures as non-blocking; fall back to normal inspection or Codex subagents.

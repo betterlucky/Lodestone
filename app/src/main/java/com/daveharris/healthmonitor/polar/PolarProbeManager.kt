@@ -137,6 +137,9 @@ class PolarProbeManager(
 
     suspend fun getDiskSpace(deviceId: String) = api.getDiskSpace(deviceId)
 
+    suspend fun deleteDeviceDateFolders(deviceId: String, from: LocalDate, to: LocalDate) =
+        api.deleteDeviceDateFolders(deviceId, from, to)
+
     suspend fun getAvailableOfflineRecordingDataTypes(deviceId: String): Set<PolarBleApi.PolarDeviceDataType> =
         api.getAvailableOfflineRecordingDataTypes(deviceId)
 

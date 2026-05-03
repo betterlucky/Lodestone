@@ -15,7 +15,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.health.connect.client.HealthConnectClient
 import androidx.core.content.ContextCompat
+import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.daveharris.healthmonitor.ui.ProbeApp
 import com.daveharris.healthmonitor.ui.ProbeViewModel
@@ -54,6 +56,11 @@ class MainActivity : ComponentActivity() {
                     vm.saveFoodFolder(uri)
                 }
             }
+            val healthConnectPermissionLauncher = rememberLauncherForActivityResult(
+                contract = HealthConnectAnalysisExporter.requestPermissionContract()
+            ) { granted ->
+                vm.handleHealthConnectPermissionResult(granted)
+            }
             LaunchedEffect(Unit) {
                 if (!permissionsGranted) {
                     launcher.launch(
@@ -90,6 +97,13 @@ class MainActivity : ComponentActivity() {
                 },
                 onSetFoodFolder = {
                     foodFolderLauncher.launch(null)
+                },
+                onRequestHealthConnectPermissions = {
+                    healthConnectPermissionLauncher.launch(HealthConnectAnalysisExporter.REQUIRED_PERMISSIONS)
+                },
+                onOpenHealthConnectSettings = {
+                    openHealthConnectSettings()
+                    vm.notifyHealthConnectSettingsOpened()
                 }
             )
         }
@@ -108,6 +122,14 @@ class MainActivity : ComponentActivity() {
     private fun captureAutomationIntent(intent: Intent?) {
         pendingAutomationAction = intent?.getStringExtra(EXTRA_AUTOMATION_ACTION)
         pendingAutomationDeviceId = intent?.getStringExtra(EXTRA_AUTOMATION_DEVICE_ID)
+    }
+
+    private fun openHealthConnectSettings() {
+        val intent = Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS)
+        runCatching { startActivity(intent) }
+            .recoverCatching {
+                startActivity(Intent(android.provider.Settings.ACTION_SETTINGS))
+            }
     }
 
     companion object {

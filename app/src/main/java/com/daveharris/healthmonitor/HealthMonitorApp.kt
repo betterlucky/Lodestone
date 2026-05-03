@@ -4,6 +4,7 @@ import android.app.Application
 import com.daveharris.healthmonitor.data.AppDatabase
 import com.daveharris.healthmonitor.data.DailyReviewRepository
 import com.daveharris.healthmonitor.data.ProbeRepository
+import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
 import com.daveharris.healthmonitor.polar.PolarProbeManager
 
 class HealthMonitorApp : Application() {
@@ -16,7 +17,8 @@ class HealthMonitorApp : Application() {
         val polarManager = PolarProbeManager(this, database)
         val repository = ProbeRepository(database, polarManager)
         val dailyReviewRepository = DailyReviewRepository(database)
-        container = AppContainer(database, polarManager, repository, dailyReviewRepository)
+        val healthConnectAnalysisExporter = HealthConnectAnalysisExporter(this)
+        container = AppContainer(database, polarManager, repository, dailyReviewRepository, healthConnectAnalysisExporter)
     }
 }
 
@@ -24,5 +26,6 @@ data class AppContainer(
     val database: AppDatabase,
     val polarManager: PolarProbeManager,
     val repository: ProbeRepository,
-    val dailyReviewRepository: DailyReviewRepository
+    val dailyReviewRepository: DailyReviewRepository,
+    val healthConnectAnalysisExporter: HealthConnectAnalysisExporter
 )

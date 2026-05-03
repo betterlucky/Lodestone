@@ -66,6 +66,7 @@ class ProbeCommandReceiver : BroadcastReceiver() {
     ) {
         val repository = app.container.repository
         val dailyReviewRepository = app.container.dailyReviewRepository
+        val healthConnectAnalysisExporter = app.container.healthConnectAnalysisExporter
         val settings = repository.getAppSettings()
         val selectedDeviceId = deviceId ?: settings?.selectedDeviceId
         val syncConfig = settings?.let {
@@ -221,6 +222,11 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 val date = foodDate ?: java.time.LocalDate.now().toString()
                 val count = dailyReviewRepository.importLatestFoodCsvFromDownloads(app.applicationContext, date).getOrThrow()
                 Log.i(TAG, "Imported $count food day summaries from food CSV for $date")
+            }
+            "health_connect_export" -> {
+                val date = LocalDate.parse(foodDate ?: fromDate ?: LocalDate.now().toString())
+                val file = healthConnectAnalysisExporter.exportSleepAnalysis(date)
+                Log.i(TAG, "Exported Health Connect sleep analysis to ${file.absolutePath}")
             }
             else -> error("Unknown command '$command'")
         }

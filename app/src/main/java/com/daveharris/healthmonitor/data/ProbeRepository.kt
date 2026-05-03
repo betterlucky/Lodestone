@@ -249,6 +249,7 @@ class ProbeRepository(
                         DomainPersistenceResult(data.size, shapeForActivitySamples(data), PayloadMappers.activitySamplesList(data))
                     }
                 }
+                runPostSyncDeviceHistoryMaintenance(syncRunId, deviceId)
                 runPostSyncStorageMaintenance(syncRunId, deviceId)
 
                 val existingRun = dao.getSyncRun(syncRunId)
@@ -610,36 +611,18 @@ class ProbeRepository(
             val diskBefore = polarManager.getDiskSpace(deviceId)
             val beforePayload = diskSpacePayload(diskBefore, startedAt)
             val usedPercent = beforePayload["usedPercent"] as? Double
-            val cutoffForBulkyValidation = when {
-                usedPercent == null -> null
-                usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT -> LocalDateTime.now().minusDays(1)
-                usedPercent >= SOFT_STORAGE_MAINTENANCE_USED_PERCENT -> LocalDateTime.now().minusDays(7)
-                else -> null
-            }
-            val ppiCutoff = if (usedPercent != null && usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT) {
-                LocalDateTime.now().minusDays(7)
-            } else {
-                null
-            }
-            val regularEntries = if (cutoffForBulkyValidation != null || ppiCutoff != null) {
-                runCatching { polarManager.listOfflineRecordings(deviceId) }.getOrDefault(emptyList())
-            } else {
-                emptyList()
-            }
-            val splitEntries = if (cutoffForBulkyValidation != null || ppiCutoff != null) {
-                runCatching { polarManager.listSplitOfflineRecordings(deviceId) }.getOrDefault(emptyList())
-            } else {
-                emptyList()
-            }
+            val cleanupPolicy = storageMaintenancePolicy(usedPercent)
+            val regularEntries = runCatching { polarManager.listOfflineRecordings(deviceId) }.getOrDefault(emptyList())
+            val splitEntries = runCatching { polarManager.listSplitOfflineRecordings(deviceId) }.getOrDefault(emptyList())
             val removalCandidates = (regularEntries + splitEntries)
                 .distinctBy { it.path }
                 .filter { entry ->
                     when (entry.type) {
-                        PolarBleApi.PolarDeviceDataType.PPG,
+                        PolarBleApi.PolarDeviceDataType.PPG -> entry.date.isBefore(cleanupPolicy.ppgCutoff)
                         PolarBleApi.PolarDeviceDataType.ACC,
-                        PolarBleApi.PolarDeviceDataType.SKIN_TEMPERATURE -> cutoffForBulkyValidation != null && entry.date.isBefore(cutoffForBulkyValidation)
-                        PolarBleApi.PolarDeviceDataType.PPI -> ppiCutoff != null && entry.date.isBefore(ppiCutoff)
-                        else -> false
+                        PolarBleApi.PolarDeviceDataType.SKIN_TEMPERATURE -> entry.date.isBefore(cleanupPolicy.secondaryValidationCutoff)
+                        PolarBleApi.PolarDeviceDataType.PPI -> entry.date.isBefore(cleanupPolicy.ppiCutoff)
+                        else -> entry.date.isBefore(cleanupPolicy.genericOfflineCutoff)
                     }
                 }
                 .sortedBy { it.date }
@@ -659,10 +642,16 @@ class ProbeRepository(
                 "startedAtEpochMs" to startedAt,
                 "softUsedPercentThreshold" to SOFT_STORAGE_MAINTENANCE_USED_PERCENT,
                 "hardUsedPercentThreshold" to HARD_STORAGE_MAINTENANCE_USED_PERCENT,
+                "ppgRetentionHours" to cleanupPolicy.ppgRetentionHours,
+                "secondaryValidationRetentionDays" to cleanupPolicy.secondaryValidationRetentionDays,
+                "ppiRetentionDays" to cleanupPolicy.ppiRetentionDays,
+                "genericOfflineRetentionDays" to cleanupPolicy.genericOfflineRetentionDays,
                 "diskBefore" to beforePayload,
                 "diskAfter" to diskSpacePayload(diskAfter, System.currentTimeMillis()),
-                "bulkyValidationCutoff" to cutoffForBulkyValidation?.toString(),
-                "ppiCutoff" to ppiCutoff?.toString(),
+                "ppgCutoff" to cleanupPolicy.ppgCutoff.toString(),
+                "secondaryValidationCutoff" to cleanupPolicy.secondaryValidationCutoff.toString(),
+                "ppiCutoff" to cleanupPolicy.ppiCutoff.toString(),
+                "genericOfflineCutoff" to cleanupPolicy.genericOfflineCutoff.toString(),
                 "candidateEntries" to removalCandidates.map(::offlineEntrySummary),
                 "removedEntries" to removals,
                 "removedEntryCount" to removalCandidates.size,
@@ -705,6 +694,89 @@ class ProbeRepository(
                             "purpose" to "post_sync_storage_maintenance",
                             "deviceId" to deviceId,
                             "startedAtEpochMs" to startedAt,
+                            "error" to (error.message ?: error.javaClass.simpleName)
+                        )
+                    ),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = error.javaClass.simpleName,
+                    errorMessage = error.message
+                )
+            )
+        }
+    }
+
+    private suspend fun runPostSyncDeviceHistoryMaintenance(syncRunId: Long, deviceId: String) {
+        val startedAt = System.currentTimeMillis()
+        val cutoffDate = LocalDate.now(ZoneOffset.UTC).minusDays(DEVICE_STORED_DATA_RETENTION_DAYS)
+        runCatching {
+            val diskBefore = polarManager.getDiskSpace(deviceId)
+            val archivedDates = dao.getArchivedDeviceSourceDatesAtOrBefore(deviceId, cutoffDate.toString())
+                .mapNotNull { date -> runCatching { LocalDate.parse(date) }.getOrNull() }
+                .distinct()
+                .sorted()
+            val removals = archivedDates.map { date ->
+                val result = runCatching { polarManager.deleteDeviceDateFolders(deviceId, date, date) }
+                mapOf(
+                    "date" to date.toString(),
+                    "removed" to result.isSuccess,
+                    "error" to result.exceptionOrNull()?.message
+                )
+            }
+            val failedCount = removals.count { it["removed"] != true }
+            val diskAfter = polarManager.getDiskSpace(deviceId)
+            val payload = mapOf(
+                "purpose" to "post_sync_device_history_maintenance",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to startedAt,
+                "retentionDays" to DEVICE_STORED_DATA_RETENTION_DAYS,
+                "cutoffDate" to cutoffDate.toString(),
+                "diskBefore" to diskSpacePayload(diskBefore, startedAt),
+                "diskAfter" to diskSpacePayload(diskAfter, System.currentTimeMillis()),
+                "archivedDates" to archivedDates.map { it.toString() },
+                "removedDates" to removals,
+                "removedDateCount" to archivedDates.size,
+                "failedRemovalCount" to failedCount
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.DAILY_SUMMARY.name,
+                    requestedRange = "device_history_maintenance",
+                    status = if (failedCount == 0) ProbeStatus.SUPPORTED.name else ProbeStatus.PARTIAL.name,
+                    recordCount = archivedDates.size,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = deviceHistoryMaintenanceSummary(cutoffDate, archivedDates.size, failedCount, diskBefore.freeSpace, diskAfter.freeSpace),
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = null,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = if (failedCount == 0) null else "PARTIAL_DEVICE_HISTORY_REMOVE_FAILURE",
+                    errorMessage = if (failedCount == 0) null else "$failedCount device date folders could not be removed"
+                )
+            )
+        }.onFailure { error ->
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.DAILY_SUMMARY.name,
+                    requestedRange = "device_history_maintenance",
+                    status = ProbeStatus.ERROR.name,
+                    recordCount = 0,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "device history maintenance failed: ${error.message ?: error.javaClass.simpleName}",
+                    rawPayloadJson = GsonProvider.gson.toJson(
+                        mapOf(
+                            "purpose" to "post_sync_device_history_maintenance",
+                            "deviceId" to deviceId,
+                            "startedAtEpochMs" to startedAt,
+                            "retentionDays" to DEVICE_STORED_DATA_RETENTION_DAYS,
+                            "cutoffDate" to cutoffDate.toString(),
                             "error" to (error.message ?: error.javaClass.simpleName)
                         )
                     ),
@@ -1260,6 +1332,45 @@ class ProbeRepository(
         return "usedPercent=$used, removed=$removedCount, failed=$failedCount, advertisedBytes=$removedBytes, freeBefore=$freeBefore, freeAfter=$freeAfter"
     }
 
+    private fun deviceHistoryMaintenanceSummary(
+        cutoffDate: LocalDate,
+        removedCount: Int,
+        failedCount: Int,
+        freeBefore: Long,
+        freeAfter: Long
+    ): String =
+        "retentionDays=$DEVICE_STORED_DATA_RETENTION_DAYS, cutoffDate=$cutoffDate, removedDates=$removedCount, failed=$failedCount, freeBefore=$freeBefore, freeAfter=$freeAfter"
+
+    private fun storageMaintenancePolicy(usedPercent: Double?): StorageMaintenancePolicy {
+        val now = LocalDateTime.now()
+        val ppgRetentionHours = PPG_EXPERIMENT_RETENTION_HOURS
+        val secondaryValidationRetentionDays = when {
+            usedPercent != null && usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT -> 1L
+            usedPercent != null && usedPercent >= SOFT_STORAGE_MAINTENANCE_USED_PERCENT -> 3L
+            else -> SECONDARY_VALIDATION_RETENTION_DAYS
+        }
+        val ppiRetentionDays = when {
+            usedPercent != null && usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT -> 3L
+            usedPercent != null && usedPercent >= SOFT_STORAGE_MAINTENANCE_USED_PERCENT -> 7L
+            else -> OFFLINE_PPI_RETENTION_DAYS
+        }
+        val genericOfflineRetentionDays = when {
+            usedPercent != null && usedPercent >= HARD_STORAGE_MAINTENANCE_USED_PERCENT -> 3L
+            usedPercent != null && usedPercent >= SOFT_STORAGE_MAINTENANCE_USED_PERCENT -> 7L
+            else -> GENERIC_OFFLINE_RETENTION_DAYS
+        }
+        return StorageMaintenancePolicy(
+            ppgRetentionHours = ppgRetentionHours,
+            secondaryValidationRetentionDays = secondaryValidationRetentionDays,
+            ppiRetentionDays = ppiRetentionDays,
+            genericOfflineRetentionDays = genericOfflineRetentionDays,
+            ppgCutoff = now.minusHours(ppgRetentionHours),
+            secondaryValidationCutoff = now.minusDays(secondaryValidationRetentionDays),
+            ppiCutoff = now.minusDays(ppiRetentionDays),
+            genericOfflineCutoff = now.minusDays(genericOfflineRetentionDays)
+        )
+    }
+
     private fun diskSpacePayload(diskSpace: PolarDiskSpaceData, checkedAtEpochMs: Long): Map<String, Any?> {
         val usedSpace = diskSpace.totalSpace - diskSpace.freeSpace
         val usedPercent = if (diskSpace.totalSpace > 0L) {
@@ -1690,6 +1801,11 @@ data class DomainPersistenceResult(
 
 private const val SOFT_STORAGE_MAINTENANCE_USED_PERCENT = 70.0
 private const val HARD_STORAGE_MAINTENANCE_USED_PERCENT = 85.0
+private const val PPG_EXPERIMENT_RETENTION_HOURS = 6L
+private const val SECONDARY_VALIDATION_RETENTION_DAYS = 14L
+private const val OFFLINE_PPI_RETENTION_DAYS = 14L
+private const val GENERIC_OFFLINE_RETENTION_DAYS = 14L
+private const val DEVICE_STORED_DATA_RETENTION_DAYS = 14L
 
 private data class Ppi247WindowSummary(
     val averageRmssdMs: Double,
@@ -1699,6 +1815,17 @@ private data class Ppi247WindowSummary(
     val poorEpochCount: Int,
     val coverageHours: Double,
     val lateMinusEarlyRmssdMs: Double?
+)
+
+private data class StorageMaintenancePolicy(
+    val ppgRetentionHours: Long,
+    val secondaryValidationRetentionDays: Long,
+    val ppiRetentionDays: Long,
+    val genericOfflineRetentionDays: Long,
+    val ppgCutoff: LocalDateTime,
+    val secondaryValidationCutoff: LocalDateTime,
+    val ppiCutoff: LocalDateTime,
+    val genericOfflineCutoff: LocalDateTime
 )
 
 private data class OfflineRecordingCandidate(
