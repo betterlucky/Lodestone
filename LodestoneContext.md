@@ -2,6 +2,8 @@
 
 This note captures project-specific context that is easy to lose between sessions. It is deliberately practical rather than exhaustive: the aim is to preserve the quirks, decisions, and working assumptions that affect future implementation.
 
+Treat this document as a snapshot and guidance aid, not the source of truth. If it conflicts with the current code, committed docs, database schema, or explicit user instructions, prefer those sources and update this note when the dust settles.
+
 ## Product Shape
 
 - Lodestone is a personal health-monitoring prototype for daily pacing, recovery tracking, and morning/evening reflection.

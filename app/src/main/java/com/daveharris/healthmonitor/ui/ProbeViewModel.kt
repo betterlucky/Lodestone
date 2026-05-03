@@ -248,6 +248,21 @@ class ProbeViewModel(
         }
     }
 
+    fun markGoingToBed() {
+        val today = LocalDate.now().toString()
+        viewModelScope.launch {
+            runBusyAction("Recording bedtime marker…") {
+                repository.recordWakeMarker(
+                    sourceDate = today,
+                    markerSource = "manual_going_to_bed",
+                    deviceId = selectedDeviceId,
+                    notes = "I’m going to bed button"
+                )
+                statusMessage = "Bedtime marker recorded."
+            }
+        }
+    }
+
     fun prepareForPolarFlowUpdate() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {

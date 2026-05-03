@@ -442,12 +442,18 @@ private fun DataScreen(
         }
         item {
             SectionCard(title = "Morning sync", subtitle = "User-controlled wake flow") {
-                SupportText("Use I’m awake when you are ready to mark the day and run the normal Lodestone sync. If Polar has not released the sleep window yet, Lodestone will keep checking.")
+                SupportText("Use I’m going to bed to mark intended sleep time, then I’m awake when you are ready to mark the day and run the normal Lodestone sync.")
                 DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
                 DetailRow("Connection", if (runtime.connectedDevice != null) "Live" else "Not connected")
                 DetailRow("Sleep report", if (morningRead?.sleepDataReady == true) "Present" else "Waiting")
                 DetailRow("Autonomic source", morningRead?.overnightAutonomicSource ?: "none")
                 ButtonRow {
+                    OutlinedButton(
+                        onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("I’m going to bed")
+                    }
                     Button(
                         onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
