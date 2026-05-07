@@ -4,53 +4,81 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.daveharris.healthmonitor.data.SyncRunProfile
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import java.time.LocalDate
 
 class ProbeCommandReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        val command = intent.getStringExtra(EXTRA_COMMAND)?.lowercase().orEmpty()
+        if (SyncCommandWorker.shouldHandle(command)) {
+            SyncCommandWorker.enqueue(context.applicationContext, intent)
+            Log.i(TAG, "Command '$command' handed off to sync worker")
+            return
+        }
+
         val pendingResult = goAsync()
         val app = context.applicationContext as HealthMonitorApp
-        val command = intent.getStringExtra(EXTRA_COMMAND)?.lowercase().orEmpty()
-        val deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)
-        val foodDate = intent.getStringExtra(EXTRA_FOOD_DATE)
-        val fromDate = intent.getStringExtra(EXTRA_FROM_DATE)
-        val toDate = intent.getStringExtra(EXTRA_TO_DATE)
-        val triggerAtEpochMs = intent.getLongExtra(EXTRA_TRIGGER_AT_EPOCH_MS, -1L)
-        val attempt = intent.getIntExtra(EXTRA_ATTEMPT, 1)
-
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                executeCommand(app, command, deviceId, foodDate, fromDate, toDate, triggerAtEpochMs)
-                Log.i(TAG, "Command '$command' completed for device=${deviceId ?: "selected"}")
+                executeCommandFromIntent(app, intent)
+                Log.i(TAG, "Command '$command' completed")
             } catch (t: Throwable) {
                 Log.e(TAG, "Command '$command' failed: ${t.message}", t)
-                if (command == "morning_read_check") {
-                    val selectedDeviceId = deviceId ?: app.container.repository.getAppSettings()?.selectedDeviceId
-                    MorningReadScheduler.scheduleNextCheck(
-                        context = app.applicationContext,
-                        targetDate = LocalDate.now().toString(),
-                        deviceId = selectedDeviceId
-                    )
-                    Log.i(TAG, "Rescheduled morning read check after failure.")
-                }
-                if (command == "offline_ppi_start") {
-                    val selectedDeviceId = deviceId ?: app.container.repository.getAppSettings()?.selectedDeviceId
-                    val nextRetry = OfflinePpiScheduler.scheduleRetry(app.applicationContext, selectedDeviceId, attempt)
-                    if (nextRetry != null) {
-                        Log.i(TAG, "Rescheduled offline PPI start attempt ${attempt + 1} for $nextRetry")
-                    } else {
-                        Log.e(TAG, "Offline PPI start exhausted ${OfflinePpiScheduler.MAX_START_ATTEMPTS} attempts")
-                    }
-                }
+                handleCommandFailure(app, command, intent, t)
             } finally {
                 pendingResult.finish()
+            }
+        }
+    }
+
+    internal suspend fun executeCommandFromIntent(app: HealthMonitorApp, intent: Intent) {
+        val command = intent.getStringExtra(EXTRA_COMMAND)?.lowercase().orEmpty()
+        executeCommand(
+            app = app,
+            command = command,
+            deviceId = intent.getStringExtra(EXTRA_DEVICE_ID),
+            foodDate = intent.getStringExtra(EXTRA_FOOD_DATE),
+            fromDate = intent.getStringExtra(EXTRA_FROM_DATE),
+            toDate = intent.getStringExtra(EXTRA_TO_DATE),
+            triggerAtEpochMs = intent.getLongExtra(EXTRA_TRIGGER_AT_EPOCH_MS, -1L),
+            overrideSleepDays = intent.getIntExtra(EXTRA_SLEEP_DAYS, -1).takeIf { it > 0 },
+            overrideNightlyRechargeDays = intent.getIntExtra(EXTRA_NIGHTLY_RECHARGE_DAYS, -1).takeIf { it > 0 },
+            overrideHrDays = intent.getIntExtra(EXTRA_HR_DAYS, -1).takeIf { it > 0 },
+            overridePpiDays = intent.getIntExtra(EXTRA_PPI_DAYS, -1).takeIf { it > 0 },
+            morningReadGeneration = intent.getLongExtra(EXTRA_MORNING_READ_GENERATION, -1L)
+        )
+    }
+
+    internal suspend fun handleCommandFailure(
+        app: HealthMonitorApp,
+        command: String,
+        intent: Intent,
+        error: Throwable
+    ) {
+        if (error is StaleMorningReadCheckException) return
+        val deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)
+        val attempt = intent.getIntExtra(EXTRA_ATTEMPT, 1)
+        if (command == "morning_read_check" && error.message != "Sync already running") {
+            val selectedDeviceId = deviceId ?: app.container.repository.getAppSettings()?.selectedDeviceId
+            MorningReadScheduler.scheduleNextCheck(
+                context = app.applicationContext,
+                targetDate = LocalDate.now().toString(),
+                deviceId = selectedDeviceId
+            )
+            Log.i(TAG, "Rescheduled morning read check after failure.")
+        }
+        if (command == "offline_ppi_start") {
+            val selectedDeviceId = deviceId ?: app.container.repository.getAppSettings()?.selectedDeviceId
+            val nextRetry = OfflinePpiScheduler.scheduleRetry(app.applicationContext, selectedDeviceId, attempt)
+            if (nextRetry != null) {
+                Log.i(TAG, "Rescheduled offline PPI start attempt ${attempt + 1} for $nextRetry")
+            } else {
+                Log.e(TAG, "Offline PPI start exhausted ${OfflinePpiScheduler.MAX_START_ATTEMPTS} attempts")
             }
         }
     }
@@ -62,21 +90,32 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         foodDate: String?,
         fromDate: String?,
         toDate: String?,
-        triggerAtEpochMs: Long
+        triggerAtEpochMs: Long,
+        overrideSleepDays: Int?,
+        overrideNightlyRechargeDays: Int?,
+        overrideHrDays: Int?,
+        overridePpiDays: Int?,
+        morningReadGeneration: Long
     ) {
         val repository = app.container.repository
+        val syncCoordinator = app.container.syncCoordinator
         val dailyReviewRepository = app.container.dailyReviewRepository
         val healthConnectAnalysisExporter = app.container.healthConnectAnalysisExporter
         val settings = repository.getAppSettings()
         val selectedDeviceId = deviceId ?: settings?.selectedDeviceId
         val syncConfig = settings?.let {
             SyncWindowConfig(
-                sleepDays = it.sleepDays,
-                nightlyRechargeDays = it.nightlyRechargeDays,
-                hrDays = it.hrDays,
-                ppiDays = it.ppiDays
+                sleepDays = overrideSleepDays ?: it.sleepDays,
+                nightlyRechargeDays = overrideNightlyRechargeDays ?: it.nightlyRechargeDays,
+                hrDays = overrideHrDays ?: it.hrDays,
+                ppiDays = overridePpiDays ?: it.ppiDays
             )
-        } ?: SyncWindowConfig()
+        } ?: SyncWindowConfig(
+            sleepDays = overrideSleepDays ?: SyncWindowConfig().sleepDays,
+            nightlyRechargeDays = overrideNightlyRechargeDays ?: SyncWindowConfig().nightlyRechargeDays,
+            hrDays = overrideHrDays ?: SyncWindowConfig().hrDays,
+            ppiDays = overridePpiDays ?: SyncWindowConfig().ppiDays
+        )
 
         suspend fun persistSelection(id: String) {
             repository.saveAppSettings(
@@ -86,40 +125,11 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             )
         }
 
-        suspend fun connectAndAwait(id: String): String {
-            fun com.daveharris.healthmonitor.polar.DeviceRuntimeState.matchesConnectedDevice(): Boolean {
-                val device = connectedDevice
-                return connectionPhase == "connected" &&
-                    (
-                        device?.deviceId.equals(id, ignoreCase = true) ||
-                            device?.address.equals(id, ignoreCase = true)
-                        )
-            }
-
-            repository.connect(id)
-            withTimeout(45_000) {
-                repository.runtimeState.first { runtime ->
-                    runtime.matchesConnectedDevice()
-                }
-            }
-            withTimeout(20_000) {
-                repository.runtimeState.first { runtime ->
-                    runtime.matchesConnectedDevice() &&
-                        (
-                            runtime.firmwareVersion != null ||
-                                runtime.readyFeatures.isNotEmpty() ||
-                                runtime.unavailableFeatures.isNotEmpty()
-                            )
-                }
-            }
-            return repository.runtimeState.value.connectedDevice?.deviceId ?: id
-        }
-
         when (command) {
             "scan" -> repository.search()
             "connect" -> {
                 val id = requireNotNull(selectedDeviceId) { "connect requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
+                val connectedId = syncCoordinator.runExclusiveDeviceOperation(id) { it }
                 persistSelection(connectedId)
             }
             "disconnect" -> {
@@ -128,15 +138,16 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             }
             "discover" -> {
                 val id = requireNotNull(selectedDeviceId) { "discover requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
+                val connectedId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    repository.runCapabilityDiscovery(connectedId).getOrThrow()
+                    connectedId
+                }
                 persistSelection(connectedId)
-                repository.runCapabilityDiscovery(connectedId).getOrThrow()
             }
             "sync" -> {
                 val id = requireNotNull(selectedDeviceId) { "sync requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.runManualSync(connectedId, syncConfig).getOrThrow()
+                val result = syncCoordinator.runSync(id, syncConfig, SyncRunProfile.FULL)
+                persistSelection(result.connectedDeviceId)
             }
             "export_json" -> {
                 val file = repository.exportInspectorData(app.applicationContext).getOrThrow()
@@ -144,28 +155,41 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             }
             "full_probe" -> {
                 val id = requireNotNull(selectedDeviceId) { "full_probe requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.runManualSync(connectedId, syncConfig).getOrThrow()
+                val result = syncCoordinator.runSync(id, syncConfig, SyncRunProfile.FULL)
+                persistSelection(result.connectedDeviceId)
             }
             "manual_awake_sync" -> {
                 val id = requireNotNull(selectedDeviceId) { "$command requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.recordWakeMarker(
-                    sourceDate = LocalDate.now().toString(),
-                    deviceId = connectedId,
-                    notes = "manual awake command"
+                val result = syncCoordinator.runSync(
+                    deviceId = id,
+                    config = syncConfig,
+                    profile = SyncRunProfile.MORNING_CORE,
+                    scheduleMorningRetryIfNeeded = true,
+                    cancelMorningRetryFirst = true,
+                    wakeMarkerNotes = "manual awake command"
                 )
-                repository.runManualSync(connectedId, syncConfig).getOrThrow()
-                scheduleMorningReadCheckIfNeeded(app, connectedId)
+                persistSelection(result.connectedDeviceId)
             }
             "morning_read_check" -> {
                 val id = requireNotNull(selectedDeviceId) { "morning_read_check requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                repository.runManualSync(connectedId, syncConfig).getOrThrow()
-                scheduleMorningReadCheckIfNeeded(app, connectedId)
+                val targetDate = LocalDate.now().toString()
+                if (!MorningReadScheduler.isCurrentCheck(app.applicationContext, targetDate, morningReadGeneration)) {
+                    Log.i(TAG, "Morning read check skipped: stale generation for $targetDate")
+                    return
+                }
+                if (repository.hasSleepRecordForDate(targetDate)) {
+                    MorningReadScheduler.cancel(app.applicationContext)
+                    Log.i(TAG, "Morning read check skipped: final sleep report is already present for $targetDate")
+                    return
+                }
+                val result = syncCoordinator.runSync(
+                    deviceId = id,
+                    config = syncConfig,
+                    profile = SyncRunProfile.MORNING_CORE,
+                    scheduleMorningRetryIfNeeded = true,
+                    morningReadGuard = MorningReadGuard(targetDate, morningReadGeneration)
+                )
+                persistSelection(result.connectedDeviceId)
             }
             "ppi247_rebuild_epochs" -> {
                 val count = repository.rebuildPpi247EpochTables().getOrThrow()
@@ -175,9 +199,11 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 val id = requireNotNull(selectedDeviceId) { "ppi247_range_probe requires automation_device_id or selected device" }
                 val from = LocalDate.parse(requireNotNull(fromDate) { "ppi247_range_probe requires probe_from_date" })
                 val to = LocalDate.parse(toDate ?: fromDate)
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                val runId = repository.runPpi247RangeProbe(connectedId, from, to).getOrThrow()
+                val result = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.runPpi247RangeProbe(connectedId, from, to).getOrThrow()
+                }
+                val runId = result
                 Log.i(TAG, "PPI_247 range probe completed: runId=$runId, range=$from..$to")
             }
             "offline_ppi_schedule_start" -> {
@@ -188,30 +214,34 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             }
             "offline_ppi_start" -> {
                 val id = requireNotNull(selectedDeviceId) { "offline_ppi_start requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                val runId = repository.startOfflinePpiProbe(connectedId).getOrThrow()
+                val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.startOfflinePpiProbe(connectedId).getOrThrow()
+                }
                 Log.i(TAG, "Offline PPI started: runId=$runId")
             }
             "offline_ppi_stop_fetch" -> {
                 val id = requireNotNull(selectedDeviceId) { "offline_ppi_stop_fetch requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                val runId = repository.stopAndFetchOfflinePpiProbe(connectedId).getOrThrow()
+                val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.stopAndFetchOfflinePpiProbe(connectedId).getOrThrow()
+                }
                 Log.i(TAG, "Offline PPI stopped/fetched: runId=$runId")
             }
             "disk_space_probe" -> {
                 val id = requireNotNull(selectedDeviceId) { "disk_space_probe requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                val runId = repository.runDiskSpaceProbe(connectedId).getOrThrow()
+                val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.runDiskSpaceProbe(connectedId).getOrThrow()
+                }
                 Log.i(TAG, "Disk space probe completed: runId=$runId")
             }
             "offline_ppg_cleanup" -> {
                 val id = requireNotNull(selectedDeviceId) { "offline_ppg_cleanup requires automation_device_id or selected device" }
-                val connectedId = connectAndAwait(id)
-                persistSelection(connectedId)
-                val runId = repository.removeOfflinePpgExperimentRecords(connectedId).getOrThrow()
+                val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.removeOfflinePpgExperimentRecords(connectedId).getOrThrow()
+                }
                 Log.i(TAG, "Offline PPG cleanup completed: runId=$runId")
             }
             "context_rebuild_epochs" -> {
@@ -232,15 +262,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         }
     }
 
-    private suspend fun scheduleMorningReadCheckIfNeeded(app: HealthMonitorApp, deviceId: String) {
-        val targetDate = LocalDate.now().toString()
-        if (app.container.repository.hasSleepRecordForDate(targetDate)) {
-            MorningReadScheduler.cancel(app.applicationContext)
-        } else {
-            MorningReadScheduler.scheduleNextCheck(app.applicationContext, targetDate, deviceId)
-        }
-    }
-
     companion object {
         private const val TAG = "ProbeCommandReceiver"
         const val EXTRA_COMMAND = "probe_command"
@@ -250,5 +271,10 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         const val EXTRA_TO_DATE = "probe_to_date"
         const val EXTRA_TRIGGER_AT_EPOCH_MS = "probe_trigger_at_epoch_ms"
         const val EXTRA_ATTEMPT = "probe_attempt"
+        const val EXTRA_SLEEP_DAYS = "probe_sleep_days"
+        const val EXTRA_NIGHTLY_RECHARGE_DAYS = "probe_nightly_recharge_days"
+        const val EXTRA_HR_DAYS = "probe_hr_days"
+        const val EXTRA_PPI_DAYS = "probe_ppi_days"
+        const val EXTRA_MORNING_READ_GENERATION = "probe_morning_read_generation"
     }
 }

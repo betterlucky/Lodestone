@@ -97,6 +97,9 @@ interface ProbeDao {
     @Query("SELECT rawPayloadJson FROM sleep_night_raw WHERE deviceId = :deviceId")
     suspend fun getExistingSleepPayloads(deviceId: String): List<String>
 
+    @Query("SELECT * FROM sleep_night_raw WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)")
+    suspend fun getSleepRecordsForDates(deviceId: String, sourceDates: List<String>): List<SleepNightRawEntity>
+
     @Query("SELECT rawPayloadJson FROM nightly_recharge_raw WHERE deviceId = :deviceId")
     suspend fun getExistingNightlyRechargePayloads(deviceId: String): List<String>
 
@@ -186,6 +189,26 @@ interface ProbeDao {
 
     @Query("SELECT * FROM sync_run WHERE id = :id LIMIT 1")
     suspend fun getSyncRun(id: Long): SyncRunEntity?
+
+    @Query(
+        """
+        UPDATE sync_run
+        SET endedAtEpochMs = :endedAtEpochMs,
+            status = :status,
+            notes = :notes
+        WHERE status = 'running'
+          AND startedAtEpochMs < :cutoffEpochMs
+        """
+    )
+    suspend fun markStaleRunningSyncRuns(
+        cutoffEpochMs: Long,
+        endedAtEpochMs: Long,
+        status: String,
+        notes: String
+    ): Int
+
+    @Query("SELECT COUNT(*) FROM sync_run WHERE status = 'running' AND startedAtEpochMs >= :cutoffEpochMs")
+    suspend fun countRecentRunningSyncRuns(cutoffEpochMs: Long): Int
 
     @Query("SELECT * FROM sync_run WHERE deviceId = :deviceId AND notes LIKE 'offline PPI start%' ORDER BY startedAtEpochMs DESC LIMIT 1")
     suspend fun getLatestOfflinePpiStartRun(deviceId: String): SyncRunEntity?

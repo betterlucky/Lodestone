@@ -11,7 +11,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewModelScope
 import com.daveharris.healthmonitor.HealthMonitorApp
-import com.daveharris.healthmonitor.MorningReadScheduler
+import com.daveharris.healthmonitor.SyncCommandWorker
+import com.daveharris.healthmonitor.SyncCoordinator
 import com.daveharris.healthmonitor.data.DailyReviewRepository
 import com.daveharris.healthmonitor.data.DeviceProfileEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
@@ -19,23 +20,22 @@ import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ProbeRepository
+import com.daveharris.healthmonitor.data.SyncRunProfile
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
-import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
 import java.time.LocalDate
 
 class ProbeViewModel(
     application: Application,
     private val repository: ProbeRepository,
+    private val syncCoordinator: SyncCoordinator,
     private val dailyReviewRepository: DailyReviewRepository,
     private val healthConnectAnalysisExporter: HealthConnectAnalysisExporter
 ) : AndroidViewModel(application) {
@@ -139,8 +139,10 @@ class ProbeViewModel(
         val deviceId = selectedDeviceId ?: return
         viewModelScope.launch {
             runBusyAction("Connecting…") {
-                repository.connect(deviceId)
-                statusMessage = "Connect requested for $deviceId. If this stalls, close Polar Flow or disable its Bluetooth access first."
+                val result = syncCoordinator.runExclusiveDeviceOperation(deviceId) { it }
+                selectedDeviceId = result
+                persistAppSettings()
+                statusMessage = "Connected to $result."
             }
         }
     }
@@ -153,35 +155,6 @@ class ProbeViewModel(
                 statusMessage = "Disconnect requested for $deviceId."
             }
         }
-    }
-
-    private suspend fun connectAndAwaitSelectedDevice(deviceId: String): String {
-        fun DeviceRuntimeState.matchesSelectedDevice(): Boolean {
-            val device = connectedDevice
-            return connectionPhase == "connected" &&
-                (
-                    device?.deviceId.equals(deviceId, ignoreCase = true) ||
-                        device?.address.equals(deviceId, ignoreCase = true)
-                    )
-        }
-
-        repository.connect(deviceId)
-        withTimeout(45_000) {
-            repository.runtimeState.first { runtime ->
-                runtime.matchesSelectedDevice()
-            }
-        }
-        withTimeout(20_000) {
-            repository.runtimeState.first { runtime ->
-                runtime.matchesSelectedDevice() &&
-                    (
-                        runtime.firmwareVersion != null ||
-                            runtime.readyFeatures.isNotEmpty() ||
-                            runtime.unavailableFeatures.isNotEmpty()
-                        )
-            }
-        }
-        return repository.runtimeState.value.connectedDevice?.deviceId ?: deviceId
     }
 
     fun updateSyncDays(
@@ -198,7 +171,11 @@ class ProbeViewModel(
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
             runBusyAction("Checking FTU status…") {
-                val isDone = repository.refreshFtuStatus(deviceId).getOrThrow()
+                val isDone = syncCoordinator.runExclusiveDeviceOperation(deviceId) { connectedId ->
+                    selectedDeviceId = connectedId
+                    repository.refreshFtuStatus(connectedId).getOrThrow()
+                }
+                persistAppSettings()
                 statusMessage = if (isDone) "Device reports FTU complete." else "Device reports FTU incomplete."
             }
         }
@@ -208,7 +185,11 @@ class ProbeViewModel(
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
             runBusyAction("Running capability discovery…") {
-                repository.runCapabilityDiscovery(deviceId).getOrThrow()
+                val result = syncCoordinator.runExclusiveDeviceOperation(deviceId) { connectedId ->
+                    repository.runCapabilityDiscovery(connectedId).getOrThrow()
+                    connectedId
+                }
+                selectedDeviceId = result
                 persistAppSettings()
                 firmwareRediscoveryNeeded = false
                 statusMessage = "Capability discovery completed."
@@ -220,7 +201,13 @@ class ProbeViewModel(
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
             runBusyAction("Running sync…") {
-                repository.runManualSync(deviceId, syncWindowConfig).getOrThrow()
+                SyncCommandWorker.cancelBulkWork(getApplication())
+                val result = syncCoordinator.runSync(
+                    deviceId = deviceId,
+                    config = syncWindowConfig,
+                    profile = SyncRunProfile.MORNING_CORE
+                )
+                selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
                 firmwareRediscoveryNeeded = false
                 statusMessage = "Manual sync completed."
@@ -234,14 +221,16 @@ class ProbeViewModel(
         selectCheckInDate(today)
         viewModelScope.launch {
             runBusyAction("Recording wake time and syncing…") {
-                val connectedId = connectAndAwaitSelectedDevice(deviceId)
-                repository.recordWakeMarker(
-                    sourceDate = today,
-                    deviceId = connectedId,
-                    notes = "I’m awake button"
+                SyncCommandWorker.cancelBulkWork(getApplication())
+                val result = syncCoordinator.runSync(
+                    deviceId = deviceId,
+                    config = syncWindowConfig,
+                    profile = SyncRunProfile.MORNING_CORE,
+                    scheduleMorningRetryIfNeeded = true,
+                    cancelMorningRetryFirst = true,
+                    wakeMarkerNotes = "I’m awake button"
                 )
-                repository.runManualSync(connectedId, syncWindowConfig).getOrThrow()
-                scheduleMorningReadCheckIfNeeded(connectedId)
+                selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
                 statusMessage = "Awake recorded. Normal sync completed."
             }
@@ -520,15 +509,6 @@ class ProbeViewModel(
         }
     }
 
-    private suspend fun scheduleMorningReadCheckIfNeeded(deviceId: String) {
-        val targetDate = LocalDate.now().toString()
-        if (repository.hasSleepRecordForDate(targetDate)) {
-            MorningReadScheduler.cancel(getApplication())
-        } else {
-            MorningReadScheduler.scheduleNextCheck(getApplication(), targetDate, deviceId)
-        }
-    }
-
     private suspend fun runBusyAction(workingMessage: String, block: suspend () -> Unit) {
         isBusy = true
         statusMessage = workingMessage
@@ -602,6 +582,7 @@ class ProbeViewModel(
                     return ProbeViewModel(
                         app,
                         app.container.repository,
+                        app.container.syncCoordinator,
                         app.container.dailyReviewRepository,
                         app.container.healthConnectAnalysisExporter
                     ) as T

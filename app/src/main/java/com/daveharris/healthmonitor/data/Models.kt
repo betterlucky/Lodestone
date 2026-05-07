@@ -39,6 +39,14 @@ data class SyncWindowConfig(
         )
 }
 
+enum class SyncRunProfile(
+    val runNotes: String,
+    val successNotes: String
+) {
+    MORNING_CORE("morning core sync", "morning core sync completed"),
+    FULL("manual sync", "manual sync completed")
+}
+
 data class MorningReadSnapshot(
     val sourceDate: String?,
     val status: TrafficLightStatus?,

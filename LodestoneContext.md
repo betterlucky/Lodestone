@@ -160,6 +160,7 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 - Oura may offer useful 5-minute RMSSD-style sleep data but no raw beat-level public feed.
 - Fibion/Helix appears interesting and possibly Loop-like hardware with different firmware, but availability/SDK claims need verification.
 - Visible Band may be a cheap experimentation route for alternative Polar-like firmware/hardware behaviour.
+- PineTime/PineTime Pro is a future lead as an ultra-open hackable wearable/marker-device platform, but the current model should not be treated as a serious HRV/PPI sensor candidate.
 - Corsano appears research/HCP-oriented and less directly accessible than hoped.
 - H10/ECG patch are good calibration tools but not realistic all-day wear for this project.
 - The broader wearable market is frustrating: many devices could expose 24/7 HRV/PPI, but most deliberately gate, smooth, or withhold it.

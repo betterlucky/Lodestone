@@ -16,9 +16,10 @@ class HealthMonitorApp : Application() {
         val database = AppDatabase.create(this)
         val polarManager = PolarProbeManager(this, database)
         val repository = ProbeRepository(database, polarManager)
+        val syncCoordinator = SyncCoordinator(this, repository)
         val dailyReviewRepository = DailyReviewRepository(database)
         val healthConnectAnalysisExporter = HealthConnectAnalysisExporter(this)
-        container = AppContainer(database, polarManager, repository, dailyReviewRepository, healthConnectAnalysisExporter)
+        container = AppContainer(database, polarManager, repository, syncCoordinator, dailyReviewRepository, healthConnectAnalysisExporter)
     }
 }
 
@@ -26,6 +27,7 @@ data class AppContainer(
     val database: AppDatabase,
     val polarManager: PolarProbeManager,
     val repository: ProbeRepository,
+    val syncCoordinator: SyncCoordinator,
     val dailyReviewRepository: DailyReviewRepository,
     val healthConnectAnalysisExporter: HealthConnectAnalysisExporter
 )

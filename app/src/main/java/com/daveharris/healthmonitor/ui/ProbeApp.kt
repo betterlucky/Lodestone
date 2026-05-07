@@ -441,12 +441,17 @@ private fun DataScreen(
             )
         }
         item {
-            SectionCard(title = "Morning sync", subtitle = "User-controlled wake flow") {
+            SectionCard(title = "Morning sync", subtitle = "Loop readiness checklist") {
                 SupportText("Use I’m going to bed to mark intended sleep time, then I’m awake when you are ready to mark the day and run the normal Lodestone sync.")
-                DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
-                DetailRow("Connection", if (runtime.connectedDevice != null) "Live" else "Not connected")
-                DetailRow("Sleep report", if (morningRead?.sleepDataReady == true) "Present" else "Waiting")
-                DetailRow("Autonomic source", morningRead?.overnightAutonomicSource ?: "none")
+                DetailRow("Device", viewModel.selectedDeviceId ?: "None selected")
+                DetailRow(
+                    "Connection",
+                    runtime.connectedDevice?.name?.let { "Connected to $it" }
+                        ?: runtime.connectionPhase.replaceFirstChar { it.titlecase() }
+                )
+                DetailRow("Final Loop sleep report", loopSleepReportStatus(morningRead))
+                DetailRow("PPI data from Loop", loopPpiReceiptStatus(morningRead))
+                SupportText("The final Loop sleep report can take up to a couple of hours to resolve after waking. PPI may arrive first, but the morning read cannot fully score it until the sleep window is available.")
                 ButtonRow {
                     OutlinedButton(
                         onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
@@ -486,6 +491,24 @@ private fun DataScreen(
             }
         }
     }
+}
+
+private fun loopSleepReportStatus(morningRead: MorningReadSnapshot?): String = when {
+    morningRead?.sleepDataReady == true -> "Final report present"
+    morningRead?.isInterim == true -> "Waiting for final report"
+    else -> "Not synced yet"
+}
+
+private fun loopPpiReceiptStatus(morningRead: MorningReadSnapshot?): String = when {
+    morningRead?.rawPpiGoodEpochCount != null -> {
+        val coverage = morningRead.rawPpiCoverageHours?.let {
+            String.format(java.util.Locale.UK, ", %.1fh aligned", it)
+        }.orEmpty()
+        "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
+    }
+    morningRead?.overnightAutonomicSource == "raw_ppi_pending_sleep_window" -> "Received, awaiting sleep window"
+    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received"
+    else -> "Not received yet"
 }
 
 @Composable
