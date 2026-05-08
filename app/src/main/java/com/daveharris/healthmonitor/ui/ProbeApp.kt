@@ -451,13 +451,15 @@ private fun DataScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            HeroCard(
-                title = "Today",
-                subtitle = "Morning sync, sleep readiness, and overnight HRV signal coverage for $today.",
-                eyebrow = "Morning",
-                actionLabel = "Settings",
-                onAction = onOpenSettings
+            TodayHeroCard(
+                today = today,
+                todayStatus = todayStatus,
+                morningRead = activeMorningRead,
+                onOpenSettings = onOpenSettings
             )
+        }
+        item {
+            MorningSignalSection(activeMorningRead, todayStatus)
         }
         item {
             SectionCard(title = "Morning sync", subtitle = "Loop readiness checklist") {
@@ -487,11 +489,6 @@ private fun DataScreen(
                         Text("I’m awake")
                     }
                 }
-            }
-        }
-        item {
-            if (activeMorningRead != null) {
-                MorningReadCard(activeMorningRead)
             }
         }
         item {
@@ -599,6 +596,109 @@ private fun todayReadinessStatus(
         )
     }
 }
+
+@Composable
+private fun TodayHeroCard(
+    today: String,
+    todayStatus: TodayReadinessStatus,
+    morningRead: MorningReadSnapshot?,
+    onOpenSettings: () -> Unit
+) {
+    val statusLabel = morningRead?.status?.let { labelForStatus(it.name) } ?: "TBC"
+    val qualifier = when {
+        morningRead?.sleepDataReady == true -> "Confirmed"
+        morningRead?.status != null -> "Provisional"
+        todayStatus.stage == TodayReadinessStage.SLEEP_TIME -> "Sleep time"
+        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> "Starting sync"
+        else -> "TBC"
+    }
+    val confidence = morningRead?.confidence
+        ?.takeUnless { it.equals("pending", ignoreCase = true) }
+        ?.replaceFirstChar { it.titlecase() }
+
+    Card(
+        shape = RoundedCornerShape(30.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary,
+                            MaterialTheme.colorScheme.tertiary,
+                            MaterialTheme.colorScheme.secondary
+                        )
+                    )
+                )
+                .padding(22.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        formatHeroDate(today).uppercase(),
+                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    )
+                    TextButton(onClick = onOpenSettings) {
+                        Icon(
+                            Icons.Outlined.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
+                Text(
+                    "Today: $statusLabel",
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    HeroPill(qualifier)
+                    confidence?.let { HeroPill("$it confidence") }
+                }
+                Text(
+                    todayStatus.message,
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.90f),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HeroPill(label: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(100.dp))
+            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f))
+            .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f), RoundedCornerShape(100.dp))
+            .padding(horizontal = 12.dp, vertical = 7.dp)
+    ) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onPrimary,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+private fun formatHeroDate(value: String): String =
+    runCatching {
+        LocalDate.parse(value).format(DateTimeFormatter.ofPattern("EEE d MMM yyyy", java.util.Locale.UK))
+    }.getOrDefault(value)
 
 private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
     morningRead?.rawPpiGoodEpochCount != null -> {
@@ -1318,6 +1418,39 @@ private fun DataCard(
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             SupportText(headline)
             content()
+        }
+    }
+}
+
+@Composable
+private fun MorningSignalSection(
+    morningRead: MorningReadSnapshot?,
+    todayStatus: TodayReadinessStatus
+) {
+    val tone = statusTone(morningRead?.status)
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = tone.copy(alpha = if (morningRead?.status == null) 0.06f else 0.10f)
+        ),
+        border = BorderStroke(1.dp, tone.copy(alpha = 0.18f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Morning signal", fontWeight = FontWeight.SemiBold)
+            if (morningRead == null) {
+                Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                morningRead.reasons.take(3).forEach { reason ->
+                    Text("• $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Date", morningRead.sourceDate ?: "unknown")
+                    DetailRow("Source", morningRead.overnightAutonomicSource)
+                    DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
+                    DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
+                    DetailRow("Raw PPI", "${morningRead.rawPpiGoodEpochCount ?: 0} good epochs")
+                }
+            }
         }
     }
 }
