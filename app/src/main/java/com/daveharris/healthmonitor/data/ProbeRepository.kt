@@ -838,21 +838,28 @@ class ProbeRepository(
         block: suspend () -> T
     ): T {
         var lastError: Throwable? = null
-        repeat(3) { attempt ->
+        repeat(SYNC_NOTIFICATION_START_ATTEMPTS) { attempt ->
             try {
                 val started = polarManager.startSyncNotifications(deviceId)
-                check(started) { "Sync notifications not enabled" }
+                if (!started) {
+                    throw SyncNotificationsNotReadyException()
+                }
                 return try {
                     block()
                 } finally {
-                    runCatching { polarManager.stopSyncNotifications(deviceId) }
+                    withTimeoutOrNull(SYNC_NOTIFICATION_STOP_TIMEOUT_MS) {
+                        runCatching { polarManager.stopSyncNotifications(deviceId) }
+                    }
                 }
             } catch (error: Throwable) {
                 lastError = error
-                if (error.javaClass.simpleName != "PolarNotificationNotEnabled" || attempt == 2) {
+                val isNotificationStartupRace =
+                    error is SyncNotificationsNotReadyException ||
+                        error.javaClass.simpleName == "PolarNotificationNotEnabled"
+                if (!isNotificationStartupRace || attempt == SYNC_NOTIFICATION_START_ATTEMPTS - 1) {
                     throw error
                 }
-                delay(1_500L * (attempt + 1))
+                delay(SYNC_NOTIFICATION_START_RETRY_DELAY_MS * (attempt + 1))
             }
         }
         throw requireNotNull(lastError)
@@ -1871,6 +1878,12 @@ private const val GENERIC_OFFLINE_RETENTION_DAYS = 14L
 private const val DEVICE_STORED_DATA_RETENTION_DAYS = 14L
 private const val STALE_RUNNING_SYNC_AFTER_MS = 15 * 60 * 1000L
 private const val MANUAL_SYNC_TIMEOUT_MS = 7 * 60 * 1000L
+private const val SYNC_NOTIFICATION_START_ATTEMPTS = 5
+private const val SYNC_NOTIFICATION_START_RETRY_DELAY_MS = 1_500L
+private const val SYNC_NOTIFICATION_STOP_TIMEOUT_MS = 5_000L
+
+private class SyncNotificationsNotReadyException :
+    IllegalStateException("Sync notifications not enabled")
 
 private data class Ppi247WindowSummary(
     val averageRmssdMs: Double,
