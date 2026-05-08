@@ -87,9 +87,7 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.FtuProfileEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ObservedCapabilityEntity
-import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
-import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.model.PolarDeviceInfo
 import java.time.Instant
@@ -419,296 +417,6 @@ private fun DeviceScreen(
             )
         }
     }
-}
-
-@Composable
-private fun DataScreen(
-    padding: PaddingValues,
-    runtime: DeviceRuntimeState,
-    morningRead: MorningReadSnapshot?,
-    syncRuns: List<SyncRunEntity>,
-    wakeMarkers: List<WakeMarkerEntity>,
-    viewModel: ProbeViewModel,
-    actionsEnabled: Boolean,
-    onOpenSettings: () -> Unit
-) {
-    val today = LocalDate.now().toString()
-    val todayStatus = todayReadinessStatus(
-        today = today,
-        morningRead = morningRead,
-        syncRuns = syncRuns,
-        wakeMarkers = wakeMarkers,
-        isBusy = viewModel.isBusy
-    )
-    val activeMorningRead = morningRead
-        ?.takeIf { it.sourceDate == today }
-        ?.takeUnless { todayStatus.stage == TodayReadinessStage.SLEEP_TIME }
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(padding),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            TodayHeroCard(
-                today = today,
-                todayStatus = todayStatus,
-                morningRead = activeMorningRead,
-                onOpenSettings = onOpenSettings
-            )
-        }
-        item {
-            MorningSignalSection(activeMorningRead, todayStatus)
-        }
-        item {
-            SectionCard(title = "Morning sync", subtitle = "Loop readiness checklist") {
-                SupportText("Use I’m going to bed to mark intended sleep time, then I’m awake when you are ready to mark the day and run the normal Lodestone sync.")
-                DetailRow("Status", todayStatus.title)
-                DetailRow("Device", viewModel.selectedDeviceId ?: "None selected")
-                DetailRow(
-                    "Connection",
-                    runtime.connectedDevice?.name?.let { "Connected to $it" }
-                        ?: runtime.connectionPhase.replaceFirstChar { it.titlecase() }
-                )
-                DetailRow("Final Loop sleep report", todayStatus.sleepReport)
-                DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
-                SupportText(todayStatus.message)
-                SupportText("The final Loop sleep report can take up to a couple of hours to resolve after waking. PPI may arrive first, but the morning read cannot fully score it until the sleep window is available.")
-                ButtonRow {
-                    OutlinedButton(
-                        onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
-                        enabled = !viewModel.isBusy
-                    ) {
-                        Text("I’m going to bed")
-                    }
-                    Button(
-                        onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("I’m awake")
-                    }
-                }
-            }
-        }
-        item {
-            SectionCard(title = "Overnight HRV detail", subtitle = "Signal coverage from normal Loop sync") {
-                val goodEpochs = activeMorningRead?.rawPpiGoodEpochCount
-                if (goodEpochs == null) {
-                    SupportText(todayStatus.hrvDetail)
-                } else {
-                    DetailRow("Usable windows", goodEpochs.toString())
-                    DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
-                    if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {
-                        DetailRow("Flagged windows", activeMorningRead.rawPpiPoorEpochCount.toString())
-                    }
-                }
-                ButtonRow {
-                    OutlinedButton(
-                        onClick = { if (actionsEnabled) viewModel.runManualSync() },
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("Run sync")
-                    }
-                }
-            }
-        }
-    }
-}
-
-private enum class TodayReadinessStage {
-    SLEEP_TIME,
-    STARTING_SYNC,
-    INITIAL_PPI,
-    UPDATE_COMPLETE,
-    NOT_STARTED
-}
-
-private data class TodayReadinessStatus(
-    val stage: TodayReadinessStage,
-    val title: String,
-    val sleepReport: String,
-    val ppiReceipt: String,
-    val message: String,
-    val hrvDetail: String
-)
-
-private fun todayReadinessStatus(
-    today: String,
-    morningRead: MorningReadSnapshot?,
-    syncRuns: List<SyncRunEntity>,
-    wakeMarkers: List<WakeMarkerEntity>,
-    isBusy: Boolean
-): TodayReadinessStatus {
-    val relevantMorningRead = morningRead?.takeIf { it.sourceDate == today }
-    val latestRealMarker = wakeMarkers
-        .filterNot { it.notes == "manual awake command" }
-        .maxByOrNull { it.markerEpochMs }
-    val latestMorningSync = syncRuns
-        .filter { it.notes?.contains("morning core sync", ignoreCase = true) == true }
-        .maxByOrNull { it.startedAtEpochMs }
-    val isSleeping = latestRealMarker?.markerSource == "manual_going_to_bed"
-    val syncRunning = isBusy || latestMorningSync?.status == "running"
-    val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
-    val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
-        relevantMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
-
-    return when {
-        isSleeping -> TodayReadinessStatus(
-            stage = TodayReadinessStage.SLEEP_TIME,
-            title = "Sleep time",
-            sleepReport = "Cleared for tonight",
-            ppiReceipt = "Waiting for wake sync",
-            message = "Bedtime is marked. Today’s old read is hidden until you wake and sync again.",
-            hrvDetail = "Sleep mode is active. Overnight HRV detail will appear after you tap I’m awake and Lodestone syncs the Loop."
-        )
-        syncRunning -> TodayReadinessStatus(
-            stage = TodayReadinessStage.STARTING_SYNC,
-            title = "Starting sync",
-            sleepReport = "Checking Loop",
-            ppiReceipt = "Checking Loop",
-            message = "Lodestone is connecting and pulling the morning core data.",
-            hrvDetail = "Sync is running. PPI detail will appear as soon as the Loop returns enough data."
-        )
-        hasFinalSleep -> TodayReadinessStatus(
-            stage = TodayReadinessStage.UPDATE_COMPLETE,
-            title = "Update complete",
-            sleepReport = "Final report present",
-            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = "The final sleep report and morning signal are ready.",
-            hrvDetail = "Raw PPI has been aligned to the resolved Loop sleep window."
-        )
-        hasPpi -> TodayReadinessStatus(
-            stage = TodayReadinessStage.INITIAL_PPI,
-            title = "Initial PPI data received",
-            sleepReport = "Awaiting final report",
-            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = "This is an interim read. PPI is available, but Polar’s final sleep report has not resolved yet.",
-            hrvDetail = "The interim morning signal can use manual bed/wake timing, but treat it as provisional until the final sleep report arrives."
-        )
-        else -> TodayReadinessStatus(
-            stage = TodayReadinessStage.NOT_STARTED,
-            title = "Awaiting morning sync",
-            sleepReport = "Not synced yet",
-            ppiReceipt = "Not received yet",
-            message = "Tap I’m awake when you are ready to mark wake time and pull the morning data.",
-            hrvDetail = "The raw overnight signal is stored from normal sync, but there is no current-day PPI or resolved sleep-window alignment yet."
-        )
-    }
-}
-
-@Composable
-private fun TodayHeroCard(
-    today: String,
-    todayStatus: TodayReadinessStatus,
-    morningRead: MorningReadSnapshot?,
-    onOpenSettings: () -> Unit
-) {
-    val statusLabel = morningRead?.status?.let { labelForStatus(it.name) } ?: "TBC"
-    val qualifier = when {
-        morningRead?.sleepDataReady == true -> "Confirmed"
-        morningRead?.status != null -> "Provisional"
-        todayStatus.stage == TodayReadinessStage.SLEEP_TIME -> "Sleep time"
-        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> "Starting sync"
-        else -> "TBC"
-    }
-    val confidence = morningRead?.confidence
-        ?.takeUnless { it.equals("pending", ignoreCase = true) }
-        ?.replaceFirstChar { it.titlecase() }
-
-    Card(
-        shape = RoundedCornerShape(30.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary,
-                            MaterialTheme.colorScheme.tertiary,
-                            MaterialTheme.colorScheme.secondary
-                        )
-                    )
-                )
-                .padding(22.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        formatHeroDate(today).uppercase(),
-                        color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp
-                    )
-                    TextButton(onClick = onOpenSettings) {
-                        Icon(
-                            Icons.Outlined.Settings,
-                            contentDescription = "Settings",
-                            tint = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
-                }
-                Text(
-                    "Today: $statusLabel",
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    HeroPill(qualifier)
-                    confidence?.let { HeroPill("$it confidence") }
-                }
-                Text(
-                    todayStatus.message,
-                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.90f),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HeroPill(label: String) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
-            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f))
-            .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f), RoundedCornerShape(100.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp)
-    ) {
-        Text(
-            label,
-            color = MaterialTheme.colorScheme.onPrimary,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-private fun formatHeroDate(value: String): String =
-    runCatching {
-        LocalDate.parse(value).format(DateTimeFormatter.ofPattern("EEE d MMM yyyy", java.util.Locale.UK))
-    }.getOrDefault(value)
-
-private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
-    morningRead?.rawPpiGoodEpochCount != null -> {
-        val coverage = morningRead.rawPpiCoverageHours?.let {
-            String.format(java.util.Locale.UK, ", %.1fh aligned", it)
-        }.orEmpty()
-        "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
-    }
-    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, awaiting final sleep report"
-    else -> "Not received yet"
 }
 
 @Composable
@@ -1377,7 +1085,7 @@ private fun HeroCard(
 }
 
 @Composable
-private fun SectionCard(
+fun SectionCard(
     title: String,
     subtitle: String? = null,
     content: @Composable ColumnScope.() -> Unit
@@ -1418,39 +1126,6 @@ private fun DataCard(
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             SupportText(headline)
             content()
-        }
-    }
-}
-
-@Composable
-private fun MorningSignalSection(
-    morningRead: MorningReadSnapshot?,
-    todayStatus: TodayReadinessStatus
-) {
-    val tone = statusTone(morningRead?.status)
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = tone.copy(alpha = if (morningRead?.status == null) 0.06f else 0.10f)
-        ),
-        border = BorderStroke(1.dp, tone.copy(alpha = 0.18f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Morning signal", fontWeight = FontWeight.SemiBold)
-            if (morningRead == null) {
-                Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                morningRead.reasons.take(3).forEach { reason ->
-                    Text("• $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Date", morningRead.sourceDate ?: "unknown")
-                    DetailRow("Source", morningRead.overnightAutonomicSource)
-                    DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
-                    DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
-                    DetailRow("Raw PPI", "${morningRead.rawPpiGoodEpochCount ?: 0} good epochs")
-                }
-            }
         }
     }
 }
@@ -1706,7 +1381,7 @@ private fun SectionLabel(label: String) {
 }
 
 @Composable
-private fun SupportText(text: String) {
+fun SupportText(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
@@ -1729,7 +1404,7 @@ private fun BannerNote(text: String, tint: Color, textColor: Color) {
 
 @Composable
 @OptIn(ExperimentalLayoutApi::class)
-private fun ButtonRow(content: @Composable FlowRowScope.() -> Unit) {
+fun ButtonRow(content: @Composable FlowRowScope.() -> Unit) {
     FlowRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1752,7 +1427,7 @@ private fun KeyMetricPill(label: String, value: String) {
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+fun DetailRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1801,7 +1476,7 @@ private fun StatusBadge(label: String, status: TrafficLightStatus?) {
 }
 
 @Composable
-private fun statusTone(status: TrafficLightStatus?): Color =
+fun statusTone(status: TrafficLightStatus?): Color =
     when (status) {
         TrafficLightStatus.GOOD -> Color(0xFF2E7D60)
         TrafficLightStatus.OK -> Color(0xFF2F63C8)
@@ -1810,7 +1485,7 @@ private fun statusTone(status: TrafficLightStatus?): Color =
         null -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
-private fun labelForStatus(value: String): String =
+fun labelForStatus(value: String): String =
     value.lowercase().replaceFirstChar { it.titlecase() }
 
 private fun String.toTrafficLightStatusOrNull(): TrafficLightStatus? =
@@ -1844,5 +1519,5 @@ private fun formatTimeOnly(epochMs: Long): String =
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochMilli(epochMs))
 
-private fun formatDurationMinutes(minutes: Int?): String =
+fun formatDurationMinutes(minutes: Int?): String =
     minutes?.let { "${it / 60}h ${it % 60}m" } ?: "unknown"
