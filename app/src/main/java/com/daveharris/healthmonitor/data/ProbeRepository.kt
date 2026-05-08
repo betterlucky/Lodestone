@@ -888,6 +888,9 @@ class ProbeRepository(
     private fun JsonObject.doubleOrNull(key: String): Double? =
         runCatching { get(key)?.takeUnless { it.isJsonNull }?.asDouble }.getOrNull()
 
+    private fun JsonObject.booleanOrNull(key: String): Boolean? =
+        runCatching { get(key)?.takeUnless { it.isJsonNull }?.asBoolean }.getOrNull()
+
     private suspend fun hasFirmwareChanged(deviceId: String, runtimeFirmware: String?): Boolean {
         val appSettings = dao.getAppSettings()
         val persistedFirmware = appSettings?.takeIf { it.selectedDeviceId == deviceId }?.lastKnownFirmwareBySelectedDevice
@@ -1682,16 +1685,17 @@ class ProbeRepository(
                 rawPpiCoverageHours = ppi247Autonomic?.coverageHours
             )
         }
-        val cycleCount = sleepSummary?.get("cycleCount")?.takeUnless { it.isJsonNull }?.asInt
+        val cycleCount = sleepSummary.intOrNull("cycleCount")
         val wakePhases = sleepSummary
-            ?.getAsJsonObject("phaseCounts")
+            .get("phaseCounts")
+            ?.asJsonObjectOrNull()
             ?.get("AWAKE")
             ?.takeUnless { it.isJsonNull }
             ?.asInt
-        val rmssd = nightlySummary?.get("meanNightlyRecoveryRMSSD")?.takeUnless { it.isJsonNull }?.asDouble
-        val baselineReady = nightlySummary?.get("baselineReady")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
-        val recoveryAvailable = nightlySummary?.get("recoveryAvailable")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
-        val ansAvailable = nightlySummary?.get("ansAvailable")?.takeUnless { it.isJsonNull }?.asBoolean ?: false
+        val rmssd = nightlySummary?.doubleOrNull("meanNightlyRecoveryRMSSD")
+        val baselineReady = nightlySummary?.booleanOrNull("baselineReady") ?: false
+        val recoveryAvailable = nightlySummary?.booleanOrNull("recoveryAvailable") ?: false
+        val ansAvailable = nightlySummary?.booleanOrNull("ansAvailable") ?: false
         val ppi247Autonomic = summarizePpi247ForSleepWindow(
             sourceDate = sleepRow.sourceDate,
             sleepStartEpochMs = sleepStartEpochMs,
@@ -1709,7 +1713,6 @@ class ProbeRepository(
         val reasons = mutableListOf<String>()
 
         when {
-            durationMinutes == null -> reasons += "Sleep duration is unavailable."
             durationMinutes >= 450 -> {
                 score += 1.0
                 reasons += "Sleep duration looked solid at ${durationMinutes / 60}h ${durationMinutes % 60}m."
@@ -1760,7 +1763,7 @@ class ProbeRepository(
                 score -= 0.15
                 reasons += "24/7 PPI had some flagged contact/error windows."
             }
-        } else if (sleepStartEpochMs != null && sleepEndEpochMs != null) {
+        } else {
             reasons += "No usable raw PPI overlapped the resolved sleep window."
         }
 
@@ -1800,8 +1803,8 @@ class ProbeRepository(
         val sourceDate = listOfNotNull(
             sleepRow.sourceDate,
             nightlyRow?.sourceDate,
-            sleepSummary?.get("sleepResultDate")?.takeUnless { it.isJsonNull }?.asString,
-            nightlySummary?.get("sleepResultDate")?.takeUnless { it.isJsonNull }?.asString
+            sleepSummary.stringOrNull("sleepResultDate"),
+            nightlySummary?.stringOrNull("sleepResultDate")
         ).firstOrNull()
 
         return MorningReadSnapshot(

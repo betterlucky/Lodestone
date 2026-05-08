@@ -173,6 +173,7 @@ class PolarProbeManager(
         entry: PolarOfflineRecordingEntry
     ): PolarOfflineRecordingData = api.getOfflineRecord(deviceId, entry)
 
+    @Suppress("DEPRECATION")
     suspend fun fetchSplitOfflineRecord(
         deviceId: String,
         entry: PolarOfflineRecordingEntry

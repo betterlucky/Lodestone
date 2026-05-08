@@ -112,7 +112,7 @@ object PayloadMappers {
                 data.meanBaselineRespirationInterval
             ).all { (it ?: -1) >= 0 },
             "ansAvailable" to ((data.ansStatus?.toDouble() ?: -100.0) >= 0.0),
-            "recoveryAvailable" to ((data.recoveryIndicator?.toInt() ?: -1) >= 0),
+            "recoveryAvailable" to ((data.recoveryIndicator ?: -1) >= 0),
             "meanNightlyRecoveryRRI" to data.meanNightlyRecoveryRRI,
             "meanNightlyRecoveryRMSSD" to data.meanNightlyRecoveryRMSSD,
             "meanNightlyRecoveryRespirationInterval" to data.meanNightlyRecoveryRespirationInterval
