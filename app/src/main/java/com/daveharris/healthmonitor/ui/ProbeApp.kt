@@ -87,7 +87,9 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.FtuProfileEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ObservedCapabilityEntity
+import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
+import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.model.PolarDeviceInfo
 import java.time.Instant
@@ -123,6 +125,8 @@ fun ProbeApp(
     val foodDailySummaries by viewModel.foodDailySummaries.collectAsState()
     val dailyWeights by viewModel.dailyWeights.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
+    val syncRuns by viewModel.syncRuns.collectAsState()
+    val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { ProbeTab.entries.size })
     val pagerScope = rememberCoroutineScope()
@@ -243,6 +247,8 @@ fun ProbeApp(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,
+                                            syncRuns = syncRuns,
+                                            wakeMarkers = recentWakeMarkers,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }
@@ -420,10 +426,23 @@ private fun DataScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
     morningRead: MorningReadSnapshot?,
+    syncRuns: List<SyncRunEntity>,
+    wakeMarkers: List<WakeMarkerEntity>,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
 ) {
+    val today = LocalDate.now().toString()
+    val todayStatus = todayReadinessStatus(
+        today = today,
+        morningRead = morningRead,
+        syncRuns = syncRuns,
+        wakeMarkers = wakeMarkers,
+        isBusy = viewModel.isBusy
+    )
+    val activeMorningRead = morningRead
+        ?.takeIf { it.sourceDate == today }
+        ?.takeUnless { todayStatus.stage == TodayReadinessStage.SLEEP_TIME }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -434,7 +453,7 @@ private fun DataScreen(
         item {
             HeroCard(
                 title = "Today",
-                subtitle = "Morning sync, sleep readiness, and overnight HRV signal coverage for ${viewModel.checkInDate}.",
+                subtitle = "Morning sync, sleep readiness, and overnight HRV signal coverage for $today.",
                 eyebrow = "Morning",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
@@ -443,14 +462,16 @@ private fun DataScreen(
         item {
             SectionCard(title = "Morning sync", subtitle = "Loop readiness checklist") {
                 SupportText("Use I’m going to bed to mark intended sleep time, then I’m awake when you are ready to mark the day and run the normal Lodestone sync.")
+                DetailRow("Status", todayStatus.title)
                 DetailRow("Device", viewModel.selectedDeviceId ?: "None selected")
                 DetailRow(
                     "Connection",
                     runtime.connectedDevice?.name?.let { "Connected to $it" }
                         ?: runtime.connectionPhase.replaceFirstChar { it.titlecase() }
                 )
-                DetailRow("Final Loop sleep report", loopSleepReportStatus(morningRead))
-                DetailRow("PPI data from Loop", loopPpiReceiptStatus(morningRead))
+                DetailRow("Final Loop sleep report", todayStatus.sleepReport)
+                DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
+                SupportText(todayStatus.message)
                 SupportText("The final Loop sleep report can take up to a couple of hours to resolve after waking. PPI may arrive first, but the morning read cannot fully score it until the sleep window is available.")
                 ButtonRow {
                     OutlinedButton(
@@ -469,15 +490,20 @@ private fun DataScreen(
             }
         }
         item {
+            if (activeMorningRead != null) {
+                MorningReadCard(activeMorningRead)
+            }
+        }
+        item {
             SectionCard(title = "Overnight HRV detail", subtitle = "Signal coverage from normal Loop sync") {
-                val goodEpochs = morningRead?.rawPpiGoodEpochCount
+                val goodEpochs = activeMorningRead?.rawPpiGoodEpochCount
                 if (goodEpochs == null) {
-                    SupportText("The raw overnight signal is stored from normal sync, but there is no resolved sleep-window alignment for today yet.")
+                    SupportText(todayStatus.hrvDetail)
                 } else {
                     DetailRow("Usable windows", goodEpochs.toString())
-                    DetailRow("Coverage", morningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
-                    if ((morningRead.rawPpiPoorEpochCount ?: 0) > 0) {
-                        DetailRow("Flagged windows", morningRead.rawPpiPoorEpochCount.toString())
+                    DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
+                    if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {
+                        DetailRow("Flagged windows", activeMorningRead.rawPpiPoorEpochCount.toString())
                     }
                 }
                 ButtonRow {
@@ -493,21 +519,95 @@ private fun DataScreen(
     }
 }
 
-private fun loopSleepReportStatus(morningRead: MorningReadSnapshot?): String = when {
-    morningRead?.sleepDataReady == true -> "Final report present"
-    morningRead?.isInterim == true -> "Waiting for final report"
-    else -> "Not synced yet"
+private enum class TodayReadinessStage {
+    SLEEP_TIME,
+    STARTING_SYNC,
+    INITIAL_PPI,
+    UPDATE_COMPLETE,
+    NOT_STARTED
 }
 
-private fun loopPpiReceiptStatus(morningRead: MorningReadSnapshot?): String = when {
+private data class TodayReadinessStatus(
+    val stage: TodayReadinessStage,
+    val title: String,
+    val sleepReport: String,
+    val ppiReceipt: String,
+    val message: String,
+    val hrvDetail: String
+)
+
+private fun todayReadinessStatus(
+    today: String,
+    morningRead: MorningReadSnapshot?,
+    syncRuns: List<SyncRunEntity>,
+    wakeMarkers: List<WakeMarkerEntity>,
+    isBusy: Boolean
+): TodayReadinessStatus {
+    val relevantMorningRead = morningRead?.takeIf { it.sourceDate == today }
+    val latestRealMarker = wakeMarkers
+        .filterNot { it.notes == "manual awake command" }
+        .maxByOrNull { it.markerEpochMs }
+    val latestMorningSync = syncRuns
+        .filter { it.notes?.contains("morning core sync", ignoreCase = true) == true }
+        .maxByOrNull { it.startedAtEpochMs }
+    val isSleeping = latestRealMarker?.markerSource == "manual_going_to_bed"
+    val syncRunning = isBusy || latestMorningSync?.status == "running"
+    val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
+    val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
+        relevantMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
+
+    return when {
+        isSleeping -> TodayReadinessStatus(
+            stage = TodayReadinessStage.SLEEP_TIME,
+            title = "Sleep time",
+            sleepReport = "Cleared for tonight",
+            ppiReceipt = "Waiting for wake sync",
+            message = "Bedtime is marked. Today’s old read is hidden until you wake and sync again.",
+            hrvDetail = "Sleep mode is active. Overnight HRV detail will appear after you tap I’m awake and Lodestone syncs the Loop."
+        )
+        syncRunning -> TodayReadinessStatus(
+            stage = TodayReadinessStage.STARTING_SYNC,
+            title = "Starting sync",
+            sleepReport = "Checking Loop",
+            ppiReceipt = "Checking Loop",
+            message = "Lodestone is connecting and pulling the morning core data.",
+            hrvDetail = "Sync is running. PPI detail will appear as soon as the Loop returns enough data."
+        )
+        hasFinalSleep -> TodayReadinessStatus(
+            stage = TodayReadinessStage.UPDATE_COMPLETE,
+            title = "Update complete",
+            sleepReport = "Final report present",
+            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
+            message = "The final sleep report and morning signal are ready.",
+            hrvDetail = "Raw PPI has been aligned to the resolved Loop sleep window."
+        )
+        hasPpi -> TodayReadinessStatus(
+            stage = TodayReadinessStage.INITIAL_PPI,
+            title = "Initial PPI data received",
+            sleepReport = "Awaiting final report",
+            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
+            message = "This is an interim read. PPI is available, but Polar’s final sleep report has not resolved yet.",
+            hrvDetail = "The interim morning signal can use manual bed/wake timing, but treat it as provisional until the final sleep report arrives."
+        )
+        else -> TodayReadinessStatus(
+            stage = TodayReadinessStage.NOT_STARTED,
+            title = "Awaiting morning sync",
+            sleepReport = "Not synced yet",
+            ppiReceipt = "Not received yet",
+            message = "Tap I’m awake when you are ready to mark wake time and pull the morning data.",
+            hrvDetail = "The raw overnight signal is stored from normal sync, but there is no current-day PPI or resolved sleep-window alignment yet."
+        )
+    }
+}
+
+private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
     morningRead?.rawPpiGoodEpochCount != null -> {
         val coverage = morningRead.rawPpiCoverageHours?.let {
             String.format(java.util.Locale.UK, ", %.1fh aligned", it)
         }.orEmpty()
         "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
     }
-    morningRead?.overnightAutonomicSource == "raw_ppi_pending_sleep_window" -> "Received, awaiting sleep window"
-    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received"
+    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, awaiting final sleep report"
     else -> "Not received yet"
 }
 

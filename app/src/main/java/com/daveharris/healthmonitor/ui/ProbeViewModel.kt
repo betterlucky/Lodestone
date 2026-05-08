@@ -54,6 +54,7 @@ class ProbeViewModel(
     val foodDailySummaries = dailyReviewRepository.foodDailySummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val recentWakeMarkers = repository.recentWakeMarkers.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     var isBusy by mutableStateOf(false)
         private set
     var statusMessage by mutableStateOf<String?>(null)

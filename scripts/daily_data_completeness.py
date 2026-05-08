@@ -163,7 +163,16 @@ def build_report(health_db: str, source_date: str, garmin_db: str | None) -> dic
     try:
         food = one(conn, "select totalCaloriesKcal, eventCount, teaCount from food_daily_summary where sourceDate = ?", (source_date,))
         review = one(conn, "select eveningOutcome, approachToDay, muscleWeaknessToday from daily_check_in where sourceDate = ?", (source_date,))
-        wake = one(conn, "select markerEpochMs, markerSource from wake_marker where sourceDate = ? order by markerEpochMs desc limit 1", (source_date,))
+        wake = one(
+            conn,
+            """
+            select markerEpochMs, markerSource from wake_marker
+            where sourceDate = ?
+              and coalesce(notes, '') != 'manual awake command'
+            order by markerEpochMs desc limit 1
+            """,
+            (source_date,),
+        )
         return {
             "source_date": source_date,
             "polar": {

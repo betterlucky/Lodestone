@@ -37,6 +37,9 @@ interface ProbeDao {
     )
     suspend fun getLatestWakeMarker(sourceDate: String, markerSource: String): WakeMarkerEntity?
 
+    @Query("SELECT * FROM wake_marker ORDER BY markerEpochMs DESC LIMIT 50")
+    fun observeRecentWakeMarkers(): Flow<List<WakeMarkerEntity>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertFoodDailySummaries(entities: List<FoodDailySummaryEntity>)
 
