@@ -149,6 +149,7 @@ fun SettingsScreen(
     firmwareRediscoveryNeeded: Boolean,
     viewModel: ProbeViewModel,
     onSetFoodFolder: () -> Unit,
+    onImportSleep2Screenshot: () -> Unit,
     onRequestHealthConnectPermissions: () -> Unit,
     onOpenHealthConnectSettings: () -> Unit,
     onClose: () -> Unit
@@ -190,8 +191,18 @@ fun SettingsScreen(
         }
         item {
             SectionCard(title = "Analysis exports", subtitle = "Temporary calibration data kept out of the main Lodestone database") {
+                DetailRow("Calibration date", viewModel.checkInDate)
                 DetailRow("Health Connect access", if (viewModel.healthConnectPermissionsGranted) "Granted" else "Not granted")
+                viewModel.lastSleep2ScreenshotPath?.let { path ->
+                    DetailRow("Latest Sleep2 screenshot", path)
+                }
                 ButtonRow {
+                    Button(
+                        onClick = onImportSleep2Screenshot,
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Import Sleep2 screenshot")
+                    }
                     Button(
                         onClick = onRequestHealthConnectPermissions,
                         enabled = !viewModel.isBusy
@@ -211,7 +222,7 @@ fun SettingsScreen(
                         Text("Export HC sleep")
                     }
                 }
-                SupportText("Exports Sleep²/H10 Health Connect records to app files for Mac-side analysis. It does not write to Lodestone's production database.")
+                SupportText("Sleep2 screenshots are copied to app files as sleep2-statistics-YYYY-MM-DD.png using the selected review date. Health Connect exports remain analysis-only; neither path writes to Lodestone's production database.")
             }
         }
         item {

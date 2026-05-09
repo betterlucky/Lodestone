@@ -1585,6 +1585,11 @@ class ProbeRepository(
 
         val expectedSourceDate = LocalDate.now(ZoneId.systemDefault()).toString()
         val todayPpiEpochs = ppi247Epochs.filter { it.sourceDate == expectedSourceDate }
+        val latestNightlyJson = nightlyRow?.rawPayloadJson?.let {
+            runCatching { GsonProvider.gson.fromJson(it, JsonObject::class.java) }.getOrNull()
+        }
+        val latestNightlySummary = latestNightlyJson?.getAsJsonObject("summary")
+        val latestBaselineReady = latestNightlySummary?.booleanOrNull("baselineReady") ?: false
         if (sleepRow?.sourceDate != expectedSourceDate) {
             val manualWindow = manualSleepWindowForToday(wakeMarkers)
             val ppi247Autonomic = manualWindow?.let {
@@ -1596,15 +1601,28 @@ class ProbeRepository(
                 )
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
-            val interimStatus = ppi247Autonomic?.averageRmssdMs?.let(::trafficLightFromRmssd)
+            val manualDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() }
+            val scoreResult = scoreMorningRead(
+                durationMinutes = manualDurationMinutes,
+                autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
+                autonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else "awaiting_sleep_data",
+                ppi247Autonomic = ppi247Autonomic,
+                cycleCount = null,
+                wakePhases = null,
+                baselineReady = latestBaselineReady,
+                recoveryAvailable = false,
+                ansAvailable = false,
+                ppiWindowLabel = "manual bed/wake window",
+                missingPpiReason = "No usable raw PPI is available yet."
+            )
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
-                status = interimStatus,
-                confidence = if (interimStatus != null) "interim" else "pending",
+                status = scoreResult.status,
+                confidence = if (scoreResult.status != null) "interim" else "pending",
                 overnightAutonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else if (hasRawPpi) "raw_ppi_pending_sleep_window" else "awaiting_sleep_data",
-                sleepDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() },
+                sleepDurationMinutes = manualDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
-                baselineReady = false,
+                baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
                 summary = "Interim: waiting for Polar sleep data",
                 reasons = listOf(
@@ -1616,7 +1634,7 @@ class ProbeRepository(
                     } else {
                         "The app will keep checking for the completed sleep report."
                     }
-                ),
+                ) + scoreResult.reasons,
                 isInterim = true,
                 sleepDataReady = false,
                 rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
@@ -1628,12 +1646,9 @@ class ProbeRepository(
         val sleepJson = sleepRow.rawPayloadJson.let {
             runCatching { GsonProvider.gson.fromJson(it, JsonObject::class.java) }.getOrNull()
         }
-        val nightlyJson = nightlyRow?.rawPayloadJson?.let {
-            runCatching { GsonProvider.gson.fromJson(it, JsonObject::class.java) }.getOrNull()
-        }
         val sleepResult = sleepJson?.getAsJsonObject("result")
         val sleepSummary = sleepResult?.getAsJsonObject("summary")
-        val nightlySummary = nightlyJson?.getAsJsonObject("summary")
+        val nightlySummary = latestNightlySummary?.takeIf { nightlyRow.sourceDate == expectedSourceDate }
 
         val durationMinutes = sleepSummary?.get("durationMinutes")?.takeUnless { it.isJsonNull }?.asInt
         val sleepStartEpochMs = sleepResult
@@ -1657,15 +1672,28 @@ class ProbeRepository(
                 )
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
-            val interimStatus = ppi247Autonomic?.averageRmssdMs?.let(::trafficLightFromRmssd)
+            val manualDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() }
+            val scoreResult = scoreMorningRead(
+                durationMinutes = manualDurationMinutes,
+                autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
+                autonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else "awaiting_sleep_data",
+                ppi247Autonomic = ppi247Autonomic,
+                cycleCount = null,
+                wakePhases = null,
+                baselineReady = latestBaselineReady,
+                recoveryAvailable = false,
+                ansAvailable = false,
+                ppiWindowLabel = "manual bed/wake window",
+                missingPpiReason = "No usable raw PPI is available yet."
+            )
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
-                status = interimStatus,
-                confidence = if (interimStatus != null) "interim" else "pending",
+                status = scoreResult.status,
+                confidence = if (scoreResult.status != null) "interim" else "pending",
                 overnightAutonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else if (hasRawPpi) "raw_ppi_pending_sleep_window" else "awaiting_sleep_data",
-                sleepDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() },
+                sleepDurationMinutes = manualDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
-                baselineReady = false,
+                baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
                 summary = "Interim: waiting for resolved Polar sleep window",
                 reasons = listOf(
@@ -1677,7 +1705,7 @@ class ProbeRepository(
                     } else {
                         "The app will keep checking for the completed sleep report."
                     }
-                ),
+                ) + scoreResult.reasons,
                 isInterim = true,
                 sleepDataReady = false,
                 rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
@@ -1693,7 +1721,7 @@ class ProbeRepository(
             ?.takeUnless { it.isJsonNull }
             ?.asInt
         val rmssd = nightlySummary?.doubleOrNull("meanNightlyRecoveryRMSSD")
-        val baselineReady = nightlySummary?.booleanOrNull("baselineReady") ?: false
+        val baselineReady = nightlySummary?.booleanOrNull("baselineReady") ?: latestBaselineReady
         val recoveryAvailable = nightlySummary?.booleanOrNull("recoveryAvailable") ?: false
         val ansAvailable = nightlySummary?.booleanOrNull("ansAvailable") ?: false
         val ppi247Autonomic = summarizePpi247ForSleepWindow(
@@ -1705,94 +1733,25 @@ class ProbeRepository(
         val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: rmssd
         val autonomicSource = when {
             ppi247Autonomic != null -> "ppi247_sleep_window"
-            nightlyRow != null -> "nightly_recharge_summary"
+            nightlySummary != null -> "nightly_recharge_summary"
             else -> "sleep_context_only"
         }
 
-        var score = 0.0
-        val reasons = mutableListOf<String>()
-
-        when {
-            durationMinutes >= 450 -> {
-                score += 1.0
-                reasons += "Sleep duration looked solid at ${durationMinutes / 60}h ${durationMinutes % 60}m."
-            }
-            durationMinutes >= 390 -> reasons += "Sleep duration looked acceptable at ${durationMinutes / 60}h ${durationMinutes % 60}m."
-            durationMinutes >= 330 -> {
-                score -= 0.8
-                reasons += "Sleep duration looked short at ${durationMinutes / 60}h ${durationMinutes % 60}m."
-            }
-            else -> {
-                score -= 1.5
-                reasons += "Sleep duration looked very short at ${durationMinutes.div(60)}h ${durationMinutes.rem(60)}m."
-            }
-        }
-
-        when {
-            autonomicRmssd == null -> reasons += "Overnight autonomic data is unavailable."
-            autonomicRmssd >= 75 -> {
-                score += 1.0
-                reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked strong at ${autonomicRmssd.toInt()}."
-            }
-            autonomicRmssd >= 60 -> reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked broadly OK at ${autonomicRmssd.toInt()}."
-            autonomicRmssd >= 45 -> {
-                score -= 0.8
-                reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked somewhat suppressed at ${autonomicRmssd.toInt()}."
-            }
-            else -> {
-                score -= 1.5
-                reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked low at ${autonomicRmssd.toInt()}."
-            }
-        }
-
-        if (ppi247Autonomic != null) {
-            reasons += "24/7 PPI covered ${formatHours(ppi247Autonomic.coverageHours)} of the resolved sleep window (${ppi247Autonomic.goodEpochCount} good epochs)."
-            ppi247Autonomic.lateMinusEarlyRmssdMs?.let { delta ->
-                when {
-                    delta >= 8.0 -> {
-                        score += 0.25
-                        reasons += "Overnight RMSSD rose toward morning."
-                    }
-                    delta <= -8.0 -> {
-                        score -= 0.35
-                        reasons += "Overnight RMSSD fell toward morning."
-                    }
-                }
-            }
-            if (ppi247Autonomic.poorEpochCount > ppi247Autonomic.goodEpochCount / 4) {
-                score -= 0.15
-                reasons += "24/7 PPI had some flagged contact/error windows."
-            }
-        } else {
-            reasons += "No usable raw PPI overlapped the resolved sleep window."
-        }
-
-        if (wakePhases != null && wakePhases >= 40) {
-            score -= 0.4
-            reasons += "Sleep looked fragmented with many wake phases."
-        }
-        if (cycleCount != null && cycleCount >= 6) {
-            score += 0.2
-        }
-
-        if (baselineReady) {
-            score += 0.25
-        } else {
-            reasons += "Baseline history is not fully ready yet."
-        }
-        if (ppi247Autonomic == null && (!recoveryAvailable || !ansAvailable)) {
-            score -= 0.15
-            reasons += "Polar's higher-level overnight interpretation is still immature."
-        } else if (ppi247Autonomic != null && (!recoveryAvailable || !ansAvailable)) {
-            reasons += "Nightly Recharge interpretation is immature, but raw PPI is available."
-        }
-
-        val status = when {
-            score >= 1.5 -> TrafficLightStatus.GOOD
-            score >= 0.0 -> TrafficLightStatus.OK
-            score >= -1.25 -> TrafficLightStatus.UNSTEADY
-            else -> TrafficLightStatus.CRASH
-        }
+        val scoreResult = scoreMorningRead(
+            durationMinutes = durationMinutes,
+            autonomicRmssd = autonomicRmssd,
+            autonomicSource = autonomicSource,
+            ppi247Autonomic = ppi247Autonomic,
+            cycleCount = cycleCount,
+            wakePhases = wakePhases,
+            baselineReady = baselineReady,
+            recoveryAvailable = recoveryAvailable,
+            ansAvailable = ansAvailable,
+            ppiWindowLabel = "resolved sleep window",
+            missingPpiReason = "No usable raw PPI overlapped the resolved sleep window."
+        )
+        val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
+        val reasons = scoreResult.reasons
         val confidence = when {
             ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 48 && baselineReady -> "high"
             ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 12 -> "medium"
@@ -1824,6 +1783,120 @@ class ProbeRepository(
             rawPpiPoorEpochCount = ppi247Autonomic?.poorEpochCount,
             rawPpiCoverageHours = ppi247Autonomic?.coverageHours
         )
+    }
+
+    private fun scoreMorningRead(
+        durationMinutes: Int?,
+        autonomicRmssd: Double?,
+        autonomicSource: String,
+        ppi247Autonomic: Ppi247WindowSummary?,
+        cycleCount: Int?,
+        wakePhases: Int?,
+        baselineReady: Boolean,
+        recoveryAvailable: Boolean,
+        ansAvailable: Boolean,
+        ppiWindowLabel: String,
+        missingPpiReason: String
+    ): MorningScoreResult {
+        var score = 0.0
+        var scoredInputs = 0
+        val reasons = mutableListOf<String>()
+
+        if (durationMinutes == null) {
+            reasons += "Sleep duration is not available yet."
+        } else {
+            scoredInputs += 1
+            when {
+                durationMinutes >= 450 -> {
+                    score += 1.0
+                    reasons += "Sleep duration looked solid at ${durationMinutes / 60}h ${durationMinutes % 60}m."
+                }
+                durationMinutes >= 390 -> reasons += "Sleep duration looked acceptable at ${durationMinutes / 60}h ${durationMinutes % 60}m."
+                durationMinutes >= 330 -> {
+                    score -= 0.8
+                    reasons += "Sleep duration looked short at ${durationMinutes / 60}h ${durationMinutes % 60}m."
+                }
+                else -> {
+                    score -= 1.5
+                    reasons += "Sleep duration looked very short at ${durationMinutes.div(60)}h ${durationMinutes.rem(60)}m."
+                }
+            }
+        }
+
+        if (autonomicRmssd == null) {
+            reasons += "Overnight autonomic data is unavailable."
+        } else {
+            scoredInputs += 1
+            when {
+                autonomicRmssd >= 75 -> {
+                    score += 1.0
+                    reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked strong at ${autonomicRmssd.toInt()}."
+                }
+                autonomicRmssd >= 60 -> reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked broadly OK at ${autonomicRmssd.toInt()}."
+                autonomicRmssd >= 45 -> {
+                    score -= 0.8
+                    reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked somewhat suppressed at ${autonomicRmssd.toInt()}."
+                }
+                else -> {
+                    score -= 1.5
+                    reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked low at ${autonomicRmssd.toInt()}."
+                }
+            }
+        }
+
+        if (ppi247Autonomic != null) {
+            reasons += "24/7 PPI covered ${formatHours(ppi247Autonomic.coverageHours)} of the $ppiWindowLabel (${ppi247Autonomic.goodEpochCount} good epochs)."
+            ppi247Autonomic.lateMinusEarlyRmssdMs?.let { delta ->
+                when {
+                    delta >= 8.0 -> {
+                        score += 0.25
+                        reasons += "Overnight RMSSD rose toward morning."
+                    }
+                    delta <= -8.0 -> {
+                        score -= 0.35
+                        reasons += "Overnight RMSSD fell toward morning."
+                    }
+                }
+            }
+            if (ppi247Autonomic.poorEpochCount > ppi247Autonomic.goodEpochCount / 4) {
+                score -= 0.15
+                reasons += "24/7 PPI had some flagged contact/error windows."
+            }
+        } else {
+            reasons += missingPpiReason
+        }
+
+        if (wakePhases != null && wakePhases >= 40) {
+            score -= 0.4
+            reasons += "Sleep looked fragmented with many wake phases."
+        }
+        if (cycleCount != null && cycleCount >= 6) {
+            score += 0.2
+        }
+
+        if (baselineReady) {
+            score += 0.25
+        } else {
+            reasons += "Baseline history is not fully ready yet."
+        }
+        if (ppi247Autonomic == null && (!recoveryAvailable || !ansAvailable)) {
+            score -= 0.15
+            reasons += "Polar's higher-level overnight interpretation is still immature."
+        } else if (ppi247Autonomic != null && (!recoveryAvailable || !ansAvailable)) {
+            reasons += "Nightly Recharge interpretation is immature, but raw PPI is available."
+        }
+
+        val status = if (scoredInputs == 0) {
+            null
+        } else {
+            when {
+                score >= 1.5 -> TrafficLightStatus.GOOD
+                score >= 0.0 -> TrafficLightStatus.OK
+                score >= -1.25 -> TrafficLightStatus.UNSTEADY
+                else -> TrafficLightStatus.CRASH
+            }
+        }
+        return MorningScoreResult(status = status, reasons = reasons)
     }
 
     private fun summarizePpi247ForSleepWindow(
@@ -1882,14 +1955,6 @@ class ProbeRepository(
         return bed.markerEpochMs to awake
     }
 
-    private fun trafficLightFromRmssd(rmssd: Double): TrafficLightStatus =
-        when {
-            rmssd >= 75 -> TrafficLightStatus.GOOD
-            rmssd >= 60 -> TrafficLightStatus.OK
-            rmssd >= 45 -> TrafficLightStatus.UNSTEADY
-            else -> TrafficLightStatus.CRASH
-        }
-
     private fun parsePolarDateTimeEpochMs(value: String): Long? =
         runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }
             .recoverCatching { LocalDateTime.parse(value).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() }
@@ -1901,6 +1966,7 @@ class ProbeRepository(
     private fun autonomicSourceLabel(source: String): String =
         when (source) {
             "ppi247_sleep_window" -> "24/7 PPI"
+            "raw_ppi_manual_window_pending_sleep_report" -> "Manual-window PPI"
             "nightly_recharge_summary" -> "Nightly Recharge"
             else -> "Overnight"
         }
@@ -1952,6 +2018,11 @@ private const val SYNC_NOTIFICATION_STOP_TIMEOUT_MS = 5_000L
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")
+
+private data class MorningScoreResult(
+    val status: TrafficLightStatus?,
+    val reasons: List<String>
+)
 
 private data class Ppi247WindowSummary(
     val averageRmssdMs: Double,

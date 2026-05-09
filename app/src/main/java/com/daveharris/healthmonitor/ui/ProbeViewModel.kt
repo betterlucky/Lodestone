@@ -24,6 +24,7 @@ import com.daveharris.healthmonitor.data.SyncRunProfile
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
+import com.daveharris.healthmonitor.health.Sleep2ScreenshotImporter
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
@@ -84,6 +85,8 @@ class ProbeViewModel(
     var saveSuccessFlash by mutableStateOf(false)
         private set
     var healthConnectPermissionsGranted by mutableStateOf(false)
+        private set
+    var lastSleep2ScreenshotPath by mutableStateOf<String?>(null)
         private set
     private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
@@ -506,6 +509,18 @@ class ProbeViewModel(
                 val file = healthConnectAnalysisExporter.exportSleepAnalysis(date)
                 statusMessage = "Health Connect sleep export saved: ${file.absolutePath}"
                 refreshHealthConnectPermissions()
+            }
+        }
+    }
+
+    fun importSleep2Screenshot(uri: Uri) {
+        val date = runCatching { LocalDate.parse(checkInDate) }.getOrElse { LocalDate.now() }
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            runBusyAction("Importing Sleep2 screenshot for $date…") {
+                val file = Sleep2ScreenshotImporter(context).importScreenshot(uri, date)
+                lastSleep2ScreenshotPath = file.absolutePath
+                statusMessage = "Sleep2 screenshot saved for $date: ${file.absolutePath}"
             }
         }
     }

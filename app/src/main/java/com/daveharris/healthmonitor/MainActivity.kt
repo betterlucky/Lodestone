@@ -56,6 +56,13 @@ class MainActivity : ComponentActivity() {
                     vm.saveFoodFolder(uri)
                 }
             }
+            val sleep2ScreenshotLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    vm.importSleep2Screenshot(uri)
+                }
+            }
             val healthConnectPermissionLauncher = rememberLauncherForActivityResult(
                 contract = HealthConnectAnalysisExporter.requestPermissionContract()
             ) { granted ->
@@ -97,6 +104,9 @@ class MainActivity : ComponentActivity() {
                 },
                 onSetFoodFolder = {
                     foodFolderLauncher.launch(null)
+                },
+                onImportSleep2Screenshot = {
+                    sleep2ScreenshotLauncher.launch(arrayOf("image/png", "image/*"))
                 },
                 onRequestHealthConnectPermissions = {
                     healthConnectPermissionLauncher.launch(HealthConnectAnalysisExporter.REQUIRED_PERMISSIONS)

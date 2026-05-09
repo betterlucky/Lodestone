@@ -85,6 +85,10 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 - Current suspicion:
   - Sleep2 either did not write the H10 session to Health Connect
   - or writes only internal analysis / image export rather than standard HC sleep/HR/HRV records
+- Sleep2 screenshot imports are calibration-only and live outside the main DB.
+- App import location: `/sdcard/Android/data/com.daveharris.healthmonitor/files/analysis-sleep2/screenshots/`.
+- Imported Sleep2 screenshots are renamed to `sleep2-statistics-YYYY-MM-DD.png` with a same-date JSON sidecar.
+- The import uses Lodestone's selected review date as the calibration date, so check the Review date before importing backdated screenshots.
 - Next low-cost Sleep2 test:
   - force-stop Sleep2 before a recording night
   - confirm sharing settings

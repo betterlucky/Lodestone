@@ -55,6 +55,7 @@ fun ProbeApp(
     onRequestPermissions: () -> Unit,
     onImportFoodCsv: () -> Unit,
     onSetFoodFolder: () -> Unit,
+    onImportSleep2Screenshot: () -> Unit,
     onRequestHealthConnectPermissions: () -> Unit,
     onOpenHealthConnectSettings: () -> Unit
 ) {
@@ -162,6 +163,7 @@ fun ProbeApp(
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
                             viewModel = viewModel,
                             onSetFoodFolder = onSetFoodFolder,
+                            onImportSleep2Screenshot = onImportSleep2Screenshot,
                             onRequestHealthConnectPermissions = onRequestHealthConnectPermissions,
                             onOpenHealthConnectSettings = onOpenHealthConnectSettings,
                             onClose = { showSettings = false }
