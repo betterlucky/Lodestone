@@ -90,8 +90,10 @@ class SyncCoordinator(
         val targetDate = LocalDate.now().toString()
         if (repository.hasSleepRecordForDate(targetDate)) {
             MorningReadScheduler.cancel(appContext)
+        } else if (repository.hasPpiRecordForDate(targetDate)) {
+            MorningReadScheduler.scheduleSleepReportRetry(appContext, targetDate, deviceId)
         } else {
-            MorningReadScheduler.scheduleNextCheck(appContext, targetDate, deviceId)
+            MorningReadScheduler.schedulePpiRetry(appContext, targetDate, deviceId)
         }
     }
 
@@ -108,10 +110,16 @@ data class SyncCoordinatorResult(
 
 data class MorningReadGuard(
     val targetDate: String,
-    val generation: Long
+    val generation: Long,
+    val stage: MorningRetryStage? = null
 ) {
     fun ensureCurrent(context: Context) {
-        if (!MorningReadScheduler.isCurrentCheck(context, targetDate, generation)) {
+        val isCurrent = if (stage == null) {
+            MorningReadScheduler.isCurrentCheck(context, targetDate, generation)
+        } else {
+            MorningReadScheduler.isCurrentCheck(context, targetDate, generation, stage)
+        }
+        if (!isCurrent) {
             throw StaleMorningReadCheckException(targetDate)
         }
     }

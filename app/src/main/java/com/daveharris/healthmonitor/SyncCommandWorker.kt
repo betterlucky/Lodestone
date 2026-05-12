@@ -114,7 +114,7 @@ class SyncCommandWorker(
             when (this) {
                 "manual_awake_sync" -> ExistingWorkPolicy.KEEP
                 "morning_read_check" -> ExistingWorkPolicy.REPLACE
-                else -> ExistingWorkPolicy.APPEND_OR_REPLACE
+                else -> ExistingWorkPolicy.REPLACE
             }
     }
 }
@@ -133,6 +133,8 @@ private fun Intent.toWorkerData(): Data =
         .putInt(ProbeCommandReceiver.EXTRA_HR_DAYS, getIntExtra(ProbeCommandReceiver.EXTRA_HR_DAYS, -1))
         .putInt(ProbeCommandReceiver.EXTRA_PPI_DAYS, getIntExtra(ProbeCommandReceiver.EXTRA_PPI_DAYS, -1))
         .putLong(ProbeCommandReceiver.EXTRA_MORNING_READ_GENERATION, getLongExtra(ProbeCommandReceiver.EXTRA_MORNING_READ_GENERATION, -1L))
+        .putOptionalString(ProbeCommandReceiver.EXTRA_MORNING_RETRY_STAGE, getStringExtra(ProbeCommandReceiver.EXTRA_MORNING_RETRY_STAGE))
+        .putInt(ProbeCommandReceiver.EXTRA_MORNING_RETRY_ATTEMPT, getIntExtra(ProbeCommandReceiver.EXTRA_MORNING_RETRY_ATTEMPT, 1))
         .build()
 
 private fun Data.Builder.putOptionalString(key: String, value: String?): Data.Builder =
@@ -154,4 +156,6 @@ private fun androidx.work.Data.toCommandIntent(context: Context): Intent =
         putExtra(ProbeCommandReceiver.EXTRA_HR_DAYS, getInt(ProbeCommandReceiver.EXTRA_HR_DAYS, -1))
         putExtra(ProbeCommandReceiver.EXTRA_PPI_DAYS, getInt(ProbeCommandReceiver.EXTRA_PPI_DAYS, -1))
         putExtra(ProbeCommandReceiver.EXTRA_MORNING_READ_GENERATION, getLong(ProbeCommandReceiver.EXTRA_MORNING_READ_GENERATION, -1L))
+        getString(ProbeCommandReceiver.EXTRA_MORNING_RETRY_STAGE)?.let { putExtra(ProbeCommandReceiver.EXTRA_MORNING_RETRY_STAGE, it) }
+        putExtra(ProbeCommandReceiver.EXTRA_MORNING_RETRY_ATTEMPT, getInt(ProbeCommandReceiver.EXTRA_MORNING_RETRY_ATTEMPT, 1))
     }

@@ -66,7 +66,7 @@ fun todayReadinessStatus(
         .filterNot { it.notes == "manual awake command" }
         .maxByOrNull { it.markerEpochMs }
     val latestMorningSync = syncRuns
-        .filter { it.notes?.contains("morning core sync", ignoreCase = true) == true }
+        .filter { it.notes?.contains("morning", ignoreCase = true) == true }
         .maxByOrNull { it.startedAtEpochMs }
     val isSleeping = latestRealMarker?.markerSource == "manual_going_to_bed"
     val syncRunning = isBusy || latestMorningSync?.status == "running"
@@ -104,8 +104,16 @@ fun todayReadinessStatus(
             title = "Initial PPI data received",
             sleepReport = "Awaiting final report",
             ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = "This is an interim read. PPI is available, but Polar's final sleep report has not resolved yet.",
-            hrvDetail = "The interim morning signal can use manual bed/wake timing, but treat it as provisional until the final sleep report arrives."
+            message = if (relevantMorningRead.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window") {
+                "PPI is available, but Lodestone has no bedtime marker for a provisional sleep window."
+            } else {
+                "This is an interim read. PPI is available, but Polar's final sleep report has not resolved yet."
+            },
+            hrvDetail = if (relevantMorningRead.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window") {
+                "Tap I'm going to bed before sleep so Lodestone can calculate an interim signal before Polar's final sleep report arrives."
+            } else {
+                "The interim morning signal can use manual bed/wake timing, but treat it as provisional until the final sleep report arrives."
+            }
         )
         else -> TodayReadinessStatus(
             stage = TodayReadinessStage.NOT_STARTED,
@@ -228,6 +236,7 @@ private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
         }.orEmpty()
         "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
     }
+    morningRead?.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window" -> "Received, missing bedtime marker"
     morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, awaiting final sleep report"
     else -> "Not received yet"
 }
