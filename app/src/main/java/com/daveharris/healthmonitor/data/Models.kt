@@ -44,6 +44,8 @@ enum class SyncRunProfile(
     val successNotes: String
 ) {
     MORNING_CORE("morning core sync", "morning core sync completed"),
+    MORNING_PPI_RETRY("morning PPI retry sync", "morning PPI retry completed"),
+    MORNING_SLEEP_RETRY("morning sleep report retry sync", "morning sleep report retry completed"),
     FULL("manual sync", "manual sync completed")
 }
 

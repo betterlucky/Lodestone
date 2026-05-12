@@ -67,6 +67,13 @@ class ProbeRepository(
     }
     val recentWakeMarkers = dao.observeRecentWakeMarkers()
 
+    init {
+        scope.launch {
+            recoverStaleRunningSyncRuns()
+            pruneOversizedSyncResultPayloads()
+        }
+    }
+
     suspend fun search(prefix: String? = "Polar"): List<com.polar.sdk.api.model.PolarDeviceInfo> {
         val found = linkedMapOf<String, com.polar.sdk.api.model.PolarDeviceInfo>()
         withTimeoutOrNull(6_000) {
@@ -104,6 +111,9 @@ class ProbeRepository(
 
     suspend fun hasSleepRecordForDate(sourceDate: String): Boolean =
         dao.getLatestSleepRecordForDate(sourceDate)?.hasResolvedSleepWindow() == true
+
+    suspend fun hasPpiRecordForDate(sourceDate: String): Boolean =
+        dao.countPpi247EpochsForDate(sourceDate) > 0
 
     suspend fun recordWakeMarker(
         sourceDate: String,
@@ -208,63 +218,38 @@ class ProbeRepository(
             }
 
             val syncRunId = acquireManualSyncRun(deviceId, runtime.firmwareVersion, profile)
+            val domainFailures = mutableListOf<SyncDomainFailure>()
 
             try {
                 withTimeout(MANUAL_SYNC_TIMEOUT_MS) {
                     runWithinSyncSession(deviceId, "manual_sync") {
                         val now = LocalDate.now(ZoneOffset.UTC)
-                        syncDomain(syncRunId, deviceId, ProbeDomain.SLEEP, now.minusDays(normalizedConfig.sleepDays.toLong()), now) {
-                            val data = polarManager.fetchSleep(deviceId, it.first, it.second)
-                            persistSleep(deviceId, data, "${it.first}..${it.second}")
-                            DomainPersistenceResult(data.size, shapeForSleep(data), PayloadMappers.sleepList(data))
-                        }
-                        syncDomain(syncRunId, deviceId, ProbeDomain.NIGHTLY_RECHARGE, now.minusDays(normalizedConfig.nightlyRechargeDays.toLong()), now) {
-                            val data = polarManager.fetchNightlyRecharge(deviceId, it.first, it.second)
-                            persistNightlyRecharge(deviceId, data, "${it.first}..${it.second}")
-                            DomainPersistenceResult(data.size, shapeForNightlyRecharge(data), PayloadMappers.nightlyRechargeList(data))
-                        }
-                        syncDomain(syncRunId, deviceId, ProbeDomain.HR_247, now.minusDays(normalizedConfig.hrDays.toLong()), now) {
-                            val data = polarManager.fetch247Hr(deviceId, it.first, it.second)
-                            persistHr(deviceId, data, "${it.first}..${it.second}")
-                            DomainPersistenceResult(data.size, shapeForHr(data), PayloadMappers.hrList(data))
-                        }
-                        syncDomain(syncRunId, deviceId, ProbeDomain.PPI_247, now.minusDays(normalizedConfig.ppiDays.toLong()), now) {
-                            val data = polarManager.fetch247Ppi(deviceId, it.first, it.second)
-                            persistPpi(deviceId, data, "${it.first}..${it.second}")
-                            DomainPersistenceResult(data.size, shapeForPpi(data), PayloadMappers.ppiList(data))
-                        }
-                        if (profile == SyncRunProfile.FULL) {
-                            syncDomain(syncRunId, deviceId, ProbeDomain.SKIN_TEMPERATURE, now.minusDays(normalizedConfig.hrDays.toLong()), now) {
-                                val data = polarManager.fetchSkinTemperature(deviceId, it.first, it.second)
-                                persistSkinTemperature(deviceId, data, "${it.first}..${it.second}")
-                                DomainPersistenceResult(data.size, shapeForSkinTemperature(data), PayloadMappers.skinTemperatureList(data))
-                            }
-                            syncDomain(syncRunId, deviceId, ProbeDomain.DAILY_SUMMARY, now.minusDays(normalizedConfig.sleepDays.toLong()), now) {
-                                val data = polarManager.fetchDailySummary(deviceId, it.first, it.second)
-                                persistDailySummary(deviceId, data, "${it.first}..${it.second}")
-                                DomainPersistenceResult(data.size, shapeForDailySummary(data), PayloadMappers.dailySummaryList(data))
-                            }
-                            syncDomain(syncRunId, deviceId, ProbeDomain.ACTIVITY_SAMPLES, now.minusDays(normalizedConfig.hrDays.toLong()), now) {
-                                val data = polarManager.fetchActivitySamples(deviceId, it.first, it.second)
-                                persistActivitySamples(deviceId, data, "${it.first}..${it.second}")
-                                DomainPersistenceResult(data.size, shapeForActivitySamples(data), PayloadMappers.activitySamplesList(data))
+                        buildSyncTasks(deviceId, normalizedConfig, profile, now).forEach { task ->
+                            syncDomain(
+                                syncRunId = syncRunId,
+                                deviceId = deviceId,
+                                domain = task.domain,
+                                from = task.from,
+                                to = task.to,
+                                timeoutMs = task.timeoutMs,
+                                block = task.block
+                            )?.let { error ->
+                                domainFailures += SyncDomainFailure(task.domain, error)
                             }
                         }
-                    }
-                    if (profile == SyncRunProfile.FULL) {
-                        runPostSyncDeviceHistoryMaintenance(syncRunId, deviceId)
-                        runPostSyncStorageMaintenance(syncRunId, deviceId)
                     }
                 }
 
                 withContext(NonCancellable) {
+                    dao.pruneLargeSyncDomainResultPayloads()
                     val existingRun = dao.getSyncRun(syncRunId)
                     if (existingRun != null) {
+                        val status = if (domainFailures.isEmpty()) "success" else "partial_failure"
                         dao.updateSyncRun(
                             existingRun.copy(
                                 endedAtEpochMs = System.currentTimeMillis(),
-                                status = "success",
-                                notes = profile.successNotes
+                                status = status,
+                                notes = syncCompletionNotes(profile, domainFailures)
                             )
                         )
                     }
@@ -304,6 +289,159 @@ class ProbeRepository(
         return dao.countRecentRunningSyncRuns(cutoff) > 0
     }
 
+    private fun buildSyncTasks(
+        deviceId: String,
+        config: SyncWindowConfig,
+        profile: SyncRunProfile,
+        now: LocalDate
+    ): List<SyncDomainTask> = buildList {
+        fun addSleepTask() {
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.SLEEP,
+                    from = now.minusDays(config.sleepDays.toLong()),
+                    to = now,
+                    timeoutMs = SLEEP_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetchSleep(deviceId, it.first, it.second)
+                    persistSleep(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForSleep(data))
+                }
+            )
+        }
+
+        fun addNightlyRechargeTask() {
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.NIGHTLY_RECHARGE,
+                    from = now.minusDays(config.nightlyRechargeDays.toLong()),
+                    to = now,
+                    timeoutMs = NIGHTLY_RECHARGE_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetchNightlyRecharge(deviceId, it.first, it.second)
+                    persistNightlyRecharge(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForNightlyRecharge(data))
+                }
+            )
+        }
+
+        fun addPpiTask() {
+            // PPI is the most valuable morning trajectory lane, so it runs before
+            // less critical background HR. A flaky HR fetch must not block PPI.
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.PPI_247,
+                    from = now.minusDays(config.ppiDays.toLong()),
+                    to = now,
+                    timeoutMs = PPI_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetch247Ppi(deviceId, it.first, it.second)
+                    persistPpi(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForPpi(data))
+                }
+            )
+        }
+
+        fun addHrTask() {
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.HR_247,
+                    from = now.minusDays(config.hrDays.toLong()),
+                    to = now,
+                    timeoutMs = HR_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetch247Hr(deviceId, it.first, it.second)
+                    persistHr(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForHr(data))
+                }
+            )
+        }
+
+        when (profile) {
+            SyncRunProfile.MORNING_PPI_RETRY -> addPpiTask()
+            SyncRunProfile.MORNING_SLEEP_RETRY -> {
+                addSleepTask()
+                addNightlyRechargeTask()
+            }
+            SyncRunProfile.MORNING_CORE,
+            SyncRunProfile.FULL -> {
+                addSleepTask()
+                addNightlyRechargeTask()
+                addPpiTask()
+                addHrTask()
+            }
+        }
+
+        if (profile == SyncRunProfile.FULL) {
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.SKIN_TEMPERATURE,
+                    from = now.minusDays(config.hrDays.toLong()),
+                    to = now,
+                    timeoutMs = SKIN_TEMPERATURE_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetchSkinTemperature(deviceId, it.first, it.second)
+                    persistSkinTemperature(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForSkinTemperature(data))
+                }
+            )
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.DAILY_SUMMARY,
+                    from = now.minusDays(config.sleepDays.toLong()),
+                    to = now,
+                    timeoutMs = DAILY_SUMMARY_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetchDailySummary(deviceId, it.first, it.second)
+                    persistDailySummary(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForDailySummary(data))
+                }
+            )
+            if (ENABLE_ACTIVITY_SAMPLE_SYNC) {
+                add(
+                    SyncDomainTask(
+                        domain = ProbeDomain.ACTIVITY_SAMPLES,
+                        from = now.minusDays(config.hrDays.toLong()),
+                        to = now,
+                        timeoutMs = ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS
+                    ) {
+                        val data = polarManager.fetchActivitySamples(deviceId, it.first, it.second)
+                        persistActivitySamples(deviceId, data, "${it.first}..${it.second}")
+                        DomainPersistenceResult(data.size, shapeForActivitySamples(data))
+                    }
+                )
+            }
+        }
+    }
+
+    private fun syncCompletionNotes(
+        profile: SyncRunProfile,
+        failures: List<SyncDomainFailure>
+    ): String =
+        if (failures.isEmpty()) {
+            profile.successNotes
+        } else {
+            val failedDomains = failures.joinToString(",") { failure ->
+                "${failure.domain.name}:${failure.error.javaClass.simpleName}"
+            }
+            "${profile.runNotes} completed with domain failures: $failedDomains"
+        }
+
+    private suspend fun pruneOversizedSyncResultPayloads() = withContext(Dispatchers.IO) {
+        val prunedRows = dao.pruneLargeSyncDomainResultPayloads()
+        val dbFile = database.openHelper.writableDatabase.path?.let(::File)
+        if (prunedRows > 0 || (dbFile?.length() ?: 0L) > DATABASE_COMPACTION_THRESHOLD_BYTES) {
+            compactDatabase()
+        }
+    }
+
+    private fun compactDatabase() {
+        val db = database.openHelper.writableDatabase
+        runCatching { db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() } }
+        runCatching { db.execSQL("VACUUM") }
+        runCatching { db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() } }
+    }
+
     private suspend fun acquireManualSyncRun(
         deviceId: String,
         firmwareVersion: String?,
@@ -341,11 +479,18 @@ class ProbeRepository(
 
             try {
                 runWithinSyncSession(deviceId, "ppi247_range_probe") {
-                    syncDomain(syncRunId, deviceId, ProbeDomain.PPI_247, from, to) {
+                    syncDomain(
+                        syncRunId = syncRunId,
+                        deviceId = deviceId,
+                        domain = ProbeDomain.PPI_247,
+                        from = from,
+                        to = to,
+                        timeoutMs = PPI_SYNC_TIMEOUT_MS
+                    ) {
                         val data = polarManager.fetch247Ppi(deviceId, it.first, it.second)
                         persistPpi(deviceId, data, "${it.first}..${it.second}")
-                        DomainPersistenceResult(data.size, shapeForPpi(data), PayloadMappers.ppiList(data))
-                    }
+                        DomainPersistenceResult(data.size, shapeForPpi(data))
+                    }?.let { throw it }
                 }
 
                 val existingRun = dao.getSyncRun(syncRunId)
@@ -960,12 +1105,15 @@ class ProbeRepository(
         domain: ProbeDomain,
         from: LocalDate,
         to: LocalDate,
+        timeoutMs: Long,
         block: suspend (Pair<LocalDate, LocalDate>) -> DomainPersistenceResult
-    ) {
+    ): Throwable? {
         val startedAt = System.currentTimeMillis()
         val requestedRange = "$from..$to"
         try {
-            val result = block(from to to)
+            val result = withTimeout(timeoutMs) {
+                block(from to to)
+            }
             dao.insertSyncDomainResult(
                 SyncDomainResultEntity(
                     syncRunId = syncRunId,
@@ -977,7 +1125,7 @@ class ProbeRepository(
                     parserVersion = PARSER_VERSION,
                     parseStatus = ProbeStatus.PARSED.name,
                     detailSummary = result.shapeNotes,
-                    rawPayloadJson = result.rawPayloadJson,
+                    rawPayloadJson = null,
                     manualNotes = null,
                     startedAtEpochMs = startedAt,
                     endedAtEpochMs = System.currentTimeMillis(),
@@ -985,6 +1133,7 @@ class ProbeRepository(
                     errorMessage = null
                 )
             )
+            return null
         } catch (error: Throwable) {
             dao.insertSyncDomainResult(
                 SyncDomainResultEntity(
@@ -1005,7 +1154,7 @@ class ProbeRepository(
                     errorMessage = error.message
                 )
             )
-            throw error
+            return error
         }
     }
 
@@ -1090,21 +1239,27 @@ class ProbeRepository(
     }
 
     private suspend fun persistPpi(deviceId: String, data: List<Polar247PPiSamplesData>, requestedRange: String) {
-        val records = data.map {
+        val existingKeys = dao.getExistingPpiRecordKeys(deviceId).toHashSet()
+        val records = data.mapNotNull {
+            val sourceDate = it.date.toString()
+            val keySummary = "start=${it.samples.startTime}, samples=${it.samples.ppiValueList.size}, trigger=${it.samples.triggerType}"
+            val recordKey = "$sourceDate|$keySummary"
+            if (!existingKeys.add(recordKey)) {
+                return@mapNotNull null
+            }
             Ppi247DayRawEntity(
                 deviceId = deviceId,
-                sourceDate = it.date.toString(),
+                sourceDate = sourceDate,
                 requestedRange = requestedRange,
                 syncTimestampEpochMs = System.currentTimeMillis(),
-                keySummary = "start=${it.samples.startTime}, samples=${it.samples.ppiValueList.size}, trigger=${it.samples.triggerType}",
+                keySummary = keySummary,
                 rawPayloadJson = PayloadMappers.ppi(it),
                 parserVersion = PARSER_VERSION,
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingPpiPayloads(deviceId))
-        filtered.forEach { dao.deletePpiRecordsForDateAndKeySummary(deviceId, it.sourceDate, it.keySummary) }
-        dao.insertPpiRecords(filtered)
+        records.forEach { dao.deletePpiRecordsForDateAndKeySummary(deviceId, it.sourceDate, it.keySummary) }
+        dao.insertPpiRecords(records)
         rebuildPpi247EpochsForDates(records.map { it.sourceDate }.distinct())
     }
 
@@ -1602,10 +1757,16 @@ class ProbeRepository(
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
             val manualDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() }
+            val pendingSource = when {
+                ppi247Autonomic != null -> "raw_ppi_manual_window_pending_sleep_report"
+                hasRawPpi && manualWindow == null -> "raw_ppi_pending_manual_sleep_window"
+                hasRawPpi -> "raw_ppi_pending_sleep_window"
+                else -> "awaiting_sleep_data"
+            }
             val scoreResult = scoreMorningRead(
                 durationMinutes = manualDurationMinutes,
                 autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
-                autonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else "awaiting_sleep_data",
+                autonomicSource = pendingSource,
                 ppi247Autonomic = ppi247Autonomic,
                 cycleCount = null,
                 wakePhases = null,
@@ -1619,7 +1780,7 @@ class ProbeRepository(
                 sourceDate = expectedSourceDate,
                 status = scoreResult.status,
                 confidence = if (scoreResult.status != null) "interim" else "pending",
-                overnightAutonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else if (hasRawPpi) "raw_ppi_pending_sleep_window" else "awaiting_sleep_data",
+                overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = manualDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
@@ -1629,6 +1790,8 @@ class ProbeRepository(
                     "Today’s resolved sleep window is not available yet.",
                     if (ppi247Autonomic != null) {
                         "A provisional PPI read is available from the manual bed/wake window."
+                    } else if (hasRawPpi && manualWindow == null) {
+                        "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
                     } else if (hasRawPpi) {
                         "Raw PPI has been fetched, but the final sleep-window score is waiting for Polar’s sleep report."
                     } else {
@@ -1673,10 +1836,16 @@ class ProbeRepository(
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
             val manualDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() }
+            val pendingSource = when {
+                ppi247Autonomic != null -> "raw_ppi_manual_window_pending_sleep_report"
+                hasRawPpi && manualWindow == null -> "raw_ppi_pending_manual_sleep_window"
+                hasRawPpi -> "raw_ppi_pending_sleep_window"
+                else -> "awaiting_sleep_data"
+            }
             val scoreResult = scoreMorningRead(
                 durationMinutes = manualDurationMinutes,
                 autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
-                autonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else "awaiting_sleep_data",
+                autonomicSource = pendingSource,
                 ppi247Autonomic = ppi247Autonomic,
                 cycleCount = null,
                 wakePhases = null,
@@ -1690,7 +1859,7 @@ class ProbeRepository(
                 sourceDate = expectedSourceDate,
                 status = scoreResult.status,
                 confidence = if (scoreResult.status != null) "interim" else "pending",
-                overnightAutonomicSource = if (ppi247Autonomic != null) "raw_ppi_manual_window_pending_sleep_report" else if (hasRawPpi) "raw_ppi_pending_sleep_window" else "awaiting_sleep_data",
+                overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = manualDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
@@ -1700,6 +1869,8 @@ class ProbeRepository(
                     "Polar has created today’s sleep record, but the resolved start/end times are not available yet.",
                     if (ppi247Autonomic != null) {
                         "A provisional PPI read is available from the manual bed/wake window."
+                    } else if (hasRawPpi && manualWindow == null) {
+                        "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
                     } else if (hasRawPpi) {
                         "Raw PPI has been fetched, but the final sleep-window score is waiting for those times."
                     } else {
@@ -1999,8 +2170,20 @@ class ProbeRepository(
 
 data class DomainPersistenceResult(
     val recordCount: Int,
-    val shapeNotes: String,
-    val rawPayloadJson: String
+    val shapeNotes: String
+)
+
+private data class SyncDomainTask(
+    val domain: ProbeDomain,
+    val from: LocalDate,
+    val to: LocalDate,
+    val timeoutMs: Long,
+    val block: suspend (Pair<LocalDate, LocalDate>) -> DomainPersistenceResult
+)
+
+private data class SyncDomainFailure(
+    val domain: ProbeDomain,
+    val error: Throwable
 )
 
 private const val SOFT_STORAGE_MAINTENANCE_USED_PERCENT = 70.0
@@ -2015,6 +2198,15 @@ private const val MANUAL_SYNC_TIMEOUT_MS = 7 * 60 * 1000L
 private const val SYNC_NOTIFICATION_START_ATTEMPTS = 5
 private const val SYNC_NOTIFICATION_START_RETRY_DELAY_MS = 1_500L
 private const val SYNC_NOTIFICATION_STOP_TIMEOUT_MS = 5_000L
+private const val DATABASE_COMPACTION_THRESHOLD_BYTES = 300L * 1024L * 1024L
+private const val ENABLE_ACTIVITY_SAMPLE_SYNC = false
+private const val SLEEP_SYNC_TIMEOUT_MS = 45_000L
+private const val NIGHTLY_RECHARGE_SYNC_TIMEOUT_MS = 45_000L
+private const val PPI_SYNC_TIMEOUT_MS = 4 * 60 * 1000L
+private const val HR_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
+private const val SKIN_TEMPERATURE_SYNC_TIMEOUT_MS = 60_000L
+private const val DAILY_SUMMARY_SYNC_TIMEOUT_MS = 60_000L
+private const val ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")

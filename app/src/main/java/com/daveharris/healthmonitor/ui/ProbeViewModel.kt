@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import kotlin.math.ceil
 
 class ProbeViewModel(
     application: Application,
@@ -87,6 +88,8 @@ class ProbeViewModel(
     var healthConnectPermissionsGranted by mutableStateOf(false)
         private set
     var lastSleep2ScreenshotPath by mutableStateOf<String?>(null)
+        private set
+    var sleepReportRetryCooldownUntilEpochMs by mutableStateOf(loadSleepReportRetryCooldown(application))
         private set
     private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
@@ -238,6 +241,47 @@ class ProbeViewModel(
                 persistAppSettings()
                 statusMessage = "Awake recorded. Normal sync completed."
             }
+        }
+    }
+
+    fun retryFinalSleepReport() {
+        val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
+        val today = LocalDate.now().toString()
+        val remainingMs = sleepReportRetryCooldownUntilEpochMs - System.currentTimeMillis()
+        if (remainingMs > 0L) {
+            statusMessage = "Sleep report retry is cooling down. Try again in about ${remainingMinutes(remainingMs)}m."
+            return
+        }
+        viewModelScope.launch {
+            runBusyAction("Retrying final sleep report…") {
+                saveSleepReportRetryCooldown(System.currentTimeMillis() + SLEEP_REPORT_RETRY_COOLDOWN_MS)
+                if (repository.hasSleepRecordForDate(today)) {
+                    statusMessage = "Final sleep report is already present."
+                    return@runBusyAction
+                }
+                SyncCommandWorker.cancelBulkWork(getApplication())
+                val result = syncCoordinator.runSync(
+                    deviceId = deviceId,
+                    config = syncWindowConfig,
+                    profile = SyncRunProfile.MORNING_SLEEP_RETRY
+                )
+                selectedDeviceId = result.connectedDeviceId
+                persistAppSettings()
+                statusMessage = if (repository.hasSleepRecordForDate(today)) {
+                    "Final sleep report retry completed. Sleep report is present."
+                } else {
+                    "Sleep report retry completed. Final report is still pending."
+                }
+            }
+        }
+    }
+
+    fun sleepReportRetryCooldownLabel(): String? {
+        val remainingMs = sleepReportRetryCooldownUntilEpochMs - System.currentTimeMillis()
+        return if (remainingMs > 0L) {
+            "Available in about ${remainingMinutes(remainingMs)}m"
+        } else {
+            null
         }
     }
 
@@ -547,6 +591,18 @@ class ProbeViewModel(
         }
     }
 
+    private fun saveSleepReportRetryCooldown(cooldownUntilEpochMs: Long) {
+        sleepReportRetryCooldownUntilEpochMs = cooldownUntilEpochMs
+        getApplication<Application>()
+            .getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(SLEEP_REPORT_RETRY_COOLDOWN_UNTIL, cooldownUntilEpochMs)
+            .apply()
+    }
+
+    private fun remainingMinutes(remainingMs: Long): Int =
+        ceil(remainingMs / 60_000.0).toInt().coerceAtLeast(1)
+
     private fun hydrateDailyCheckIn(entity: DailyCheckInEntity) {
         checkInDate = entity.sourceDate
         eveningOutcomeDraft = runCatching { TrafficLightStatus.valueOf(entity.eveningOutcome) }.getOrNull()
@@ -587,6 +643,15 @@ class ProbeViewModel(
     }
 
     companion object {
+        private const val SETTINGS_PREFS_NAME = "lodestone_settings_tools"
+        private const val SLEEP_REPORT_RETRY_COOLDOWN_UNTIL = "sleep_report_retry_cooldown_until"
+        private const val SLEEP_REPORT_RETRY_COOLDOWN_MS = 30 * 60 * 1000L
+
+        private fun loadSleepReportRetryCooldown(context: Context): Long =
+            context
+                .getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+                .getLong(SLEEP_REPORT_RETRY_COOLDOWN_UNTIL, 0L)
+
         val Factory = object : ViewModelProvider.Factory {
             override fun <T : androidx.lifecycle.ViewModel> create(
                 modelClass: Class<T>,

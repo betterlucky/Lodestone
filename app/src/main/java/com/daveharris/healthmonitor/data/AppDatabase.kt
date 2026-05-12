@@ -31,7 +31,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -259,6 +259,19 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    UPDATE sync_domain_result
+                    SET rawPayloadJson = NULL
+                    WHERE rawPayloadJson IS NOT NULL
+                      AND LENGTH(rawPayloadJson) > 250000
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -273,7 +286,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_13_14,
             MIGRATION_14_15,
             MIGRATION_15_16,
-            MIGRATION_16_17
+            MIGRATION_16_17,
+            MIGRATION_17_18
         )
             .build()
     }

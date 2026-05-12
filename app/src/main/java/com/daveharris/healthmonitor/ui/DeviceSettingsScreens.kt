@@ -25,6 +25,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,6 +41,8 @@ import com.daveharris.healthmonitor.data.FtuProfileEntity
 import com.daveharris.healthmonitor.data.ObservedCapabilityEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.model.PolarDeviceInfo
+import kotlinx.coroutines.delay
+import java.time.LocalDate
 
 @Composable
 fun DeviceScreen(
@@ -154,6 +162,23 @@ fun SettingsScreen(
     onOpenHealthConnectSettings: () -> Unit,
     onClose: () -> Unit
 ) {
+    val morningRead by viewModel.morningRead.collectAsState()
+    var cooldownTicker by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(viewModel.sleepReportRetryCooldownUntilEpochMs) {
+        while (viewModel.sleepReportRetryCooldownUntilEpochMs > System.currentTimeMillis()) {
+            delay(30_000L)
+            cooldownTicker = System.currentTimeMillis()
+        }
+        cooldownTicker = System.currentTimeMillis()
+    }
+    cooldownTicker
+    val today = LocalDate.now().toString()
+    val todayMorningRead = morningRead?.takeIf { it.sourceDate == today }
+    val finalSleepReportPresent = todayMorningRead?.sleepDataReady == true
+    val ppiPresent = todayMorningRead?.rawPpiGoodEpochCount != null ||
+        todayMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
+    val sleepRetryCooldown = viewModel.sleepReportRetryCooldownLabel()
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -187,6 +212,27 @@ fun SettingsScreen(
                     }
                 }
                 SupportText("Flow remains useful for firmware and occasional sleep finalisation. Prepare disconnects Lodestone so Flow can take the Loop cleanly.")
+            }
+        }
+        item {
+            SectionCard(title = "Morning repair", subtitle = "Non-standard tools for stubborn sleep reports") {
+                DetailRow("Today", today)
+                DetailRow("PPI received", if (ppiPresent) "Yes" else "Not yet")
+                DetailRow("Final sleep report", if (finalSleepReportPresent) "Present" else "Pending")
+                sleepRetryCooldown?.let { DetailRow("Sleep retry", it) }
+                ButtonRow {
+                    OutlinedButton(
+                        onClick = viewModel::retryFinalSleepReport,
+                        enabled = !viewModel.isBusy &&
+                            viewModel.selectedDeviceId != null &&
+                            ppiPresent &&
+                            !finalSleepReportPresent &&
+                            sleepRetryCooldown == null
+                    ) {
+                        Text("Retry sleep report")
+                    }
+                }
+                SupportText("Use this after the automatic checks have given up. It only fetches Sleep and Nightly Recharge, then locks itself for 30 minutes.")
             }
         }
         item {

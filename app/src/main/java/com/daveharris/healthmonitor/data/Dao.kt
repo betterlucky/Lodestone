@@ -112,6 +112,9 @@ interface ProbeDao {
     @Query("SELECT rawPayloadJson FROM ppi247_day_raw WHERE deviceId = :deviceId")
     suspend fun getExistingPpiPayloads(deviceId: String): List<String>
 
+    @Query("SELECT sourceDate || '|' || keySummary FROM ppi247_day_raw WHERE deviceId = :deviceId")
+    suspend fun getExistingPpiRecordKeys(deviceId: String): List<String>
+
     @Query("SELECT rawPayloadJson FROM skin_temperature_raw WHERE deviceId = :deviceId")
     suspend fun getExistingSkinTemperaturePayloads(deviceId: String): List<String>
 
@@ -221,6 +224,9 @@ interface ProbeDao {
 
     @Query("SELECT rawPayloadJson FROM sync_domain_result WHERE id = :id AND LENGTH(rawPayloadJson) <= :maxBytes")
     suspend fun getSyncDomainResultPayloadIfSmall(id: Long, maxBytes: Int = 1_500_000): String?
+
+    @Query("UPDATE sync_domain_result SET rawPayloadJson = NULL WHERE rawPayloadJson IS NOT NULL AND LENGTH(rawPayloadJson) > :maxBytes")
+    suspend fun pruneLargeSyncDomainResultPayloads(maxBytes: Int = 250_000): Int
 
     @Query(
         """
@@ -401,6 +407,9 @@ interface ProbeDao {
 
     @Query("SELECT * FROM ppi247_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
     suspend fun getPpi247EpochsForDate(sourceDate: String): List<Ppi247EpochEntity>
+
+    @Query("SELECT COUNT(*) FROM ppi247_epoch WHERE sourceDate = :sourceDate")
+    suspend fun countPpi247EpochsForDate(sourceDate: String): Int
 
     @Query("SELECT * FROM ppi247_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
     fun observeRecentPpi247Epochs(): Flow<List<Ppi247EpochEntity>>
