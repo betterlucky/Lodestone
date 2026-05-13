@@ -70,6 +70,8 @@ class ProbeRepository(
     init {
         scope.launch {
             recoverStaleRunningSyncRuns()
+            rebuildHr247EpochTables(pruneRaw = true)
+            rebuildContextEpochTables(pruneRaw = true)
             pruneOversizedSyncResultPayloads()
         }
     }
@@ -1233,9 +1235,86 @@ class ProbeRepository(
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingHrPayloads(deviceId))
-        filtered.forEach { dao.deleteHrRecordsForDate(deviceId, it.sourceDate) }
-        dao.insertHrRecords(filtered)
+        if (records.isEmpty()) return
+        database.withTransaction {
+            records.forEach { dao.deleteHrRecordsForDate(deviceId, it.sourceDate) }
+            dao.insertHrRecords(records)
+            val rebuild = rebuildHr247EpochsForDates(deviceId, records.map { it.sourceDate }.distinct())
+            if (rebuild.rawSourceDatesWithEpochs.isNotEmpty()) {
+                dao.deleteHrRecordsForDates(deviceId, rebuild.rawSourceDatesWithEpochs)
+            }
+        }
+    }
+
+    private suspend fun rebuildHr247EpochsForDates(
+        deviceId: String?,
+        sourceDates: List<String>
+    ): Hr247EpochRebuildResult {
+        val normalizedDates = sourceDates.distinct().filter { it.isNotBlank() }
+        if (normalizedDates.isEmpty()) return Hr247EpochRebuildResult(epochCount = 0, rawSourceDatesWithEpochs = emptyList())
+        val records = dao.getHrRawRecordsForDates(deviceId, normalizedDates)
+        val updatedAt = System.currentTimeMillis()
+        val rawSourceDatesWithEpochs = mutableListOf<String>()
+        val epochs = records
+            .groupBy { it.sourceDate }
+            .flatMap { (sourceDate, dayRecords) ->
+                val samples = dayRecords.flatMap { hr247SamplesFromRaw(it, sourceDate) }.sortedBy { it.timestampEpochMs }
+                val dayEpochs = Hr247EpochBuilder.derive(samples, updatedAtEpochMs = updatedAt)
+                if (dayEpochs.isNotEmpty()) {
+                    rawSourceDatesWithEpochs += sourceDate
+                }
+                dayEpochs
+            }
+        dao.deleteHr247EpochsForDates(deviceId, normalizedDates)
+        if (epochs.isNotEmpty()) {
+            dao.upsertHr247Epochs(epochs)
+        }
+        return Hr247EpochRebuildResult(
+            epochCount = epochs.size,
+            rawSourceDatesWithEpochs = rawSourceDatesWithEpochs.distinct()
+        )
+    }
+
+    suspend fun rebuildHr247EpochTables(pruneRaw: Boolean = false): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val records = dao.getAllHrRawRecords()
+            val sourceDates = records.map { it.sourceDate }.distinct()
+            val rebuild = rebuildHr247EpochsForDates(deviceId = null, sourceDates = sourceDates)
+            if (pruneRaw && rebuild.rawSourceDatesWithEpochs.isNotEmpty()) {
+                dao.deleteHrRecordsForDates(deviceId = null, sourceDates = rebuild.rawSourceDatesWithEpochs)
+            }
+            rebuild.epochCount
+        }
+    }
+
+    private fun hr247SamplesFromRaw(record: Hr247DayRawEntity, sourceDate: String): List<Hr247EpochBuilder.Sample> {
+        val root = runCatching { GsonProvider.gson.fromJson(record.rawPayloadJson, JsonObject::class.java) }.getOrNull()
+            ?: return emptyList()
+        val date = root.stringOrNull("date") ?: sourceDate
+        val parsedDate = runCatching { LocalDate.parse(date) }.getOrNull() ?: return emptyList()
+        return root.getAsJsonArray("samples")
+            ?.mapNotNull { element ->
+                val sample = element.asJsonObjectOrNull() ?: return@mapNotNull null
+                val startTime = sample.stringOrNull("startTime") ?: return@mapNotNull null
+                val startEpochMs = runCatching {
+                    LocalDateTime.of(parsedDate, LocalTime.parse(startTime))
+                        .atZone(ZoneId.systemDefault())
+                        .toInstant()
+                        .toEpochMilli()
+                }.getOrNull() ?: return@mapNotNull null
+                val hrValues = sample.getAsJsonArray("hrSamples")
+                    ?.mapNotNull { it.asIntOrNull() }
+                    .orEmpty()
+                if (hrValues.isEmpty()) return@mapNotNull null
+                val averagedHr = hrValues.average().toInt()
+                Hr247EpochBuilder.Sample(
+                    timestampEpochMs = startEpochMs,
+                    deviceId = record.deviceId,
+                    hrBpm = averagedHr,
+                    triggerType = sample.stringOrNull("triggerType") ?: "unknown"
+                )
+            }
+            .orEmpty()
     }
 
     private suspend fun persistPpi(deviceId: String, data: List<Polar247PPiSamplesData>, requestedRange: String) {
@@ -1333,32 +1412,70 @@ class ProbeRepository(
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingSkinTemperaturePayloads(deviceId))
-        filtered.forEach { dao.deleteSkinTemperatureRecordsForDate(deviceId, it.sourceDate) }
-        dao.insertSkinTemperatureRecords(filtered)
-        rebuildSkinTemperatureSamplesForDates(records.map { it.sourceDate }.distinct())
+        if (records.isEmpty()) return
+        database.withTransaction {
+            records.forEach { dao.deleteSkinTemperatureRecordsForDate(deviceId, it.sourceDate) }
+            dao.insertSkinTemperatureRecords(records)
+            val rebuild = rebuildSkinTemperatureSamplesForDates(records.map { it.sourceDate }.distinct())
+            val safeToPrune = rebuild.rawSourceDatesWithDerived + rebuild.emptyRawSourceDates
+            if (safeToPrune.isNotEmpty()) {
+                dao.deleteSkinTemperatureRecordsForDates(deviceId, safeToPrune)
+            }
+        }
     }
 
-    private suspend fun rebuildSkinTemperatureSamplesForDates(sourceDates: List<String>): Int {
+    private suspend fun rebuildSkinTemperatureSamplesForDates(sourceDates: List<String>): DerivedTableRebuildResult {
         val normalizedDates = sourceDates.distinct().filter { it.isNotBlank() }
-        if (normalizedDates.isEmpty()) return 0
+        if (normalizedDates.isEmpty()) return DerivedTableRebuildResult(
+            rowCount = 0,
+            rawSourceDatesWithDerived = emptyList(),
+            emptyRawSourceDates = emptyList()
+        )
         val records = dao.getSkinTemperatureRawRecordsForDates(normalizedDates)
         val updatedAt = System.currentTimeMillis()
-        val samples = records.flatMap { skinTemperatureSamplesFromRaw(it, updatedAt) }
-        dao.deleteSkinTemperatureSamplesForDates(normalizedDates)
+        val rawSourceDatesWithDerived = mutableListOf<String>()
+        val emptyRawSourceDates = mutableListOf<String>()
+        val samples = records
+            .groupBy { it.sourceDate }
+            .flatMap { (sourceDate, dayRecords) ->
+                val daySamples = dayRecords.flatMap { skinTemperatureSamplesFromRaw(it, updatedAt) }
+                if (daySamples.isNotEmpty()) {
+                    rawSourceDatesWithDerived += sourceDate
+                } else if (dayRecords.all(::skinTemperatureRawIsEmpty)) {
+                    emptyRawSourceDates += sourceDate
+                }
+                daySamples
+            }
+        if (rawSourceDatesWithDerived.isNotEmpty()) {
+            dao.deleteSkinTemperatureSamplesForDates(rawSourceDatesWithDerived)
+        }
         if (samples.isNotEmpty()) {
             dao.upsertSkinTemperatureSamples(samples)
         }
-        return samples.size
+        return DerivedTableRebuildResult(
+            rowCount = samples.size,
+            rawSourceDatesWithDerived = rawSourceDatesWithDerived.distinct(),
+            emptyRawSourceDates = emptyRawSourceDates.distinct()
+        )
     }
 
-    suspend fun rebuildContextEpochTables(): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun rebuildContextEpochTables(pruneRaw: Boolean = false): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val skinRecords = dao.getAllSkinTemperatureRawRecords()
             val activityRecords = dao.getAllActivitySampleRawRecords()
-            val skinCount = rebuildSkinTemperatureSamplesForDates(skinRecords.map { it.sourceDate }.distinct())
-            val activityCount = rebuildActivityEpochsForDates(activityRecords.map { it.sourceDate }.distinct())
-            skinCount + activityCount
+            val skinRebuild = rebuildSkinTemperatureSamplesForDates(skinRecords.map { it.sourceDate }.distinct())
+            val activityRebuild = rebuildActivityEpochsForDates(activityRecords.map { it.sourceDate }.distinct())
+            if (pruneRaw) {
+                val skinSafeToPrune = skinRebuild.rawSourceDatesWithDerived + skinRebuild.emptyRawSourceDates
+                val activitySafeToPrune = activityRebuild.rawSourceDatesWithDerived + activityRebuild.emptyRawSourceDates
+                if (skinSafeToPrune.isNotEmpty()) {
+                    dao.deleteSkinTemperatureRecordsForDates(deviceId = null, sourceDates = skinSafeToPrune)
+                }
+                if (activitySafeToPrune.isNotEmpty()) {
+                    dao.deleteActivitySampleRecordsForDates(deviceId = null, sourceDates = activitySafeToPrune)
+                }
+            }
+            skinRebuild.rowCount + activityRebuild.rowCount
         }
     }
 
@@ -1395,6 +1512,13 @@ class ProbeRepository(
             .orEmpty()
     }
 
+    private fun skinTemperatureRawIsEmpty(record: SkinTemperatureRawEntity): Boolean {
+        val root = runCatching { GsonProvider.gson.fromJson(record.rawPayloadJson, JsonObject::class.java) }.getOrNull()
+            ?: return false
+        val result = root.getAsJsonObject("result") ?: return false
+        return result.getAsJsonArray("skinTemperatureList")?.isEmpty == true
+    }
+
     private suspend fun persistDailySummary(deviceId: String, data: List<PolarDailySummaryData>, requestedRange: String) {
         val records = data.map {
             val rawPayloadJson = PayloadMappers.dailySummary(it)
@@ -1429,23 +1553,51 @@ class ProbeRepository(
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingActivitySamplePayloads(deviceId))
-        filtered.forEach { dao.deleteActivitySampleRecordsForDate(deviceId, it.sourceDate) }
-        dao.insertActivitySampleRecords(filtered)
-        rebuildActivityEpochsForDates(records.map { it.sourceDate }.distinct())
+        if (records.isEmpty()) return
+        database.withTransaction {
+            records.forEach { dao.deleteActivitySampleRecordsForDate(deviceId, it.sourceDate) }
+            dao.insertActivitySampleRecords(records)
+            val rebuild = rebuildActivityEpochsForDates(records.map { it.sourceDate }.distinct())
+            val safeToPrune = rebuild.rawSourceDatesWithDerived + rebuild.emptyRawSourceDates
+            if (safeToPrune.isNotEmpty()) {
+                dao.deleteActivitySampleRecordsForDates(deviceId, safeToPrune)
+            }
+        }
     }
 
-    private suspend fun rebuildActivityEpochsForDates(sourceDates: List<String>): Int {
+    private suspend fun rebuildActivityEpochsForDates(sourceDates: List<String>): DerivedTableRebuildResult {
         val normalizedDates = sourceDates.distinct().filter { it.isNotBlank() }
-        if (normalizedDates.isEmpty()) return 0
+        if (normalizedDates.isEmpty()) return DerivedTableRebuildResult(
+            rowCount = 0,
+            rawSourceDatesWithDerived = emptyList(),
+            emptyRawSourceDates = emptyList()
+        )
         val records = dao.getActivitySampleRawRecordsForDates(normalizedDates)
         val updatedAt = System.currentTimeMillis()
-        val epochs = records.flatMap { activityEpochsFromRaw(it, updatedAt) }
-        dao.deleteActivityEpochsForDates(normalizedDates)
+        val rawSourceDatesWithDerived = mutableListOf<String>()
+        val emptyRawSourceDates = mutableListOf<String>()
+        val epochs = records
+            .groupBy { it.sourceDate }
+            .flatMap { (sourceDate, dayRecords) ->
+                val dayEpochs = dayRecords.flatMap { activityEpochsFromRaw(it, updatedAt) }
+                if (dayEpochs.isNotEmpty()) {
+                    rawSourceDatesWithDerived += sourceDate
+                } else if (dayRecords.all(::activitySamplesRawIsEmpty)) {
+                    emptyRawSourceDates += sourceDate
+                }
+                dayEpochs
+            }
+        if (rawSourceDatesWithDerived.isNotEmpty()) {
+            dao.deleteActivityEpochsForDates(rawSourceDatesWithDerived)
+        }
         if (epochs.isNotEmpty()) {
             dao.upsertActivityEpochs(epochs)
         }
-        return epochs.size
+        return DerivedTableRebuildResult(
+            rowCount = epochs.size,
+            rawSourceDatesWithDerived = rawSourceDatesWithDerived.distinct(),
+            emptyRawSourceDates = emptyRawSourceDates.distinct()
+        )
     }
 
     private fun activityEpochsFromRaw(
@@ -1499,6 +1651,12 @@ class ProbeRepository(
                 updatedAtEpochMs = updatedAtEpochMs
             )
         }
+    }
+
+    private fun activitySamplesRawIsEmpty(record: ActivitySamplesRawEntity): Boolean {
+        val root = runCatching { GsonProvider.gson.fromJson(record.rawPayloadJson, JsonObject::class.java) }.getOrNull()
+            ?: return false
+        return root.getAsJsonArray("polarActivitySamplesDataList")?.isEmpty == true
     }
 
     private data class ActivityEpochDraft(
@@ -2224,6 +2382,17 @@ private data class Ppi247WindowSummary(
     val poorEpochCount: Int,
     val coverageHours: Double,
     val lateMinusEarlyRmssdMs: Double?
+)
+
+private data class Hr247EpochRebuildResult(
+    val epochCount: Int,
+    val rawSourceDatesWithEpochs: List<String>
+)
+
+private data class DerivedTableRebuildResult(
+    val rowCount: Int,
+    val rawSourceDatesWithDerived: List<String>,
+    val emptyRawSourceDates: List<String>
 )
 
 private data class StorageMaintenancePolicy(

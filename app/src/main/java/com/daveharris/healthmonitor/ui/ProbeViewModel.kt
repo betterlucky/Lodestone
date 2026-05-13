@@ -11,6 +11,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.viewModelScope
 import com.daveharris.healthmonitor.HealthMonitorApp
+import com.daveharris.healthmonitor.MorningReadScheduler
 import com.daveharris.healthmonitor.SyncCommandWorker
 import com.daveharris.healthmonitor.SyncCoordinator
 import com.daveharris.healthmonitor.data.DailyReviewRepository
@@ -267,7 +268,11 @@ class ProbeViewModel(
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
-                statusMessage = if (repository.hasSleepRecordForDate(today)) {
+                val finalReportPresent = repository.hasSleepRecordForDate(today)
+                if (finalReportPresent) {
+                    MorningReadScheduler.cancel(getApplication())
+                }
+                statusMessage = if (finalReportPresent) {
                     "Final sleep report retry completed. Sleep report is present."
                 } else {
                     "Sleep report retry completed. Final report is still pending."

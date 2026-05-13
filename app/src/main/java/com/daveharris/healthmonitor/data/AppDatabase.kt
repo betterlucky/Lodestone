@@ -20,6 +20,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Ppi247DayRawEntity::class,
         SkinTemperatureRawEntity::class,
         Ppi247EpochEntity::class,
+        Hr247EpochEntity::class,
         SkinTemperatureSampleEntity::class,
         DailySummaryRawEntity::class,
         ActivitySamplesRawEntity::class,
@@ -31,7 +32,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -272,6 +273,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS hr247_epoch (
+                        deviceId TEXT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        epochStartEpochMs INTEGER NOT NULL,
+                        epochEndEpochMs INTEGER NOT NULL,
+                        sampleCount INTEGER NOT NULL,
+                        meanHrBpm REAL,
+                        medianHrBpm REAL,
+                        minHrBpm INTEGER,
+                        maxHrBpm INTEGER,
+                        triggerTypesCsv TEXT NOT NULL,
+                        epochQuality TEXT NOT NULL,
+                        updatedAtEpochMs INTEGER NOT NULL,
+                        PRIMARY KEY(deviceId, epochStartEpochMs)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_hr247_epoch_sourceDate ON hr247_epoch(sourceDate)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -287,7 +313,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_14_15,
             MIGRATION_15_16,
             MIGRATION_16_17,
-            MIGRATION_17_18
+            MIGRATION_17_18,
+            MIGRATION_18_19
         )
             .build()
     }

@@ -62,6 +62,9 @@ interface ProbeDao {
     suspend fun upsertPpi247Epochs(entities: List<Ppi247EpochEntity>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertHr247Epochs(entities: List<Hr247EpochEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertSkinTemperatureSamples(entities: List<SkinTemperatureSampleEntity>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -135,6 +138,9 @@ interface ProbeDao {
         SELECT sourceDate FROM hr247_day_raw
         WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
         UNION
+        SELECT sourceDate FROM hr247_epoch
+        WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
+        UNION
         SELECT sourceDate FROM ppi247_day_raw
         WHERE deviceId = :deviceId AND sourceDate <= :cutoffDate
         UNION
@@ -160,6 +166,12 @@ interface ProbeDao {
     @Query("DELETE FROM hr247_day_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteHrRecordsForDate(deviceId: String, sourceDate: String)
 
+    @Query("DELETE FROM hr247_day_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
+    suspend fun deleteHrRecordsForDates(deviceId: String?, sourceDates: List<String>)
+
+    @Query("DELETE FROM hr247_epoch WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
+    suspend fun deleteHr247EpochsForDates(deviceId: String?, sourceDates: List<String>)
+
     @Query("DELETE FROM ppi247_day_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate AND keySummary = :keySummary")
     suspend fun deletePpiRecordsForDateAndKeySummary(deviceId: String, sourceDate: String, keySummary: String)
 
@@ -169,6 +181,9 @@ interface ProbeDao {
     @Query("DELETE FROM skin_temperature_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteSkinTemperatureRecordsForDate(deviceId: String, sourceDate: String)
 
+    @Query("DELETE FROM skin_temperature_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
+    suspend fun deleteSkinTemperatureRecordsForDates(deviceId: String?, sourceDates: List<String>)
+
     @Query("DELETE FROM skin_temperature_sample WHERE sourceDate IN (:sourceDates)")
     suspend fun deleteSkinTemperatureSamplesForDates(sourceDates: List<String>)
 
@@ -177,6 +192,9 @@ interface ProbeDao {
 
     @Query("DELETE FROM activity_samples_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate")
     suspend fun deleteActivitySampleRecordsForDate(deviceId: String, sourceDate: String)
+
+    @Query("DELETE FROM activity_samples_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
+    suspend fun deleteActivitySampleRecordsForDates(deviceId: String?, sourceDates: List<String>)
 
     @Query("DELETE FROM activity_epoch WHERE sourceDate IN (:sourceDates)")
     suspend fun deleteActivityEpochsForDates(sourceDates: List<String>)
@@ -393,6 +411,12 @@ interface ProbeDao {
     @Query("SELECT * FROM ppi247_day_raw ORDER BY sourceDate ASC, keySummary ASC")
     suspend fun getAllPpiRawRecords(): List<Ppi247DayRawEntity>
 
+    @Query("SELECT * FROM hr247_day_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates) ORDER BY sourceDate ASC")
+    suspend fun getHrRawRecordsForDates(deviceId: String?, sourceDates: List<String>): List<Hr247DayRawEntity>
+
+    @Query("SELECT * FROM hr247_day_raw ORDER BY sourceDate ASC")
+    suspend fun getAllHrRawRecords(): List<Hr247DayRawEntity>
+
     @Query("SELECT * FROM skin_temperature_raw WHERE sourceDate IN (:sourceDates) ORDER BY sourceDate ASC")
     suspend fun getSkinTemperatureRawRecordsForDates(sourceDates: List<String>): List<SkinTemperatureRawEntity>
 
@@ -410,6 +434,12 @@ interface ProbeDao {
 
     @Query("SELECT COUNT(*) FROM ppi247_epoch WHERE sourceDate = :sourceDate")
     suspend fun countPpi247EpochsForDate(sourceDate: String): Int
+
+    @Query("SELECT * FROM hr247_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
+    suspend fun getHr247EpochsForDate(sourceDate: String): List<Hr247EpochEntity>
+
+    @Query("SELECT COUNT(*) FROM hr247_epoch WHERE sourceDate = :sourceDate")
+    suspend fun countHr247EpochsForDate(sourceDate: String): Int
 
     @Query("SELECT * FROM ppi247_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
     fun observeRecentPpi247Epochs(): Flow<List<Ppi247EpochEntity>>
