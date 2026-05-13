@@ -185,6 +185,28 @@ data class Ppi247EpochEntity(
 )
 
 @Entity(
+    tableName = "hr247_epoch",
+    primaryKeys = ["deviceId", "epochStartEpochMs"],
+    indices = [
+        Index("sourceDate")
+    ]
+)
+data class Hr247EpochEntity(
+    val deviceId: String,
+    val sourceDate: String,
+    val epochStartEpochMs: Long,
+    val epochEndEpochMs: Long,
+    val sampleCount: Int,
+    val meanHrBpm: Double?,
+    val medianHrBpm: Double?,
+    val minHrBpm: Int?,
+    val maxHrBpm: Int?,
+    val triggerTypesCsv: String,
+    val epochQuality: String,
+    val updatedAtEpochMs: Long
+)
+
+@Entity(
     tableName = "skin_temperature_sample",
     primaryKeys = ["deviceId", "sampleTimeEpochMs"],
     indices = [
