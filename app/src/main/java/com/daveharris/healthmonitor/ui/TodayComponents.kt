@@ -260,13 +260,23 @@ fun MorningSignalSection(
             Text("Morning signal", fontWeight = FontWeight.SemiBold)
             if (morningRead == null) {
                 Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Report state", todayStatus.sleepReport)
+                    DetailRow("PPI", todayStatus.ppiReceipt)
+                }
             } else {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Prediction", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Report state", morningReadReportStateLabel(morningRead))
+                    DetailRow("Basis", morningReadBasisLabel(morningRead, todayStatus))
+                    DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
+                }
                 morningRead.reasons.take(3).forEach { reason ->
                     Text("* $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Date", morningRead.sourceDate ?: "unknown")
-                    DetailRow("Source", morningRead.overnightAutonomicSource)
+                    DetailRow("Autonomic source", autonomicSourceDisplayLabel(morningRead.overnightAutonomicSource))
                     DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
                     DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
                     DetailRow("Raw PPI", "${morningRead.rawPpiGoodEpochCount ?: 0} good epochs")
@@ -275,3 +285,42 @@ fun MorningSignalSection(
         }
     }
 }
+
+fun morningReadBasisLabel(
+    morningRead: MorningReadSnapshot?,
+    todayStatus: TodayReadinessStatus
+): String =
+    when {
+        morningRead?.sleepDataReady == true ->
+            "Confirmed Loop sleep report + aligned PPI"
+        morningRead?.overnightAutonomicSource == "raw_ppi_calibrated_window_pending_sleep_report" ->
+            "Provisional calibrated sleep window + PPI"
+        morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_pending_sleep_report" ->
+            "Provisional manual sleep window + PPI"
+        morningRead?.isInterim == true ->
+            "Provisional morning data"
+        todayStatus.stage == TodayReadinessStage.SLEEP_TIME ->
+            "Waiting for wake sync"
+        else ->
+            "Waiting for morning data"
+    }
+
+private fun morningReadReportStateLabel(morningRead: MorningReadSnapshot): String =
+    when {
+        morningRead.sleepDataReady -> "Confirmed final Loop report"
+        morningRead.isInterim -> "Provisional estimate"
+        else -> "Pending"
+    }
+
+private fun autonomicSourceDisplayLabel(source: String): String =
+    when (source) {
+        "ppi247_sleep_window" -> "24/7 PPI aligned to sleep"
+        "raw_ppi_calibrated_window_pending_sleep_report" -> "24/7 PPI, calibrated provisional window"
+        "raw_ppi_manual_window_pending_sleep_report" -> "24/7 PPI, manual provisional window"
+        "raw_ppi_pending_manual_sleep_window" -> "24/7 PPI, waiting for bedtime marker"
+        "raw_ppi_pending_sleep_window" -> "24/7 PPI, waiting for final sleep window"
+        "nightly_recharge_summary" -> "Nightly Recharge summary"
+        "sleep_context_only" -> "Sleep/context only"
+        "awaiting_sleep_data" -> "Awaiting sleep data"
+        else -> source
+    }
