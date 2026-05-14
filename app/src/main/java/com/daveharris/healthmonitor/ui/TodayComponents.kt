@@ -111,6 +111,8 @@ fun todayReadinessStatus(
             },
             hrvDetail = if (relevantMorningRead.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window") {
                 "Tap I'm going to bed before sleep so Lodestone can calculate an interim signal before Polar's final sleep report arrives."
+            } else if (relevantMorningRead.overnightAutonomicSource == "raw_ppi_calibrated_window_pending_sleep_report") {
+                "The interim morning signal is using Lodestone's calibrated onset estimate and your wake marker while Polar's final sleep report is pending."
             } else {
                 "The interim morning signal can use manual bed/wake timing, but treat it as provisional until the final sleep report arrives."
             }

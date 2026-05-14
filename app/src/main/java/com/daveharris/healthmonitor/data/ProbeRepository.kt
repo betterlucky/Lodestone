@@ -41,6 +41,7 @@ import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import kotlin.math.max
+import kotlin.math.sqrt
 
 class ProbeRepository(
     private val database: AppDatabase,
@@ -1904,25 +1905,25 @@ class ProbeRepository(
         val latestNightlySummary = latestNightlyJson?.getAsJsonObject("summary")
         val latestBaselineReady = latestNightlySummary?.booleanOrNull("baselineReady") ?: false
         if (sleepRow?.sourceDate != expectedSourceDate) {
-            val manualWindow = manualSleepWindowForToday(wakeMarkers)
-            val ppi247Autonomic = manualWindow?.let {
+            val provisionalWindow = provisionalSleepWindowForToday(wakeMarkers, ppi247Epochs)
+            val ppi247Autonomic = provisionalWindow?.let {
                 summarizePpi247ForSleepWindow(
                     sourceDate = null,
-                    sleepStartEpochMs = it.first,
-                    sleepEndEpochMs = it.second,
+                    sleepStartEpochMs = it.startEpochMs,
+                    sleepEndEpochMs = it.endEpochMs,
                     epochs = ppi247Epochs
                 )
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
-            val manualDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() }
+            val provisionalDurationMinutes = provisionalWindow?.durationMinutes
             val pendingSource = when {
-                ppi247Autonomic != null -> "raw_ppi_manual_window_pending_sleep_report"
-                hasRawPpi && manualWindow == null -> "raw_ppi_pending_manual_sleep_window"
+                ppi247Autonomic != null -> provisionalWindow.source
+                hasRawPpi && provisionalWindow == null -> "raw_ppi_pending_manual_sleep_window"
                 hasRawPpi -> "raw_ppi_pending_sleep_window"
                 else -> "awaiting_sleep_data"
             }
             val scoreResult = scoreMorningRead(
-                durationMinutes = manualDurationMinutes,
+                durationMinutes = provisionalDurationMinutes,
                 autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
                 autonomicSource = pendingSource,
                 ppi247Autonomic = ppi247Autonomic,
@@ -1931,7 +1932,7 @@ class ProbeRepository(
                 baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
                 ansAvailable = false,
-                ppiWindowLabel = "manual bed/wake window",
+                ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
                 missingPpiReason = "No usable raw PPI is available yet."
             )
             return MorningReadSnapshot(
@@ -1939,7 +1940,7 @@ class ProbeRepository(
                 status = scoreResult.status,
                 confidence = if (scoreResult.status != null) "interim" else "pending",
                 overnightAutonomicSource = pendingSource,
-                sleepDurationMinutes = manualDurationMinutes,
+                sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
@@ -1947,8 +1948,8 @@ class ProbeRepository(
                 reasons = listOf(
                     "Today’s resolved sleep window is not available yet.",
                     if (ppi247Autonomic != null) {
-                        "A provisional PPI read is available from the manual bed/wake window."
-                    } else if (hasRawPpi && manualWindow == null) {
+                        "A provisional PPI read is available from the ${provisionalWindow.label}."
+                    } else if (hasRawPpi && provisionalWindow == null) {
                         "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
                     } else if (hasRawPpi) {
                         "Raw PPI has been fetched, but the final sleep-window score is waiting for Polar’s sleep report."
@@ -1983,25 +1984,25 @@ class ProbeRepository(
             ?.asString
             ?.let(::parsePolarDateTimeEpochMs)
         if (durationMinutes == null || sleepStartEpochMs == null || sleepEndEpochMs == null) {
-            val manualWindow = manualSleepWindowForToday(wakeMarkers)
-            val ppi247Autonomic = manualWindow?.let {
+            val provisionalWindow = provisionalSleepWindowForToday(wakeMarkers, ppi247Epochs)
+            val ppi247Autonomic = provisionalWindow?.let {
                 summarizePpi247ForSleepWindow(
                     sourceDate = null,
-                    sleepStartEpochMs = it.first,
-                    sleepEndEpochMs = it.second,
+                    sleepStartEpochMs = it.startEpochMs,
+                    sleepEndEpochMs = it.endEpochMs,
                     epochs = ppi247Epochs
                 )
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
-            val manualDurationMinutes = manualWindow?.let { ((it.second - it.first) / 60_000L).toInt() }
+            val provisionalDurationMinutes = provisionalWindow?.durationMinutes
             val pendingSource = when {
-                ppi247Autonomic != null -> "raw_ppi_manual_window_pending_sleep_report"
-                hasRawPpi && manualWindow == null -> "raw_ppi_pending_manual_sleep_window"
+                ppi247Autonomic != null -> provisionalWindow.source
+                hasRawPpi && provisionalWindow == null -> "raw_ppi_pending_manual_sleep_window"
                 hasRawPpi -> "raw_ppi_pending_sleep_window"
                 else -> "awaiting_sleep_data"
             }
             val scoreResult = scoreMorningRead(
-                durationMinutes = manualDurationMinutes,
+                durationMinutes = provisionalDurationMinutes,
                 autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
                 autonomicSource = pendingSource,
                 ppi247Autonomic = ppi247Autonomic,
@@ -2010,7 +2011,7 @@ class ProbeRepository(
                 baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
                 ansAvailable = false,
-                ppiWindowLabel = "manual bed/wake window",
+                ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
                 missingPpiReason = "No usable raw PPI is available yet."
             )
             return MorningReadSnapshot(
@@ -2018,7 +2019,7 @@ class ProbeRepository(
                 status = scoreResult.status,
                 confidence = if (scoreResult.status != null) "interim" else "pending",
                 overnightAutonomicSource = pendingSource,
-                sleepDurationMinutes = manualDurationMinutes,
+                sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
@@ -2026,8 +2027,8 @@ class ProbeRepository(
                 reasons = listOf(
                     "Polar has created today’s sleep record, but the resolved start/end times are not available yet.",
                     if (ppi247Autonomic != null) {
-                        "A provisional PPI read is available from the manual bed/wake window."
-                    } else if (hasRawPpi && manualWindow == null) {
+                        "A provisional PPI read is available from the ${provisionalWindow.label}."
+                    } else if (hasRawPpi && provisionalWindow == null) {
                         "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
                     } else if (hasRawPpi) {
                         "Raw PPI has been fetched, but the final sleep-window score is waiting for those times."
@@ -2261,7 +2262,10 @@ class ProbeRepository(
         )
     }
 
-    private fun manualSleepWindowForToday(wakeMarkers: List<WakeMarkerEntity>): Pair<Long, Long>? {
+    private fun provisionalSleepWindowForToday(
+        wakeMarkers: List<WakeMarkerEntity>,
+        ppi247Epochs: List<Ppi247EpochEntity>
+    ): SleepWindowEstimate? {
         val now = System.currentTimeMillis()
         val earliestUsefulMarker = LocalDate.now(ZoneId.systemDefault())
             .minusDays(1)
@@ -2273,15 +2277,74 @@ class ProbeRepository(
             .asSequence()
             .filter { it.markerEpochMs >= earliestUsefulMarker }
             .filterNot { it.notes == "manual awake command" }
-            .sortedByDescending { it.markerEpochMs }
+            .sortedBy { it.markerEpochMs }
             .toList()
-        val bed = markers.firstOrNull { it.markerSource == "manual_going_to_bed" } ?: return null
+        val bed = markers.lastOrNull { it.markerSource == "manual_going_to_bed" } ?: return null
         val awake = markers
             .firstOrNull { it.markerSource == "manual_im_awake" && it.markerEpochMs > bed.markerEpochMs }
             ?.markerEpochMs
             ?: now
-        if (awake <= bed.markerEpochMs) return null
-        return bed.markerEpochMs to awake
+        val estimatedWake = (awake - MANUAL_WAKE_BACKDATE_MS).coerceAtLeast(bed.markerEpochMs)
+        val estimatedOnset = estimateSleepOnsetEpochMs(
+            bedEpochMs = bed.markerEpochMs,
+            endEpochMs = estimatedWake,
+            epochs = ppi247Epochs
+        ) ?: bed.markerEpochMs
+        if (estimatedWake <= estimatedOnset) return null
+        val source = if (estimatedOnset > bed.markerEpochMs) {
+            "raw_ppi_calibrated_window_pending_sleep_report"
+        } else {
+            "raw_ppi_manual_window_pending_sleep_report"
+        }
+        val label = if (estimatedOnset > bed.markerEpochMs) {
+            "calibrated onset/manual wake window"
+        } else {
+            "manual bed/wake window"
+        }
+        return SleepWindowEstimate(
+            startEpochMs = estimatedOnset,
+            endEpochMs = estimatedWake,
+            source = source,
+            label = label
+        )
+    }
+
+    private fun estimateSleepOnsetEpochMs(
+        bedEpochMs: Long,
+        endEpochMs: Long,
+        epochs: List<Ppi247EpochEntity>
+    ): Long? {
+        val candidateEpochs = epochs
+            .asSequence()
+            .filter { it.epochStartEpochMs >= bedEpochMs && it.epochStartEpochMs <= endEpochMs }
+            .filter { it.meanHrBpm != null }
+            .sortedBy { it.epochStartEpochMs }
+            .toList()
+        if (candidateEpochs.size < SLEEP_ONSET_WINDOW_EPOCHS) return null
+        val firstHourHr = candidateEpochs
+            .asSequence()
+            .filter { it.epochStartEpochMs < bedEpochMs + 60 * 60_000L }
+            .filterNot { it.epochQuality.startsWith("poor") }
+            .mapNotNull { it.meanHrBpm }
+            .toList()
+        if (firstHourHr.size < 3) return null
+        val baselineHr = firstHourHr.medianOrNull() ?: return null
+        candidateEpochs.windowed(SLEEP_ONSET_WINDOW_EPOCHS, step = 1).forEach { window ->
+            if (window.any { it.epochQuality.startsWith("poor") || it.meanHrBpm == null }) {
+                return@forEach
+            }
+            val hrs = window.mapNotNull { it.meanHrBpm }
+            val samples = window.sumOf { it.sampleCount }.coerceAtLeast(1)
+            val movementRatio = window.sumOf { it.movementDetectedCount }.toDouble() / samples.toDouble()
+            if (
+                hrs.medianOrNull()?.let { it <= baselineHr - SLEEP_ONSET_MIN_HR_DROP_BPM } == true &&
+                hrs.populationStdDev() <= SLEEP_ONSET_MAX_HR_STD_BPM &&
+                movementRatio <= SLEEP_ONSET_MAX_MOVEMENT_RATIO
+            ) {
+                return window.first().epochStartEpochMs
+            }
+        }
+        return null
     }
 
     private fun parsePolarDateTimeEpochMs(value: String): Long? =
@@ -2292,9 +2355,27 @@ class ProbeRepository(
     private fun List<Double>.averageOrNull(): Double? =
         if (isEmpty()) null else average()
 
+    private fun List<Double>.medianOrNull(): Double? {
+        if (isEmpty()) return null
+        val sorted = sorted()
+        val middle = sorted.size / 2
+        return if (sorted.size % 2 == 0) {
+            (sorted[middle - 1] + sorted[middle]) / 2.0
+        } else {
+            sorted[middle]
+        }
+    }
+
+    private fun List<Double>.populationStdDev(): Double {
+        if (size < 2) return 0.0
+        val average = average()
+        return sqrt(sumOf { value -> val delta = value - average; delta * delta } / size.toDouble())
+    }
+
     private fun autonomicSourceLabel(source: String): String =
         when (source) {
             "ppi247_sleep_window" -> "24/7 PPI"
+            "raw_ppi_calibrated_window_pending_sleep_report" -> "Calibrated-window PPI"
             "raw_ppi_manual_window_pending_sleep_report" -> "Manual-window PPI"
             "nightly_recharge_summary" -> "Nightly Recharge"
             else -> "Overnight"
@@ -2365,6 +2446,11 @@ private const val HR_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
 private const val SKIN_TEMPERATURE_SYNC_TIMEOUT_MS = 60_000L
 private const val DAILY_SUMMARY_SYNC_TIMEOUT_MS = 60_000L
 private const val ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
+private const val MANUAL_WAKE_BACKDATE_MS = 5 * 60_000L
+private const val SLEEP_ONSET_WINDOW_EPOCHS = 4
+private const val SLEEP_ONSET_MIN_HR_DROP_BPM = 3.0
+private const val SLEEP_ONSET_MAX_HR_STD_BPM = 3.0
+private const val SLEEP_ONSET_MAX_MOVEMENT_RATIO = 0.05
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")
@@ -2383,6 +2469,16 @@ private data class Ppi247WindowSummary(
     val coverageHours: Double,
     val lateMinusEarlyRmssdMs: Double?
 )
+
+private data class SleepWindowEstimate(
+    val startEpochMs: Long,
+    val endEpochMs: Long,
+    val source: String,
+    val label: String
+) {
+    val durationMinutes: Int
+        get() = ((endEpochMs - startEpochMs) / 60_000L).toInt()
+}
 
 private data class Hr247EpochRebuildResult(
     val epochCount: Int,
