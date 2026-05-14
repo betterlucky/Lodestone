@@ -25,6 +25,9 @@ interface ProbeDao {
     suspend fun upsertDailyCheckIn(entity: DailyCheckInEntity)
 
     @Insert
+    suspend fun insertMorningPredictionSnapshot(entity: MorningPredictionSnapshotEntity): Long
+
+    @Insert
     suspend fun insertWakeMarker(entity: WakeMarkerEntity): Long
 
     @Query(
@@ -263,6 +266,9 @@ interface ProbeDao {
     @Query("SELECT * FROM daily_check_in ORDER BY sourceDate DESC")
     fun observeDailyCheckIns(): Flow<List<DailyCheckInEntity>>
 
+    @Query("SELECT * FROM morning_prediction_snapshot ORDER BY issuedAtEpochMs DESC")
+    fun observeMorningPredictionSnapshots(): Flow<List<MorningPredictionSnapshotEntity>>
+
     @Query("SELECT * FROM food_daily_summary ORDER BY sourceDate DESC")
     fun observeFoodDailySummaries(): Flow<List<FoodDailySummaryEntity>>
 
@@ -280,6 +286,9 @@ interface ProbeDao {
 
     @Query("SELECT * FROM nightly_recharge_raw ORDER BY sourceDate DESC, syncTimestampEpochMs DESC LIMIT 1")
     fun observeLatestNightlyRechargeRecord(): Flow<NightlyRechargeRawEntity?>
+
+    @Query("SELECT * FROM nightly_recharge_raw WHERE sourceDate = :sourceDate ORDER BY syncTimestampEpochMs DESC LIMIT 1")
+    suspend fun getLatestNightlyRechargeRecordForDate(sourceDate: String): NightlyRechargeRawEntity?
 
     @Query(
         """
@@ -323,6 +332,37 @@ interface ProbeDao {
                    'USER_INPUT' AS parseStatus,
                    'daily_check_in' AS domain
             FROM daily_check_in
+            UNION ALL
+            SELECT '' AS deviceId, sourceDate, '-' AS requestedRange, issuedAtEpochMs AS syncTimestampEpochMs,
+                   ('prediction=' || status ||
+                    ', confidence=' || confidence ||
+                    ', origin=' || snapshotOrigin ||
+                    CASE WHEN isInterim THEN ', interim=true' ELSE ', final=true' END) AS keySummary,
+                   json_object(
+                       'id', id,
+                       'sourceDate', sourceDate,
+                       'issuedAtEpochMs', issuedAtEpochMs,
+                       'snapshotOrigin', snapshotOrigin,
+                       'modelVersion', modelVersion,
+                       'status', status,
+                       'confidence', confidence,
+                       'isInterim', isInterim,
+                       'sleepDataReady', sleepDataReady,
+                       'overnightAutonomicSource', overnightAutonomicSource,
+                       'sleepDurationMinutes', sleepDurationMinutes,
+                       'nightlyRmssd', nightlyRmssd,
+                       'baselineReady', baselineReady,
+                       'recoveryAvailable', recoveryAvailable,
+                       'rawPpiGoodEpochCount', rawPpiGoodEpochCount,
+                       'rawPpiPoorEpochCount', rawPpiPoorEpochCount,
+                       'rawPpiCoverageHours', rawPpiCoverageHours,
+                       'summary', summary,
+                       'reasons', reasonsJson
+                   ) AS rawPayloadJson,
+                   1 AS parserVersion,
+                   'DERIVED' AS parseStatus,
+                   'morning_prediction_snapshot' AS domain
+            FROM morning_prediction_snapshot
             UNION ALL
             SELECT '' AS deviceId, sourceDate, '-' AS requestedRange, markerEpochMs AS syncTimestampEpochMs,
                    ('marker=' || markerSource ||
@@ -396,6 +436,41 @@ interface ProbeDao {
     @Query("SELECT * FROM daily_check_in WHERE sourceDate = :sourceDate LIMIT 1")
     suspend fun getDailyCheckIn(sourceDate: String): DailyCheckInEntity?
 
+    @Query(
+        """
+        SELECT sourceDate FROM daily_check_in
+        UNION
+        SELECT sourceDate FROM sleep_night_raw WHERE sourceDate IS NOT NULL
+        UNION
+        SELECT sourceDate FROM nightly_recharge_raw WHERE sourceDate IS NOT NULL
+        UNION
+        SELECT sourceDate FROM ppi247_epoch
+        ORDER BY sourceDate ASC
+        """
+    )
+    suspend fun getMorningPredictionBackfillCandidateDates(): List<String>
+
+    @Query(
+        """
+        SELECT * FROM morning_prediction_snapshot
+        WHERE sourceDate = :sourceDate AND snapshotOrigin = :snapshotOrigin
+        ORDER BY issuedAtEpochMs DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestMorningPredictionSnapshot(
+        sourceDate: String,
+        snapshotOrigin: String
+    ): MorningPredictionSnapshotEntity?
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM morning_prediction_snapshot
+        WHERE sourceDate = :sourceDate AND snapshotOrigin = :snapshotOrigin
+        """
+    )
+    suspend fun countMorningPredictionSnapshots(sourceDate: String, snapshotOrigin: String): Int
+
     @Query("SELECT * FROM food_daily_summary WHERE sourceDate = :sourceDate LIMIT 1")
     suspend fun getFoodDailySummary(sourceDate: String): FoodDailySummaryEntity?
 
@@ -432,6 +507,9 @@ interface ProbeDao {
     @Query("SELECT * FROM ppi247_epoch WHERE sourceDate = :sourceDate ORDER BY epochStartEpochMs ASC")
     suspend fun getPpi247EpochsForDate(sourceDate: String): List<Ppi247EpochEntity>
 
+    @Query("SELECT * FROM ppi247_epoch WHERE sourceDate IN (:sourceDates) ORDER BY epochStartEpochMs ASC")
+    suspend fun getPpi247EpochsForDates(sourceDates: List<String>): List<Ppi247EpochEntity>
+
     @Query("SELECT COUNT(*) FROM ppi247_epoch WHERE sourceDate = :sourceDate")
     suspend fun countPpi247EpochsForDate(sourceDate: String): Int
 
@@ -443,6 +521,15 @@ interface ProbeDao {
 
     @Query("SELECT * FROM ppi247_epoch ORDER BY epochStartEpochMs DESC LIMIT 2000")
     fun observeRecentPpi247Epochs(): Flow<List<Ppi247EpochEntity>>
+
+    @Query(
+        """
+        SELECT * FROM wake_marker
+        WHERE markerEpochMs >= :startEpochMs AND markerEpochMs <= :endEpochMs
+        ORDER BY markerEpochMs ASC
+        """
+    )
+    suspend fun getWakeMarkersBetween(startEpochMs: Long, endEpochMs: Long): List<WakeMarkerEntity>
 
 }
 

@@ -58,6 +58,7 @@ class ProbeRepository(
     val syncDomainResults = dao.observeSyncDomainResults()
     val inspectorRows = dao.observeInspectorRows()
     val appSettings = dao.observeAppSettings()
+    val morningPredictionSnapshots = dao.observeMorningPredictionSnapshots()
     val morningRead = combine(
         dao.observeLatestSleepRecord(),
         dao.observeLatestNightlyRechargeRecord(),
@@ -74,6 +75,7 @@ class ProbeRepository(
             rebuildHr247EpochTables(pruneRaw = true)
             rebuildContextEpochTables(pruneRaw = true)
             pruneOversizedSyncResultPayloads()
+            backfillMorningPredictionSnapshots()
         }
     }
 
@@ -117,6 +119,67 @@ class ProbeRepository(
 
     suspend fun hasPpiRecordForDate(sourceDate: String): Boolean =
         dao.countPpi247EpochsForDate(sourceDate) > 0
+
+    suspend fun recordMorningPredictionSnapshot(
+        snapshot: MorningReadSnapshot,
+        snapshotOrigin: String = MORNING_PREDICTION_ORIGIN_OBSERVED
+    ) {
+        val sourceDate = snapshot.sourceDate ?: return
+        if (snapshot.status == null) return
+        val entity = snapshot.toMorningPredictionSnapshotEntity(
+            snapshotOrigin = snapshotOrigin,
+            issuedAtEpochMs = System.currentTimeMillis()
+        )
+        val latest = dao.getLatestMorningPredictionSnapshot(sourceDate, snapshotOrigin)
+        if (latest?.isSamePrediction(entity) == true) return
+        dao.insertMorningPredictionSnapshot(entity)
+    }
+
+    private suspend fun backfillMorningPredictionSnapshots() {
+        val today = LocalDate.now(ZoneId.systemDefault()).toString()
+        dao.getMorningPredictionBackfillCandidateDates()
+            .asSequence()
+            .filter { it <= today }
+            .forEach { sourceDate ->
+                if (dao.countMorningPredictionSnapshots(sourceDate, MORNING_PREDICTION_ORIGIN_BACKFILLED) > 0) {
+                    return@forEach
+                }
+                val snapshot = deriveMorningReadForDate(sourceDate, allowProvisional = false) ?: return@forEach
+                recordMorningPredictionSnapshot(snapshot, MORNING_PREDICTION_ORIGIN_BACKFILLED)
+            }
+    }
+
+    private suspend fun deriveMorningReadForDate(
+        sourceDate: String,
+        allowProvisional: Boolean
+    ): MorningReadSnapshot? {
+        val date = runCatching { LocalDate.parse(sourceDate) }.getOrNull() ?: return null
+        val sleep = dao.getLatestSleepRecordForDate(sourceDate)
+        val nightly = dao.getLatestNightlyRechargeRecordForDate(sourceDate)
+        val ppiSourceDates = listOf(date.minusDays(1).toString(), sourceDate)
+        val ppiEpochs = dao.getPpi247EpochsForDates(ppiSourceDates)
+        val markerStart = date
+            .minusDays(1)
+            .atTime(LocalTime.NOON)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val markerEnd = date
+            .plusDays(1)
+            .atTime(LocalTime.NOON)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val wakeMarkers = dao.getWakeMarkersBetween(markerStart, markerEnd)
+        return deriveMorningRead(
+            sleepRow = sleep,
+            nightlyRow = nightly,
+            ppi247Epochs = ppiEpochs,
+            wakeMarkers = wakeMarkers,
+            expectedSourceDate = sourceDate,
+            allowProvisional = allowProvisional
+        )
+    }
 
     suspend fun recordWakeMarker(
         sourceDate: String,
@@ -1893,11 +1956,12 @@ class ProbeRepository(
         sleepRow: SleepNightRawEntity?,
         nightlyRow: NightlyRechargeRawEntity?,
         ppi247Epochs: List<Ppi247EpochEntity>,
-        wakeMarkers: List<WakeMarkerEntity>
+        wakeMarkers: List<WakeMarkerEntity>,
+        expectedSourceDate: String = LocalDate.now(ZoneId.systemDefault()).toString(),
+        allowProvisional: Boolean = true
     ): MorningReadSnapshot? {
         if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty()) return null
 
-        val expectedSourceDate = LocalDate.now(ZoneId.systemDefault()).toString()
         val todayPpiEpochs = ppi247Epochs.filter { it.sourceDate == expectedSourceDate }
         val latestNightlyJson = nightlyRow?.rawPayloadJson?.let {
             runCatching { GsonProvider.gson.fromJson(it, JsonObject::class.java) }.getOrNull()
@@ -1905,7 +1969,8 @@ class ProbeRepository(
         val latestNightlySummary = latestNightlyJson?.getAsJsonObject("summary")
         val latestBaselineReady = latestNightlySummary?.booleanOrNull("baselineReady") ?: false
         if (sleepRow?.sourceDate != expectedSourceDate) {
-            val provisionalWindow = provisionalSleepWindowForToday(wakeMarkers, ppi247Epochs)
+            if (!allowProvisional) return null
+            val provisionalWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
             val ppi247Autonomic = provisionalWindow?.let {
                 summarizePpi247ForSleepWindow(
                     sourceDate = null,
@@ -1984,7 +2049,8 @@ class ProbeRepository(
             ?.asString
             ?.let(::parsePolarDateTimeEpochMs)
         if (durationMinutes == null || sleepStartEpochMs == null || sleepEndEpochMs == null) {
-            val provisionalWindow = provisionalSleepWindowForToday(wakeMarkers, ppi247Epochs)
+            if (!allowProvisional) return null
+            val provisionalWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
             val ppi247Autonomic = provisionalWindow?.let {
                 summarizePpi247ForSleepWindow(
                     sourceDate = null,
@@ -2262,20 +2328,30 @@ class ProbeRepository(
         )
     }
 
-    private fun provisionalSleepWindowForToday(
+    private fun provisionalSleepWindowForDate(
+        sourceDate: String,
         wakeMarkers: List<WakeMarkerEntity>,
         ppi247Epochs: List<Ppi247EpochEntity>
     ): SleepWindowEstimate? {
         val now = System.currentTimeMillis()
-        val earliestUsefulMarker = LocalDate.now(ZoneId.systemDefault())
+        val targetDate = runCatching { LocalDate.parse(sourceDate) }
+            .getOrDefault(LocalDate.now(ZoneId.systemDefault()))
+        val earliestUsefulMarker = targetDate
             .minusDays(1)
-            .atTime(12, 0)
+            .atTime(LocalTime.NOON)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val latestUsefulMarker = targetDate
+            .plusDays(1)
+            .atTime(LocalTime.NOON)
             .atZone(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
         val markers = wakeMarkers
             .asSequence()
             .filter { it.markerEpochMs >= earliestUsefulMarker }
+            .filter { it.markerEpochMs <= latestUsefulMarker }
             .filterNot { it.notes == "manual awake command" }
             .sortedBy { it.markerEpochMs }
             .toList()
@@ -2372,6 +2448,52 @@ class ProbeRepository(
         return sqrt(sumOf { value -> val delta = value - average; delta * delta } / size.toDouble())
     }
 
+    private fun MorningReadSnapshot.toMorningPredictionSnapshotEntity(
+        snapshotOrigin: String,
+        issuedAtEpochMs: Long
+    ): MorningPredictionSnapshotEntity =
+        MorningPredictionSnapshotEntity(
+            sourceDate = requireNotNull(sourceDate),
+            issuedAtEpochMs = issuedAtEpochMs,
+            snapshotOrigin = snapshotOrigin,
+            modelVersion = MORNING_MODEL_VERSION,
+            status = requireNotNull(status).name,
+            confidence = confidence,
+            isInterim = isInterim,
+            sleepDataReady = sleepDataReady,
+            overnightAutonomicSource = overnightAutonomicSource,
+            sleepDurationMinutes = sleepDurationMinutes,
+            nightlyRmssd = nightlyRmssd,
+            baselineReady = baselineReady,
+            recoveryAvailable = recoveryAvailable,
+            rawPpiGoodEpochCount = rawPpiGoodEpochCount,
+            rawPpiPoorEpochCount = rawPpiPoorEpochCount,
+            rawPpiCoverageHours = rawPpiCoverageHours,
+            summary = summary,
+            reasonsJson = GsonProvider.gson.toJson(reasons)
+        )
+
+    private fun MorningPredictionSnapshotEntity.isSamePrediction(
+        other: MorningPredictionSnapshotEntity
+    ): Boolean =
+        sourceDate == other.sourceDate &&
+            snapshotOrigin == other.snapshotOrigin &&
+            modelVersion == other.modelVersion &&
+            status == other.status &&
+            confidence == other.confidence &&
+            isInterim == other.isInterim &&
+            sleepDataReady == other.sleepDataReady &&
+            overnightAutonomicSource == other.overnightAutonomicSource &&
+            sleepDurationMinutes == other.sleepDurationMinutes &&
+            nightlyRmssd == other.nightlyRmssd &&
+            baselineReady == other.baselineReady &&
+            recoveryAvailable == other.recoveryAvailable &&
+            rawPpiGoodEpochCount == other.rawPpiGoodEpochCount &&
+            rawPpiPoorEpochCount == other.rawPpiPoorEpochCount &&
+            rawPpiCoverageHours == other.rawPpiCoverageHours &&
+            summary == other.summary &&
+            reasonsJson == other.reasonsJson
+
     private fun autonomicSourceLabel(source: String): String =
         when (source) {
             "ppi247_sleep_window" -> "24/7 PPI"
@@ -2451,6 +2573,9 @@ private const val SLEEP_ONSET_WINDOW_EPOCHS = 4
 private const val SLEEP_ONSET_MIN_HR_DROP_BPM = 3.0
 private const val SLEEP_ONSET_MAX_HR_STD_BPM = 3.0
 private const val SLEEP_ONSET_MAX_MOVEMENT_RATIO = 0.05
+private const val MORNING_MODEL_VERSION = "morning_v1_2026-05-14"
+const val MORNING_PREDICTION_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
+private const val MORNING_PREDICTION_ORIGIN_BACKFILLED = "BACKFILLED_RECALCULATED"
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")

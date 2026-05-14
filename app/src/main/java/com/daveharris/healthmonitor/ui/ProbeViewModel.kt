@@ -115,6 +115,11 @@ class ProbeViewModel(
                 )
             }
         }
+        viewModelScope.launch {
+            morningRead.filterNotNull().collect { snapshot ->
+                repository.recordMorningPredictionSnapshot(snapshot)
+            }
+        }
         refreshFoodImportForDate(checkInDate)
         refreshHealthConnectPermissions()
     }
