@@ -138,6 +138,13 @@ Lodestone is an experimental self-tracking tool. It is not a medical device, it
 does not diagnose illness, and its traffic-light outputs should be treated as
 decision support for reflection and pacing rather than clinical advice.
 
+## License
+
+Lodestone is source available under the
+[PolyForm Noncommercial License 1.0.0](LICENSE.md). You may use, modify, and
+redistribute it for noncommercial purposes; commercial use requires separate
+permission.
+
 ## Repository Map
 
 - `app/` - Android application
