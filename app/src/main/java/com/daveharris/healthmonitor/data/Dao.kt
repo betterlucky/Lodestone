@@ -467,9 +467,14 @@ interface ProbeDao {
         """
         SELECT COUNT(*) FROM morning_prediction_snapshot
         WHERE sourceDate = :sourceDate AND snapshotOrigin = :snapshotOrigin
+          AND modelVersion = :modelVersion
         """
     )
-    suspend fun countMorningPredictionSnapshots(sourceDate: String, snapshotOrigin: String): Int
+    suspend fun countMorningPredictionSnapshots(
+        sourceDate: String,
+        snapshotOrigin: String,
+        modelVersion: String
+    ): Int
 
     @Query(
         """

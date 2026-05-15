@@ -297,6 +297,10 @@ fun morningReadBasisLabel(
             "Provisional calibrated sleep window + PPI"
         morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_pending_sleep_report" ->
             "Provisional manual sleep window + PPI"
+        morningRead?.overnightAutonomicSource == "raw_ppi_calibrated_window_primary_with_sleep_report" ->
+            "Calibrated sleep window + PPI, Loop report as context"
+        morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_primary_with_sleep_report" ->
+            "Manual sleep window + PPI, Loop report as context"
         morningRead?.isInterim == true ->
             "Provisional morning data"
         todayStatus.stage == TodayReadinessStage.SLEEP_TIME ->
@@ -317,6 +321,8 @@ private fun autonomicSourceDisplayLabel(source: String): String =
         "ppi247_sleep_window" -> "24/7 PPI aligned to sleep"
         "raw_ppi_calibrated_window_pending_sleep_report" -> "24/7 PPI, calibrated provisional window"
         "raw_ppi_manual_window_pending_sleep_report" -> "24/7 PPI, manual provisional window"
+        "raw_ppi_calibrated_window_primary_with_sleep_report" -> "24/7 PPI, calibrated primary window"
+        "raw_ppi_manual_window_primary_with_sleep_report" -> "24/7 PPI, manual primary window"
         "raw_ppi_pending_manual_sleep_window" -> "24/7 PPI, waiting for bedtime marker"
         "raw_ppi_pending_sleep_window" -> "24/7 PPI, waiting for final sleep window"
         "nightly_recharge_summary" -> "Nightly Recharge summary"

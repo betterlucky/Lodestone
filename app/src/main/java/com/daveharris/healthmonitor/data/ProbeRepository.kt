@@ -148,7 +148,13 @@ class ProbeRepository(
             .asSequence()
             .filter { it <= today }
             .forEach { sourceDate ->
-                if (dao.countMorningPredictionSnapshots(sourceDate, MORNING_PREDICTION_ORIGIN_BACKFILLED) > 0) {
+                if (
+                    dao.countMorningPredictionSnapshots(
+                        sourceDate,
+                        MORNING_PREDICTION_ORIGIN_BACKFILLED,
+                        MORNING_MODEL_VERSION
+                    ) > 0
+                ) {
                     return@forEach
                 }
                 val snapshot = deriveMorningReadForDate(sourceDate, allowProvisional = false) ?: return@forEach
@@ -2127,21 +2133,36 @@ class ProbeRepository(
         val baselineReady = nightlySummary?.booleanOrNull("baselineReady") ?: latestBaselineReady
         val recoveryAvailable = nightlySummary?.booleanOrNull("recoveryAvailable") ?: false
         val ansAvailable = nightlySummary?.booleanOrNull("ansAvailable") ?: false
-        val ppi247Autonomic = summarizePpi247ForSleepWindow(
+        val loopPpi247Autonomic = summarizePpi247ForSleepWindow(
             sourceDate = sleepRow.sourceDate,
             sleepStartEpochMs = sleepStartEpochMs,
             sleepEndEpochMs = sleepEndEpochMs,
             epochs = ppi247Epochs
         )
+        val primaryWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
+        val primaryWindowPpi247Autonomic = primaryWindow?.let {
+            summarizePpi247ForSleepWindow(
+                sourceDate = null,
+                sleepStartEpochMs = it.startEpochMs,
+                sleepEndEpochMs = it.endEpochMs,
+                epochs = ppi247Epochs
+            )
+        }
+        val usePrimaryWindow = primaryWindow != null && primaryWindowPpi247Autonomic != null
+        val ppi247Autonomic = primaryWindowPpi247Autonomic ?: loopPpi247Autonomic
+        val scoringDurationMinutes = primaryWindow?.durationMinutes?.takeIf { usePrimaryWindow } ?: durationMinutes
         val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: rmssd
         val autonomicSource = when {
-            ppi247Autonomic != null -> "ppi247_sleep_window"
+            usePrimaryWindow && primaryWindow.source == "raw_ppi_calibrated_window_pending_sleep_report" ->
+                "raw_ppi_calibrated_window_primary_with_sleep_report"
+            usePrimaryWindow -> "raw_ppi_manual_window_primary_with_sleep_report"
+            loopPpi247Autonomic != null -> "ppi247_sleep_window"
             nightlySummary != null -> "nightly_recharge_summary"
             else -> "sleep_context_only"
         }
 
         val scoreResult = scoreMorningRead(
-            durationMinutes = durationMinutes,
+            durationMinutes = scoringDurationMinutes,
             autonomicRmssd = autonomicRmssd,
             autonomicSource = autonomicSource,
             ppi247Autonomic = ppi247Autonomic,
@@ -2150,11 +2171,20 @@ class ProbeRepository(
             baselineReady = baselineReady,
             recoveryAvailable = recoveryAvailable,
             ansAvailable = ansAvailable,
-            ppiWindowLabel = "resolved sleep window",
+            ppiWindowLabel = primaryWindow?.label?.takeIf { usePrimaryWindow } ?: "resolved sleep window",
             missingPpiReason = "No usable raw PPI overlapped the resolved sleep window."
         )
         val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
-        val reasons = scoreResult.reasons
+        val contextReasons = primaryWindow?.let {
+            finalSleepReportContextReasons(
+                primaryWindow = it,
+                loopDurationMinutes = durationMinutes,
+                sleepStartEpochMs = sleepStartEpochMs,
+                sleepEndEpochMs = sleepEndEpochMs,
+                usePrimaryWindow = usePrimaryWindow
+            )
+        }.orEmpty()
+        val reasons = scoreResult.reasons + contextReasons
         val confidence = when {
             ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 48 && baselineReady -> "high"
             ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 12 -> "medium"
@@ -2174,7 +2204,7 @@ class ProbeRepository(
             status = status,
             confidence = confidence,
             overnightAutonomicSource = autonomicSource,
-            sleepDurationMinutes = durationMinutes,
+            sleepDurationMinutes = scoringDurationMinutes,
             nightlyRmssd = autonomicRmssd,
             baselineReady = baselineReady,
             recoveryAvailable = recoveryAvailable,
@@ -2333,6 +2363,34 @@ class ProbeRepository(
             coverageHours = (goodEpochs.sumOf { (it.epochEndEpochMs - it.epochStartEpochMs).coerceAtLeast(0L) } / 3_600_000.0),
             lateMinusEarlyRmssdMs = if (earlyAverage != null && lateAverage != null) lateAverage - earlyAverage else null
         )
+    }
+
+    private fun finalSleepReportContextReasons(
+        primaryWindow: SleepWindowEstimate,
+        loopDurationMinutes: Int,
+        sleepStartEpochMs: Long,
+        sleepEndEpochMs: Long,
+        usePrimaryWindow: Boolean
+    ): List<String> {
+        if (!usePrimaryWindow) {
+            return listOf("Loop final sleep report is available; no usable manual/PPI window replaced it.")
+        }
+        val reasons = mutableListOf(
+            "Primary rating uses the ${primaryWindow.label}; Loop final sleep report is kept as context."
+        )
+        val primaryDurationMinutes = primaryWindow.durationMinutes
+        val durationDelta = primaryDurationMinutes - loopDurationMinutes
+        val wakeDelta = ((primaryWindow.endEpochMs - sleepEndEpochMs) / 60_000L).toInt()
+        val onsetDelta = ((primaryWindow.startEpochMs - sleepStartEpochMs) / 60_000L).toInt()
+        if (kotlin.math.abs(durationDelta) >= SLEEP_REPORT_DISAGREEMENT_MINUTES) {
+            reasons += "Loop sleep duration differed from the primary window by ${formatSignedMinutes(durationDelta)}."
+        } else if (
+            kotlin.math.abs(wakeDelta) >= SLEEP_REPORT_DISAGREEMENT_MINUTES ||
+            kotlin.math.abs(onsetDelta) >= SLEEP_REPORT_DISAGREEMENT_MINUTES
+        ) {
+            reasons += "Loop sleep timing differed from the primary window, but total duration was similar."
+        }
+        return reasons
     }
 
     private fun provisionalSleepWindowForDate(
@@ -2504,12 +2562,20 @@ class ProbeRepository(
             "ppi247_sleep_window" -> "24/7 PPI"
             "raw_ppi_calibrated_window_pending_sleep_report" -> "Calibrated-window PPI"
             "raw_ppi_manual_window_pending_sleep_report" -> "Manual-window PPI"
+            "raw_ppi_calibrated_window_primary_with_sleep_report" -> "Calibrated-window PPI"
+            "raw_ppi_manual_window_primary_with_sleep_report" -> "Manual-window PPI"
             "nightly_recharge_summary" -> "Nightly Recharge"
             else -> "Overnight"
         }
 
     private fun formatHours(hours: Double): String =
         "${String.format(java.util.Locale.UK, "%.1f", hours)}h"
+
+    private fun formatSignedMinutes(value: Int): String {
+        val sign = if (value >= 0) "+" else "-"
+        val absolute = kotlin.math.abs(value)
+        return "$sign${absolute / 60}h ${absolute % 60}m"
+    }
 
     private fun <T> filterNewRecords(records: List<T>, existingPayloads: List<String>): List<T> where T : Any {
         if (records.isEmpty()) return emptyList()
@@ -2578,7 +2644,8 @@ private const val SLEEP_ONSET_WINDOW_EPOCHS = 4
 private const val SLEEP_ONSET_MIN_HR_DROP_BPM = 3.0
 private const val SLEEP_ONSET_MAX_HR_STD_BPM = 3.0
 private const val SLEEP_ONSET_MAX_MOVEMENT_RATIO = 0.05
-private const val MORNING_MODEL_VERSION = "morning_v1_2026-05-14"
+private const val SLEEP_REPORT_DISAGREEMENT_MINUTES = 30
+private const val MORNING_MODEL_VERSION = "morning_v1_primary_ppi_window_2026-05-15"
 const val MORNING_PREDICTION_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
 private const val MORNING_PREDICTION_ORIGIN_BACKFILLED = "BACKFILLED_RECALCULATED"
 
