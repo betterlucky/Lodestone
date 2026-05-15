@@ -25,6 +25,7 @@ venv/
 *.jsonl
 probe-export-*.json
 polar-cloud-data/
+calibration/
 .env.polar
 
 # Early scratch notes kept local for privacy/noise.

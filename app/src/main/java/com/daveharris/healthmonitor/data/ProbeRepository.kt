@@ -2142,6 +2142,7 @@ class ProbeRepository(
             epochs = ppi247Epochs
         )
         val primaryWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
+            ?.takeIf { it.hasExplicitWakeMarker }
         val primaryWindowPpi247Autonomic = primaryWindow?.let {
             summarizePpi247ForSleepWindow(
                 sourceDate = null,
@@ -2433,10 +2434,9 @@ class ProbeRepository(
             .sortedBy { it.markerEpochMs }
             .toList()
         val bed = markers.lastOrNull { it.markerSource == "manual_going_to_bed" } ?: return null
-        val awake = markers
+        val awakeMarker = markers
             .firstOrNull { it.markerSource == "manual_im_awake" && it.markerEpochMs > bed.markerEpochMs }
-            ?.markerEpochMs
-            ?: now
+        val awake = awakeMarker?.markerEpochMs ?: now
         val estimatedWake = (awake - MANUAL_WAKE_BACKDATE_MS).coerceAtLeast(bed.markerEpochMs)
         val estimatedOnset = estimateSleepOnsetEpochMs(
             bedEpochMs = bed.markerEpochMs,
@@ -2458,7 +2458,8 @@ class ProbeRepository(
             startEpochMs = estimatedOnset,
             endEpochMs = estimatedWake,
             source = source,
-            label = label
+            label = label,
+            hasExplicitWakeMarker = awakeMarker != null
         )
     }
 
@@ -2684,7 +2685,8 @@ private data class SleepWindowEstimate(
     val startEpochMs: Long,
     val endEpochMs: Long,
     val source: String,
-    val label: String
+    val label: String,
+    val hasExplicitWakeMarker: Boolean
 ) {
     val durationMinutes: Int
         get() = ((endEpochMs - startEpochMs) / 60_000L).toInt()
