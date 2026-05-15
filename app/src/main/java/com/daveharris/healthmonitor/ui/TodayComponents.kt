@@ -352,6 +352,7 @@ fun HrvTrajectoryDialog(
     val early = points.take((points.size / 3).coerceAtLeast(1)).map { it.rmssdMs }.averageOrNull()
     val late = points.takeLast((points.size / 3).coerceAtLeast(1)).map { it.rmssdMs }.averageOrNull()
     val delta = if (early != null && late != null) late - early else null
+    val trend = hrvTrendSummary(points)
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Overnight HRV trajectory") },
@@ -376,10 +377,12 @@ fun HrvTrajectoryDialog(
                     DetailRow("Windows", points.size.toString())
                     DetailRow("Average RMSSD", average?.let { "${it.toInt()} ms" } ?: "n/a")
                     DetailRow("Early -> late", delta?.let { formatSignedMs(it) } ?: "n/a")
+                    DetailRow("Shape", trend.shapeLabel)
+                    DetailRow("Linear trend", formatSignedMs(trend.linearDeltaMs))
                     DetailRow("Range", hrvRangeLabel(points))
                     DetailRow("Time span", hrvTimeSpanLabel(points))
                 }
-                SupportText("This plot is qualitative for now: useful for spotting rises, falls, troughs and volatility, not a diagnosis.")
+                SupportText("Faint line = raw RMSSD, bold line = rolling median, straight line = linear trend. This is qualitative for now, not a diagnosis.")
             }
         },
         confirmButton = {
@@ -392,7 +395,9 @@ fun HrvTrajectoryDialog(
 
 @Composable
 private fun HrvTrajectoryChart(points: List<HrvTrajectoryPoint>) {
-    val lineColor = MaterialTheme.colorScheme.primary
+    val rawLineColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.34f)
+    val smoothLineColor = MaterialTheme.colorScheme.primary
+    val trendLineColor = MaterialTheme.colorScheme.tertiary
     val guideColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
     val fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
     val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -428,17 +433,28 @@ private fun HrvTrajectoryChart(points: List<HrvTrajectoryPoint>) {
             )
         }
         if (points.size < 2) return@Canvas
-        val path = Path()
-        points.forEachIndexed { index, point ->
-            val x = left + (right - left) * ((point.epochStartEpochMs - firstTime).toFloat() / timeSpan)
-            val yRatio = ((point.rmssdMs - paddedMin) / (paddedMax - paddedMin)).toFloat().coerceIn(0f, 1f)
-            val y = bottom - (bottom - top) * yRatio
-            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
-        }
+        val rawPath = hrvPath(points, paddedMin, paddedMax, firstTime, timeSpan, left, right, top, bottom)
         drawPath(
-            path = path,
-            color = lineColor,
+            path = rawPath,
+            color = rawLineColor,
+            style = Stroke(width = 1.5.dp.toPx(), cap = StrokeCap.Round)
+        )
+        val smoothPoints = rollingMedianPoints(points, windowSize = 5)
+        val smoothPath = hrvPath(smoothPoints, paddedMin, paddedMax, firstTime, timeSpan, left, right, top, bottom)
+        drawPath(
+            path = smoothPath,
+            color = smoothLineColor,
             style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+        )
+        val trend = hrvTrendSummary(points)
+        val trendStartY = valueToChartY(trend.startValueMs, paddedMin, paddedMax, top, bottom)
+        val trendEndY = valueToChartY(trend.endValueMs, paddedMin, paddedMax, top, bottom)
+        drawLine(
+            color = trendLineColor.copy(alpha = 0.74f),
+            start = androidx.compose.ui.geometry.Offset(left, trendStartY),
+            end = androidx.compose.ui.geometry.Offset(right, trendEndY),
+            strokeWidth = 2.dp.toPx(),
+            cap = StrokeCap.Round
         )
         val startLabel = formatEpochTime(firstTime)
         val endLabel = formatEpochTime(lastTime)
@@ -457,8 +473,121 @@ private fun HrvTrajectoryChart(points: List<HrvTrajectoryPoint>) {
 private fun measureText(text: String, paint: android.graphics.Paint): Float =
     paint.measureText(text)
 
+private data class HrvTrendSummary(
+    val startValueMs: Double,
+    val endValueMs: Double,
+    val linearDeltaMs: Double,
+    val shapeLabel: String
+)
+
+private fun hrvPath(
+    points: List<HrvTrajectoryPoint>,
+    minValue: Double,
+    maxValue: Double,
+    firstTime: Long,
+    timeSpan: Float,
+    left: Float,
+    right: Float,
+    top: Float,
+    bottom: Float
+): Path {
+    val path = Path()
+    points.forEachIndexed { index, point ->
+        val x = left + (right - left) * ((point.epochStartEpochMs - firstTime).toFloat() / timeSpan)
+        val y = valueToChartY(point.rmssdMs, minValue, maxValue, top, bottom)
+        if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+    }
+    return path
+}
+
+private fun valueToChartY(
+    value: Double,
+    minValue: Double,
+    maxValue: Double,
+    top: Float,
+    bottom: Float
+): Float {
+    val yRatio = ((value - minValue) / (maxValue - minValue)).toFloat().coerceIn(0f, 1f)
+    return bottom - (bottom - top) * yRatio
+}
+
+private fun rollingMedianPoints(
+    points: List<HrvTrajectoryPoint>,
+    windowSize: Int
+): List<HrvTrajectoryPoint> {
+    if (points.size <= 2) return points
+    val halfWindow = windowSize / 2
+    return points.mapIndexed { index, point ->
+        val start = (index - halfWindow).coerceAtLeast(0)
+        val endExclusive = (index + halfWindow + 1).coerceAtMost(points.size)
+        val median = points.subList(start, endExclusive).map { it.rmssdMs }.medianOrNull() ?: point.rmssdMs
+        point.copy(rmssdMs = median)
+    }
+}
+
+private fun hrvTrendSummary(points: List<HrvTrajectoryPoint>): HrvTrendSummary {
+    if (points.size < 2) {
+        val value = points.firstOrNull()?.rmssdMs ?: 0.0
+        return HrvTrendSummary(value, value, 0.0, "Not enough data")
+    }
+    val firstTime = points.first().epochStartEpochMs.toDouble()
+    val lastTime = points.last().epochStartEpochMs.toDouble()
+    val timeSpan = (lastTime - firstTime).takeIf { it > 0.0 } ?: 1.0
+    val xValues = points.map { (it.epochStartEpochMs.toDouble() - firstTime) / timeSpan }
+    val yValues = points.map { it.rmssdMs }
+    val meanX = xValues.average()
+    val meanY = yValues.average()
+    val denominator = xValues.sumOf { (it - meanX) * (it - meanX) }
+    val slope = if (denominator == 0.0) {
+        0.0
+    } else {
+        xValues.zip(yValues).sumOf { (x, y) -> (x - meanX) * (y - meanY) } / denominator
+    }
+    val intercept = meanY - slope * meanX
+    val startValue = intercept
+    val endValue = intercept + slope
+    val smooth = rollingMedianPoints(points, windowSize = 5)
+    val thirdSize = (smooth.size / 3).coerceAtLeast(1)
+    val early = smooth.take(thirdSize).map { it.rmssdMs }.averageOrNull()
+    val middleStart = ((smooth.size - thirdSize) / 2).coerceAtLeast(0)
+    val middle = smooth.drop(middleStart).take(thirdSize).map { it.rmssdMs }.averageOrNull()
+    val late = smooth.takeLast(thirdSize).map { it.rmssdMs }.averageOrNull()
+    val shape = hrvShapeLabel(early, middle, late, endValue - startValue)
+    return HrvTrendSummary(startValue, endValue, endValue - startValue, shape)
+}
+
+private fun hrvShapeLabel(
+    early: Double?,
+    middle: Double?,
+    late: Double?,
+    linearDelta: Double
+): String {
+    if (early == null || middle == null || late == null) return "Mixed"
+    val minEdge = minOf(early, late)
+    val maxEdge = maxOf(early, late)
+    val threshold = 8.0
+    return when {
+        middle <= minEdge - threshold -> "Dip then recovery"
+        middle >= maxEdge + threshold -> "Mid-night peak"
+        linearDelta >= threshold -> "Rising"
+        linearDelta <= -threshold -> "Falling"
+        else -> "Mostly flat / mixed"
+    }
+}
+
 private fun List<Double>.averageOrNull(): Double? =
     if (isEmpty()) null else average()
+
+private fun List<Double>.medianOrNull(): Double? {
+    if (isEmpty()) return null
+    val sorted = sorted()
+    val middle = sorted.size / 2
+    return if (sorted.size % 2 == 0) {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    } else {
+        sorted[middle]
+    }
+}
 
 private fun formatSignedMs(value: Double): String {
     val sign = if (value >= 0) "+" else "-"
