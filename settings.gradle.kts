@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "HealthMonitor"
+rootProject.name = "Lodestone"
 include(":app")
