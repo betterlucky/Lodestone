@@ -471,6 +471,21 @@ interface ProbeDao {
     )
     suspend fun countMorningPredictionSnapshots(sourceDate: String, snapshotOrigin: String): Int
 
+    @Query(
+        """
+        DELETE FROM morning_prediction_snapshot
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM morning_prediction_snapshot
+            GROUP BY sourceDate, snapshotOrigin, modelVersion, status, confidence,
+                     isInterim, sleepDataReady, overnightAutonomicSource,
+                     sleepDurationMinutes, nightlyRmssd, rawPpiGoodEpochCount,
+                     rawPpiPoorEpochCount, rawPpiCoverageHours, summary, reasonsJson
+        )
+        """
+    )
+    suspend fun pruneDuplicateMorningPredictionSnapshots(): Int
+
     @Query("SELECT * FROM food_daily_summary WHERE sourceDate = :sourceDate LIMIT 1")
     suspend fun getFoodDailySummary(sourceDate: String): FoodDailySummaryEntity?
 

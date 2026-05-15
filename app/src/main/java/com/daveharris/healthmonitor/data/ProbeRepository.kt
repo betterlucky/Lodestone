@@ -31,6 +31,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.time.Instant
 import java.time.LocalDate
@@ -49,6 +51,7 @@ class ProbeRepository(
 ) {
     private val dao = database.probeDao()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val predictionSnapshotMutex = Mutex()
 
     val runtimeState = polarManager.runtimeState
     val deviceProfile = dao.observeLatestDeviceProfile()
@@ -75,6 +78,7 @@ class ProbeRepository(
             rebuildHr247EpochTables(pruneRaw = true)
             rebuildContextEpochTables(pruneRaw = true)
             pruneOversizedSyncResultPayloads()
+            dao.pruneDuplicateMorningPredictionSnapshots()
             backfillMorningPredictionSnapshots()
         }
     }
@@ -126,13 +130,16 @@ class ProbeRepository(
     ) {
         val sourceDate = snapshot.sourceDate ?: return
         if (snapshot.status == null) return
-        val entity = snapshot.toMorningPredictionSnapshotEntity(
-            snapshotOrigin = snapshotOrigin,
-            issuedAtEpochMs = System.currentTimeMillis()
-        )
-        val latest = dao.getLatestMorningPredictionSnapshot(sourceDate, snapshotOrigin)
-        if (latest?.isSamePrediction(entity) == true) return
-        dao.insertMorningPredictionSnapshot(entity)
+        predictionSnapshotMutex.withLock {
+            val entity = snapshot.toMorningPredictionSnapshotEntity(
+                snapshotOrigin = snapshotOrigin,
+                issuedAtEpochMs = System.currentTimeMillis()
+            )
+            val latest = dao.getLatestMorningPredictionSnapshot(sourceDate, snapshotOrigin)
+            if (latest?.isSamePrediction(entity) == true) return@withLock
+            dao.insertMorningPredictionSnapshot(entity)
+            dao.pruneDuplicateMorningPredictionSnapshots()
+        }
     }
 
     private suspend fun backfillMorningPredictionSnapshots() {
@@ -2486,8 +2493,6 @@ class ProbeRepository(
             overnightAutonomicSource == other.overnightAutonomicSource &&
             sleepDurationMinutes == other.sleepDurationMinutes &&
             nightlyRmssd == other.nightlyRmssd &&
-            baselineReady == other.baselineReady &&
-            recoveryAvailable == other.recoveryAvailable &&
             rawPpiGoodEpochCount == other.rawPpiGoodEpochCount &&
             rawPpiPoorEpochCount == other.rawPpiPoorEpochCount &&
             rawPpiCoverageHours == other.rawPpiCoverageHours &&
