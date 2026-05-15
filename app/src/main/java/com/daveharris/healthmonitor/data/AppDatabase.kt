@@ -27,12 +27,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ActivityEpochEntity::class,
         AppSettingsEntity::class,
         DailyCheckInEntity::class,
+        MorningPredictionSnapshotEntity::class,
         WakeMarkerEntity::class,
         FoodDailySummaryEntity::class,
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 19,
+    version = 20,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -298,6 +299,38 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS morning_prediction_snapshot (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        issuedAtEpochMs INTEGER NOT NULL,
+                        snapshotOrigin TEXT NOT NULL,
+                        modelVersion TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        confidence TEXT NOT NULL,
+                        isInterim INTEGER NOT NULL,
+                        sleepDataReady INTEGER NOT NULL,
+                        overnightAutonomicSource TEXT NOT NULL,
+                        sleepDurationMinutes INTEGER,
+                        nightlyRmssd REAL,
+                        baselineReady INTEGER NOT NULL,
+                        recoveryAvailable INTEGER NOT NULL,
+                        rawPpiGoodEpochCount INTEGER,
+                        rawPpiPoorEpochCount INTEGER,
+                        rawPpiCoverageHours REAL,
+                        summary TEXT NOT NULL,
+                        reasonsJson TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_morning_prediction_snapshot_sourceDate ON morning_prediction_snapshot(sourceDate)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_morning_prediction_snapshot_sourceDate_snapshotOrigin ON morning_prediction_snapshot(sourceDate, snapshotOrigin)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -314,7 +347,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_15_16,
             MIGRATION_16_17,
             MIGRATION_17_18,
-            MIGRATION_18_19
+            MIGRATION_18_19,
+            MIGRATION_19_20
         )
             .build()
     }

@@ -12,6 +12,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
@@ -42,6 +47,18 @@ fun DataScreen(
     val activeMorningRead = morningRead
         ?.takeIf { it.sourceDate == today }
         ?.takeUnless { todayStatus.stage == TodayReadinessStage.SLEEP_TIME }
+    var showHrvTrajectory by remember { mutableStateOf(false) }
+    LaunchedEffect(activeMorningRead == null) {
+        if (activeMorningRead == null) {
+            showHrvTrajectory = false
+        }
+    }
+    if (showHrvTrajectory && activeMorningRead != null) {
+        HrvTrajectoryDialog(
+            morningRead = activeMorningRead,
+            onDismiss = { showHrvTrajectory = false }
+        )
+    }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -73,7 +90,7 @@ fun DataScreen(
                 DetailRow("Final Loop sleep report", todayStatus.sleepReport)
                 DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
                 SupportText(todayStatus.message)
-                SupportText("The final Loop sleep report can take up to a couple of hours to resolve after waking. PPI may arrive first, but the morning read cannot fully score it until the sleep window is available.")
+                SupportText("PPI may arrive before the final Loop sleep report. Lodestone can show a provisional read from your bed/wake markers and calibrated PPI, then replace it with the confirmed read when the final report resolves.")
                 ButtonRow {
                     OutlinedButton(
                         onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
@@ -96,6 +113,7 @@ fun DataScreen(
                 if (goodEpochs == null) {
                     SupportText(todayStatus.hrvDetail)
                 } else {
+                    DetailRow("Signal basis", morningReadBasisLabel(activeMorningRead, todayStatus))
                     DetailRow("Usable windows", goodEpochs.toString())
                     DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
                     if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {
@@ -103,6 +121,12 @@ fun DataScreen(
                     }
                 }
                 ButtonRow {
+                    OutlinedButton(
+                        onClick = { showHrvTrajectory = true },
+                        enabled = activeMorningRead?.hrvTrajectory?.isNotEmpty() == true
+                    ) {
+                        Text("View HRV trajectory")
+                    }
                     OutlinedButton(
                         onClick = { if (actionsEnabled) viewModel.runManualSync() },
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null

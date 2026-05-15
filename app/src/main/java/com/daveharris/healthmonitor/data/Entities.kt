@@ -294,6 +294,35 @@ data class DailyCheckInEntity(
 )
 
 @Entity(
+    tableName = "morning_prediction_snapshot",
+    indices = [
+        Index("sourceDate"),
+        Index("sourceDate", "snapshotOrigin")
+    ]
+)
+data class MorningPredictionSnapshotEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sourceDate: String,
+    val issuedAtEpochMs: Long,
+    val snapshotOrigin: String,
+    val modelVersion: String,
+    val status: String,
+    val confidence: String,
+    val isInterim: Boolean,
+    val sleepDataReady: Boolean,
+    val overnightAutonomicSource: String,
+    val sleepDurationMinutes: Int?,
+    val nightlyRmssd: Double?,
+    val baselineReady: Boolean,
+    val recoveryAvailable: Boolean,
+    val rawPpiGoodEpochCount: Int?,
+    val rawPpiPoorEpochCount: Int?,
+    val rawPpiCoverageHours: Double?,
+    val summary: String,
+    val reasonsJson: String
+)
+
+@Entity(
     tableName = "wake_marker",
     indices = [Index("sourceDate")]
 )
