@@ -3,6 +3,7 @@
 package com.daveharris.healthmonitor.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -12,10 +13,12 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -28,13 +31,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 enum class TodayReadinessStage {
@@ -330,3 +341,143 @@ private fun autonomicSourceDisplayLabel(source: String): String =
         "awaiting_sleep_data" -> "Awaiting sleep data"
         else -> source
     }
+
+@Composable
+fun HrvTrajectoryDialog(
+    morningRead: MorningReadSnapshot,
+    onDismiss: () -> Unit
+) {
+    val points = morningRead.hrvTrajectory.sortedBy { it.epochStartEpochMs }
+    val average = points.map { it.rmssdMs }.averageOrNull()
+    val early = points.take((points.size / 3).coerceAtLeast(1)).map { it.rmssdMs }.averageOrNull()
+    val late = points.takeLast((points.size / 3).coerceAtLeast(1)).map { it.rmssdMs }.averageOrNull()
+    val delta = if (early != null && late != null) late - early else null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Overnight HRV trajectory") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    morningReadBasisLabel(
+                        morningRead = morningRead,
+                        todayStatus = TodayReadinessStatus(
+                            stage = TodayReadinessStage.UPDATE_COMPLETE,
+                            title = "",
+                            sleepReport = "",
+                            ppiReceipt = "",
+                            message = "",
+                            hrvDetail = ""
+                        )
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                HrvTrajectoryChart(points = points)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Windows", points.size.toString())
+                    DetailRow("Average RMSSD", average?.let { "${it.toInt()} ms" } ?: "n/a")
+                    DetailRow("Early -> late", delta?.let { formatSignedMs(it) } ?: "n/a")
+                    DetailRow("Range", hrvRangeLabel(points))
+                    DetailRow("Time span", hrvTimeSpanLabel(points))
+                }
+                SupportText("This plot is qualitative for now: useful for spotting rises, falls, troughs and volatility, not a diagnosis.")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        }
+    )
+}
+
+@Composable
+private fun HrvTrajectoryChart(points: List<HrvTrajectoryPoint>) {
+    val lineColor = MaterialTheme.colorScheme.primary
+    val guideColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+    val fillColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f)
+    val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val values = points.map { it.rmssdMs }
+    val minValue = values.minOrNull() ?: 0.0
+    val maxValue = values.maxOrNull() ?: 1.0
+    val span = (maxValue - minValue).takeIf { it > 0.0 } ?: 1.0
+    val paddedMin = (minValue - span * 0.12).coerceAtLeast(0.0)
+    val paddedMax = maxValue + span * 0.12
+    val firstTime = points.firstOrNull()?.epochStartEpochMs ?: 0L
+    val lastTime = points.lastOrNull()?.epochStartEpochMs ?: firstTime + 1L
+    val timeSpan = (lastTime - firstTime).coerceAtLeast(1L).toFloat()
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(190.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(fillColor)
+            .padding(8.dp)
+    ) {
+        val left = 18.dp.toPx()
+        val right = size.width - 10.dp.toPx()
+        val top = 14.dp.toPx()
+        val bottom = size.height - 28.dp.toPx()
+        repeat(4) { index ->
+            val y = top + (bottom - top) * index / 3f
+            drawLine(
+                color = guideColor,
+                start = androidx.compose.ui.geometry.Offset(left, y),
+                end = androidx.compose.ui.geometry.Offset(right, y),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
+        if (points.size < 2) return@Canvas
+        val path = Path()
+        points.forEachIndexed { index, point ->
+            val x = left + (right - left) * ((point.epochStartEpochMs - firstTime).toFloat() / timeSpan)
+            val yRatio = ((point.rmssdMs - paddedMin) / (paddedMax - paddedMin)).toFloat().coerceIn(0f, 1f)
+            val y = bottom - (bottom - top) * yRatio
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        drawPath(
+            path = path,
+            color = lineColor,
+            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+        )
+        val startLabel = formatEpochTime(firstTime)
+        val endLabel = formatEpochTime(lastTime)
+        drawContext.canvas.nativeCanvas.apply {
+            val paint = android.graphics.Paint().apply {
+                color = labelColor.toArgb()
+                textSize = 11.sp.toPx()
+                isAntiAlias = true
+            }
+            drawText(startLabel, left, size.height - 8.dp.toPx(), paint)
+            drawText(endLabel, right - measureText(endLabel, paint), size.height - 8.dp.toPx(), paint)
+        }
+    }
+}
+
+private fun measureText(text: String, paint: android.graphics.Paint): Float =
+    paint.measureText(text)
+
+private fun List<Double>.averageOrNull(): Double? =
+    if (isEmpty()) null else average()
+
+private fun formatSignedMs(value: Double): String {
+    val sign = if (value >= 0) "+" else "-"
+    return "$sign${kotlin.math.abs(value).toInt()} ms"
+}
+
+private fun hrvRangeLabel(points: List<HrvTrajectoryPoint>): String {
+    val values = points.map { it.rmssdMs }
+    val min = values.minOrNull()?.toInt() ?: return "n/a"
+    val max = values.maxOrNull()?.toInt() ?: return "n/a"
+    return "$min-$max ms"
+}
+
+private fun hrvTimeSpanLabel(points: List<HrvTrajectoryPoint>): String {
+    val first = points.firstOrNull()?.epochStartEpochMs ?: return "n/a"
+    val last = points.lastOrNull()?.epochStartEpochMs ?: return "n/a"
+    return "${formatEpochTime(first)}-${formatEpochTime(last)}"
+}
+
+private fun formatEpochTime(epochMs: Long): String =
+    DateTimeFormatter.ofPattern("HH:mm", java.util.Locale.UK)
+        .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))

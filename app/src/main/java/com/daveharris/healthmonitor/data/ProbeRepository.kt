@@ -2039,7 +2039,8 @@ class ProbeRepository(
                 sleepDataReady = false,
                 rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
                 rawPpiPoorEpochCount = ppi247Autonomic?.poorEpochCount,
-                rawPpiCoverageHours = ppi247Autonomic?.coverageHours
+                rawPpiCoverageHours = ppi247Autonomic?.coverageHours,
+                hrvTrajectory = ppi247Autonomic?.trajectoryPoints.orEmpty()
             )
         }
 
@@ -2119,7 +2120,8 @@ class ProbeRepository(
                 sleepDataReady = false,
                 rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
                 rawPpiPoorEpochCount = ppi247Autonomic?.poorEpochCount,
-                rawPpiCoverageHours = ppi247Autonomic?.coverageHours
+                rawPpiCoverageHours = ppi247Autonomic?.coverageHours,
+                hrvTrajectory = ppi247Autonomic?.trajectoryPoints.orEmpty()
             )
         }
         val cycleCount = sleepSummary.intOrNull("cycleCount")
@@ -2214,7 +2216,8 @@ class ProbeRepository(
             sleepDataReady = true,
             rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
             rawPpiPoorEpochCount = ppi247Autonomic?.poorEpochCount,
-            rawPpiCoverageHours = ppi247Autonomic?.coverageHours
+            rawPpiCoverageHours = ppi247Autonomic?.coverageHours,
+            hrvTrajectory = ppi247Autonomic?.trajectoryPoints.orEmpty()
         )
     }
 
@@ -2361,7 +2364,16 @@ class ProbeRepository(
             goodEpochCount = goodEpochs.size,
             poorEpochCount = windowEpochs.count { it.epochQuality.startsWith("poor") },
             coverageHours = (goodEpochs.sumOf { (it.epochEndEpochMs - it.epochStartEpochMs).coerceAtLeast(0L) } / 3_600_000.0),
-            lateMinusEarlyRmssdMs = if (earlyAverage != null && lateAverage != null) lateAverage - earlyAverage else null
+            lateMinusEarlyRmssdMs = if (earlyAverage != null && lateAverage != null) lateAverage - earlyAverage else null,
+            trajectoryPoints = goodEpochs.mapNotNull { epoch ->
+                epoch.rmssdMs?.let {
+                    HrvTrajectoryPoint(
+                        epochStartEpochMs = epoch.epochStartEpochMs,
+                        rmssdMs = it,
+                        epochQuality = epoch.epochQuality
+                    )
+                }
+            }
         )
     }
 
@@ -2664,7 +2676,8 @@ private data class Ppi247WindowSummary(
     val goodEpochCount: Int,
     val poorEpochCount: Int,
     val coverageHours: Double,
-    val lateMinusEarlyRmssdMs: Double?
+    val lateMinusEarlyRmssdMs: Double?,
+    val trajectoryPoints: List<HrvTrajectoryPoint>
 )
 
 private data class SleepWindowEstimate(

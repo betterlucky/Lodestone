@@ -64,7 +64,14 @@ data class MorningReadSnapshot(
     val sleepDataReady: Boolean = !isInterim && sleepDurationMinutes != null,
     val rawPpiGoodEpochCount: Int? = null,
     val rawPpiPoorEpochCount: Int? = null,
-    val rawPpiCoverageHours: Double? = null
+    val rawPpiCoverageHours: Double? = null,
+    val hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
+)
+
+data class HrvTrajectoryPoint(
+    val epochStartEpochMs: Long,
+    val rmssdMs: Double,
+    val epochQuality: String
 )
 
 enum class TrafficLightStatus {

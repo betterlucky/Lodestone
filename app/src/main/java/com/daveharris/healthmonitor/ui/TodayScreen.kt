@@ -12,6 +12,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
@@ -42,6 +46,13 @@ fun DataScreen(
     val activeMorningRead = morningRead
         ?.takeIf { it.sourceDate == today }
         ?.takeUnless { todayStatus.stage == TodayReadinessStage.SLEEP_TIME }
+    var showHrvTrajectory by remember { mutableStateOf(false) }
+    if (showHrvTrajectory && activeMorningRead != null) {
+        HrvTrajectoryDialog(
+            morningRead = activeMorningRead,
+            onDismiss = { showHrvTrajectory = false }
+        )
+    }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -104,6 +115,12 @@ fun DataScreen(
                     }
                 }
                 ButtonRow {
+                    OutlinedButton(
+                        onClick = { showHrvTrajectory = true },
+                        enabled = activeMorningRead?.hrvTrajectory?.isNotEmpty() == true
+                    ) {
+                        Text("View HRV trajectory")
+                    }
                     OutlinedButton(
                         onClick = { if (actionsEnabled) viewModel.runManualSync() },
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
