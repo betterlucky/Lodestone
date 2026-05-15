@@ -31,7 +31,6 @@ calibration/
 # Early scratch notes kept local for privacy/noise.
 *.rtf
 *.rtfd/
-README.md
 garmin-integration.md
 polling.md
 wearable_recovery_research.md
