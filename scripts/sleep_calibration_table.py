@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import sqlite3
+import sys
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -187,7 +188,7 @@ def estimate_sleep_onset_ms(conn: sqlite3.Connection, bed_ms: int, end_ms: int) 
     if len(first_hour_hr) < 3:
         return None
     baseline_hr = median(first_hour_hr)
-    for index in range(0, len(epochs) - ONSET_WINDOW_EPOCHS + 1):
+    for index in range(len(epochs) - ONSET_WINDOW_EPOCHS + 1):
         window = epochs[index : index + ONSET_WINDOW_EPOCHS]
         if any(row["epochQuality"].startswith("poor") or row["meanHrBpm"] is None for row in window):
             continue
@@ -282,7 +283,7 @@ def fmt_value(value: object) -> str:
 def print_csv(rows: list[dict[str, object]]) -> None:
     if not rows:
         return
-    writer = csv.DictWriter(__import__("sys").stdout, fieldnames=list(rows[0].keys()))
+    writer = csv.DictWriter(sys.stdout, fieldnames=list(rows[0].keys()))
     writer.writeheader()
     writer.writerows(rows)
 

@@ -310,8 +310,10 @@ fun morningReadBasisLabel(
             "Calibrated sleep window + PPI, Loop report as context"
         morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_primary_with_sleep_report" ->
             "Manual sleep window + PPI, Loop report as context"
-        morningRead?.sleepDataReady == true ->
+        morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
             "Confirmed Loop sleep report + aligned PPI"
+        morningRead?.sleepDataReady == true ->
+            "Confirmed Loop sleep report"
         morningRead?.isInterim == true ->
             "Provisional morning data"
         todayStatus.stage == TodayReadinessStage.SLEEP_TIME ->
@@ -319,6 +321,10 @@ fun morningReadBasisLabel(
         else ->
             "Waiting for morning data"
     }
+
+private fun MorningReadSnapshot.hasPpiSignal(): Boolean =
+    overnightAutonomicSource.contains("ppi", ignoreCase = true) ||
+        (rawPpiGoodEpochCount ?: 0) > 0
 
 private fun morningReadReportStateLabel(morningRead: MorningReadSnapshot): String =
     when {

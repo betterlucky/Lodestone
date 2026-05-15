@@ -2421,7 +2421,6 @@ class ProbeRepository(
             .toInstant()
             .toEpochMilli()
         val latestUsefulMarker = targetDate
-            .plusDays(1)
             .atTime(LocalTime.NOON)
             .atZone(ZoneId.systemDefault())
             .toInstant()
@@ -2564,6 +2563,8 @@ class ProbeRepository(
             overnightAutonomicSource == other.overnightAutonomicSource &&
             sleepDurationMinutes == other.sleepDurationMinutes &&
             nightlyRmssd == other.nightlyRmssd &&
+            baselineReady == other.baselineReady &&
+            recoveryAvailable == other.recoveryAvailable &&
             rawPpiGoodEpochCount == other.rawPpiGoodEpochCount &&
             rawPpiPoorEpochCount == other.rawPpiPoorEpochCount &&
             rawPpiCoverageHours == other.rawPpiCoverageHours &&

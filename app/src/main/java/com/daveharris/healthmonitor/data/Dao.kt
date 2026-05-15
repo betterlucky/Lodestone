@@ -484,7 +484,8 @@ interface ProbeDao {
             FROM morning_prediction_snapshot
             GROUP BY sourceDate, snapshotOrigin, modelVersion, status, confidence,
                      isInterim, sleepDataReady, overnightAutonomicSource,
-                     sleepDurationMinutes, nightlyRmssd, rawPpiGoodEpochCount,
+                     sleepDurationMinutes, nightlyRmssd, baselineReady, recoveryAvailable,
+                     rawPpiGoodEpochCount,
                      rawPpiPoorEpochCount, rawPpiCoverageHours, summary, reasonsJson
         )
         """

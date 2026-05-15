@@ -26,7 +26,7 @@ fi
 
 echo "$remote_files" | while IFS= read -r remote_file; do
   [[ -z "$remote_file" ]] && continue
-  adb pull "$remote_file" "$LOCAL_DIR/" >/dev/null
+  adb pull "$remote_file" "$LOCAL_DIR/" 1>/dev/null
   echo "Pulled $(basename "$remote_file")"
 done
 

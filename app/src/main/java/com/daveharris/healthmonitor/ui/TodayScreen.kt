@@ -12,6 +12,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +48,11 @@ fun DataScreen(
         ?.takeIf { it.sourceDate == today }
         ?.takeUnless { todayStatus.stage == TodayReadinessStage.SLEEP_TIME }
     var showHrvTrajectory by remember { mutableStateOf(false) }
+    LaunchedEffect(activeMorningRead == null) {
+        if (activeMorningRead == null) {
+            showHrvTrajectory = false
+        }
+    }
     if (showHrvTrajectory && activeMorningRead != null) {
         HrvTrajectoryDialog(
             morningRead = activeMorningRead,
