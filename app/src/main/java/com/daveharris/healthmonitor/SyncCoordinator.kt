@@ -31,22 +31,25 @@ class SyncCoordinator(
         }
         morningReadGuard?.ensureCurrent(appContext)
 
-        val connectedId = connectAndAwait(deviceId)
-        if (wakeMarkerNotes != null) {
-            repository.recordWakeMarker(
-                sourceDate = LocalDate.now().toString(),
-                deviceId = connectedId,
-                notes = wakeMarkerNotes
-            )
+        var connectedId = deviceId
+        try {
+            connectedId = connectAndAwait(deviceId)
+            if (wakeMarkerNotes != null) {
+                repository.recordWakeMarker(
+                    sourceDate = LocalDate.now().toString(),
+                    deviceId = connectedId,
+                    notes = wakeMarkerNotes
+                )
+            }
+
+            val runId = repository.runManualSync(connectedId, config, profile).getOrThrow()
+            return@withLock SyncCoordinatorResult(connectedId, runId)
+        } finally {
+            // A failed first wake sync should still leave the app with a recovery path.
+            if (scheduleMorningRetryIfNeeded) {
+                scheduleMorningReadCheckIfNeeded(connectedId)
+            }
         }
-
-        val runId = repository.runManualSync(connectedId, config, profile).getOrThrow()
-
-        if (scheduleMorningRetryIfNeeded) {
-            scheduleMorningReadCheckIfNeeded(connectedId)
-        }
-
-        return@withLock SyncCoordinatorResult(connectedId, runId)
     }
 
     suspend fun <T> runExclusiveDeviceOperation(
