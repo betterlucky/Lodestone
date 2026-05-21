@@ -2,6 +2,7 @@ package com.daveharris.healthmonitor.data
 
 import com.daveharris.healthmonitor.util.GsonProvider
 import java.io.BufferedReader
+import kotlin.math.roundToInt
 
 object FoodCsvImporter {
     private val expectedHeaders = listOf("date", "time_local", "item", "quantity", "calories_kcal", "notes")
@@ -118,7 +119,7 @@ object FoodCsvImporter {
                         timeLocal = timeLocal,
                         item = item,
                         quantity = quantity,
-                        caloriesKcal = row.getOrNull(4)?.trim()?.toIntOrNull(),
+                        caloriesKcal = parseCaloriesKcal(row.getOrNull(4)),
                         notes = notes,
                         importSource = sourceName,
                         importedAtEpochMs = importedAt
@@ -127,6 +128,12 @@ object FoodCsvImporter {
                 )
             }
         }
+
+    private fun parseCaloriesKcal(value: String?): Int? {
+        val trimmed = value?.trim().orEmpty()
+        if (trimmed.isBlank()) return null
+        return trimmed.toIntOrNull() ?: trimmed.toDoubleOrNull()?.roundToInt()
+    }
 
     private fun parseWeightKg(quantity: String): Double? {
         val normalized = quantity.trim().lowercase()
