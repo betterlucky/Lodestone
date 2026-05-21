@@ -10,6 +10,9 @@ local.properties
 # IDE
 .idea/
 *.iml
+.codex/kanban.json
+.claude/kanban.json
+kanban-board/
 
 # Python analysis helpers
 __pycache__/
