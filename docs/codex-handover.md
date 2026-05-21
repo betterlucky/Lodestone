@@ -5,10 +5,20 @@ This note preserves useful context from older Codex project threads that may sta
 ## Current Project Shape
 
 - The project is now named Lodestone, though the repository folder is still `HealthMonitor`.
+- The live checkout has moved to `/Users/daveharris/dev/HealthMonitor`; the old `/Users/daveharris/Documents/HealthMonitor` path is a symlink to that folder.
 - Lodestone is an Android-first personal health-monitoring prototype for pacing, recovery tracking, and morning/evening reflection.
 - It is a research prototype, not a medical device or consumer-ready health product.
 - The primary use case is ME/CFS pacing support: a morning signal should help the user decide how cautiously to approach the day, while evening labels provide the more meaningful outcome signal for later model tuning.
 - The project is local-first and privacy-sensitive. Treat health exports, pulled databases, Polar/Garmin credentials, cloud data, and calibration captures as sensitive.
+
+## Current Checkout State On Handover
+
+- Repository remote is `https://github.com/betterlucky/Lodestone.git`.
+- `main` is the stable baseline unless a later handover says otherwise.
+- At the time this note was updated, branch `codex/provisional-autonomic-gate` contained the latest morning-read fix and PR #6 existed for it.
+- That fix addressed a real morning state where `PPI_247` timed out, leaving `0` epochs/no HRV, while the provisional model still showed `OK` from duration alone.
+- Intended behaviour after that fix: provisional status should remain pending/TBC until usable PPI-derived autonomic data exists, and wake-sync failures should still arm the morning retry schedule.
+- If a new session starts after PR #6 is merged, sync/pull `main` and delete the stale local branch.
 
 ## Core Decisions From Prior Threads
 
@@ -64,4 +74,3 @@ These old threads are useful background if they remain visible under the previou
 - Polar/Flow sync behaviour and provisional morning signal discussion.
 - Garmin sidecar and Chrome/Selenium reliability discussion.
 - FoodLog import and weight-row contract discussion.
-
