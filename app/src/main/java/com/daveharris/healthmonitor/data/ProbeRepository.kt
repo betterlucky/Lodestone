@@ -2013,10 +2013,11 @@ class ProbeRepository(
                 ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
                 missingPpiReason = "No usable raw PPI is available yet."
             )
+            val provisionalStatus = scoreResult.status.takeIf { ppi247Autonomic != null }
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
-                status = scoreResult.status,
-                confidence = if (scoreResult.status != null) "interim" else "pending",
+                status = provisionalStatus,
+                confidence = if (provisionalStatus != null) "interim" else "pending",
                 overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
@@ -2094,10 +2095,11 @@ class ProbeRepository(
                 ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
                 missingPpiReason = "No usable raw PPI is available yet."
             )
+            val provisionalStatus = scoreResult.status.takeIf { ppi247Autonomic != null }
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
-                status = scoreResult.status,
-                confidence = if (scoreResult.status != null) "interim" else "pending",
+                status = provisionalStatus,
+                confidence = if (provisionalStatus != null) "interim" else "pending",
                 overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,

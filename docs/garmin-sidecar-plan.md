@@ -24,7 +24,7 @@ Move the Garmin runner/data directory under a Codex-writable managed path, for
 example:
 
 ```text
-/Users/daveharris/Documents/HealthMonitor/local/garmin-givemydata/
+/Users/daveharris/dev/HealthMonitor/local/garmin-givemydata/
 ```
 
 Keep all personal Garmin data ignored by git:

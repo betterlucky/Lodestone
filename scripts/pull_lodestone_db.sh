@@ -7,11 +7,18 @@ db_name="health-monitor-probe.db"
 
 mkdir -p "$out_dir"
 
-adb exec-out run-as "$package_name" cat "databases/$db_name" > "$out_dir/$db_name"
+pull_db_file() {
+  local remote_path="$1"
+  local local_path="$2"
+
+  adb exec-out run-as "$package_name" dd "if=$remote_path" bs=1048576 2>/dev/null > "$local_path"
+}
+
+pull_db_file "databases/$db_name" "$out_dir/$db_name"
 
 for suffix in -wal -shm; do
   if adb shell run-as "$package_name" ls "databases/$db_name$suffix" >/dev/null 2>&1; then
-    adb exec-out run-as "$package_name" cat "databases/$db_name$suffix" > "$out_dir/$db_name$suffix"
+    pull_db_file "databases/$db_name$suffix" "$out_dir/$db_name$suffix"
   fi
 done
 

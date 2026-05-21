@@ -49,6 +49,7 @@ These are project findings, not general medical claims:
 More detail lives in:
 
 - [`LodestoneContext.md`](LodestoneContext.md)
+- [`docs/codex-handover.md`](docs/codex-handover.md)
 - [`docs/polling-and-monitoring-decisions.md`](docs/polling-and-monitoring-decisions.md)
 - [`docs/offline-recording-archive.md`](docs/offline-recording-archive.md)
 - [`docs/polar-cloud-backfill-probe.md`](docs/polar-cloud-backfill-probe.md)
