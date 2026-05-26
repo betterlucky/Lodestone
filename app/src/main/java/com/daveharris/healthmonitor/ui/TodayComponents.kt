@@ -62,7 +62,9 @@ data class TodayReadinessStatus(
     val sleepReport: String,
     val ppiReceipt: String,
     val message: String,
-    val hrvDetail: String
+    val hrvDetail: String,
+    val connectionPrompt: String? = null,
+    val heroPrompt: String? = null
 )
 
 fun todayReadinessStatus(
@@ -100,7 +102,9 @@ fun todayReadinessStatus(
             sleepReport = "Checking Loop",
             ppiReceipt = "Checking Loop",
             message = "Lodestone is connecting and pulling the morning core data.",
-            hrvDetail = "Sync is running. PPI detail will appear as soon as the Loop returns enough data."
+            hrvDetail = "Sync is running. PPI detail will appear as soon as the Loop returns enough data.",
+            connectionPrompt = "Keep the phone close to the Loop until PPI finishes. If Bluetooth drops, Lodestone will retry instead of storing duplicate data.",
+            heroPrompt = "Stay near Loop"
         )
         hasFinalSleep -> TodayReadinessStatus(
             stage = TodayReadinessStage.UPDATE_COMPLETE,
@@ -209,6 +213,7 @@ fun TodayHeroCard(
                 ) {
                     HeroPill(qualifier)
                     confidence?.let { HeroPill("$it confidence") }
+                    todayStatus.heroPrompt?.let { HeroPill(it) }
                 }
                 Text(
                     todayStatus.message,

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -n "${REVIEW_GUARD_RUNNER:-}" ]; then
+  RUNNER="$REVIEW_GUARD_RUNNER"
+elif [ -f "$HOME/.codex/skills/review-guard/scripts/review_guard.py" ]; then
+  RUNNER="$HOME/.codex/skills/review-guard/scripts/review_guard.py"
+elif [ -f "$HOME/.claude/skills/review-guard/scripts/review_guard.py" ]; then
+  RUNNER="$HOME/.claude/skills/review-guard/scripts/review_guard.py"
+elif [ -f "$SCRIPT_DIR/../.codex/skills/review-guard/scripts/review_guard.py" ]; then
+  RUNNER="$SCRIPT_DIR/../.codex/skills/review-guard/scripts/review_guard.py"
+else
+  RUNNER=""
+fi
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/review-guard <command> [options]
+
+Commands:
+  doctor              Validate .codex/review-guard.json
+  run [--dry-run]     Run configured local verification commands
+  review [options]    Run the shared multi-review guard
+
+Compatibility:
+  Passing review options directly, such as --context or --lock-status,
+  is treated as `review <options>`.
+USAGE
+}
+
+if [ -z "$RUNNER" ] || [ ! -f "$RUNNER" ]; then
+  echo "review-guard runner not found." >&2
+  echo "Set REVIEW_GUARD_RUNNER or install the Kanban review-guard skill." >&2
+  exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  -h|--help)
+    usage
+    ;;
+  doctor|run|review)
+    exec python3 "$RUNNER" "$@"
+    ;;
+  --*)
+    exec python3 "$RUNNER" review "$@"
+    ;;
+  *)
+    echo "unknown review-guard command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

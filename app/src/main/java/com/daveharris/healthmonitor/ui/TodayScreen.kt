@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
+import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import java.time.LocalDate
@@ -87,9 +88,16 @@ fun DataScreen(
                     runtime.connectedDevice?.name?.let { "Connected to $it" }
                         ?: runtime.connectionPhase.replaceFirstChar { it.titlecase() }
                 )
+                ButtonRow {
+                    StatusBadge(
+                        label = morningConnectionBadgeLabel(runtime, todayStatus),
+                        status = morningConnectionBadgeStatus(runtime, todayStatus)
+                    )
+                }
                 DetailRow("Final Loop sleep report", todayStatus.sleepReport)
                 DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
                 SupportText(todayStatus.message)
+                todayStatus.connectionPrompt?.let { SupportText(it) }
                 SupportText("PPI may arrive before the final Loop sleep report. Lodestone can show a provisional read from your bed/wake markers and calibrated PPI, then replace it with the confirmed read when the final report resolves.")
                 ButtonRow {
                     OutlinedButton(
@@ -138,3 +146,27 @@ fun DataScreen(
         }
     }
 }
+
+private fun morningConnectionBadgeLabel(
+    runtime: DeviceRuntimeState,
+    todayStatus: TodayReadinessStatus
+): String =
+    when {
+        !runtime.bluetoothPowered -> "Bluetooth off"
+        runtime.connectionPhase == "connected" -> "Loop link solid"
+        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> "Recovering link"
+        runtime.connectionPhase == "connecting" -> "Connecting"
+        else -> "Loop not connected"
+    }
+
+private fun morningConnectionBadgeStatus(
+    runtime: DeviceRuntimeState,
+    todayStatus: TodayReadinessStatus
+): TrafficLightStatus? =
+    when {
+        !runtime.bluetoothPowered -> TrafficLightStatus.CRASH
+        runtime.connectionPhase == "connected" -> TrafficLightStatus.GOOD
+        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> TrafficLightStatus.UNSTEADY
+        runtime.connectionPhase == "connecting" -> TrafficLightStatus.OK
+        else -> null
+    }
