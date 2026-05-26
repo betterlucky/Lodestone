@@ -68,16 +68,18 @@ fun FeedbackScreen(
                 hasSavedReview = hasSavedReview,
                 hasFoodImport = hasFoodImport,
                 flashSuccess = viewModel.saveSuccessFlash,
+                todayDate = viewModel.currentLodestoneDate(),
                 onClearFlash = viewModel::clearSaveSuccessFlash,
                 onDateSelected = viewModel::updateCheckInDate
             )
         }
         item {
-            if (morningRead != null) {
-                MorningReadCard(morningRead)
+            val selectedMorningRead = morningRead?.takeIf { it.sourceDate == viewModel.checkInDate }
+            if (selectedMorningRead != null) {
+                MorningReadCard(selectedMorningRead)
             } else {
                 BannerNote(
-                    text = "No morning read is available yet. You can still record how the day ended.",
+                    text = "No morning read is available for ${viewModel.checkInDate}. You can still record how the day ended.",
                     tint = MaterialTheme.colorScheme.secondaryContainer,
                     textColor = MaterialTheme.colorScheme.onSecondaryContainer
                 )

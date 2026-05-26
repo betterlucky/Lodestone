@@ -51,6 +51,7 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             overrideHrDays = intent.getIntExtra(EXTRA_HR_DAYS, -1).takeIf { it > 0 },
             overridePpiDays = intent.getIntExtra(EXTRA_PPI_DAYS, -1).takeIf { it > 0 },
             morningReadGeneration = intent.getLongExtra(EXTRA_MORNING_READ_GENERATION, -1L),
+            morningTargetDate = intent.getStringExtra(EXTRA_MORNING_TARGET_DATE),
             morningRetryStage = intent.getStringExtra(EXTRA_MORNING_RETRY_STAGE),
             morningRetryAttempt = intent.getIntExtra(EXTRA_MORNING_RETRY_ATTEMPT, 1)
         )
@@ -67,11 +68,14 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         val attempt = intent.getIntExtra(EXTRA_ATTEMPT, 1)
         if (command == "morning_read_check" && error.message != "Sync already running") {
             val selectedDeviceId = deviceId ?: app.container.repository.getAppSettings()?.selectedDeviceId
+            val targetDate = intent.getStringExtra(EXTRA_MORNING_TARGET_DATE)
+                ?: MorningReadScheduler.scheduledTargetDate(app.applicationContext)
+                ?: LocalDate.now().toString()
             val stage = MorningReadScheduler.fromWireName(intent.getStringExtra(EXTRA_MORNING_RETRY_STAGE))
                 ?: MorningRetryStage.PPI
             val nextRetry = MorningReadScheduler.scheduleNextAttempt(
                 context = app.applicationContext,
-                targetDate = LocalDate.now().toString(),
+                targetDate = targetDate,
                 deviceId = selectedDeviceId,
                 stage = stage,
                 currentAttempt = intent.getIntExtra(EXTRA_MORNING_RETRY_ATTEMPT, 1)
@@ -81,7 +85,7 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             } else if (stage == MorningRetryStage.PPI) {
                 MorningReadScheduler.scheduleSleepReportRetry(
                     context = app.applicationContext,
-                    targetDate = LocalDate.now().toString(),
+                    targetDate = targetDate,
                     deviceId = selectedDeviceId
                 )
                 Log.e(TAG, "PPI morning read check exhausted after failure; moving to sleep report retry.")
@@ -167,6 +171,7 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         overrideHrDays: Int?,
         overridePpiDays: Int?,
         morningReadGeneration: Long,
+        morningTargetDate: String?,
         morningRetryStage: String?,
         morningRetryAttempt: Int
     ) {
@@ -245,7 +250,9 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             }
             "morning_read_check" -> {
                 val id = requireNotNull(selectedDeviceId) { "morning_read_check requires automation_device_id or selected device" }
-                val targetDate = LocalDate.now().toString()
+                val targetDate = morningTargetDate
+                    ?: MorningReadScheduler.scheduledTargetDate(app.applicationContext)
+                    ?: LocalDate.now().toString()
                 val stage = MorningReadScheduler.fromWireName(morningRetryStage) ?: MorningRetryStage.PPI
                 val attempt = morningRetryAttempt.coerceAtLeast(1)
                 if (!MorningReadScheduler.isCurrentCheck(app.applicationContext, targetDate, morningReadGeneration, stage)) {
@@ -359,6 +366,7 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         const val EXTRA_HR_DAYS = "probe_hr_days"
         const val EXTRA_PPI_DAYS = "probe_ppi_days"
         const val EXTRA_MORNING_READ_GENERATION = "probe_morning_read_generation"
+        const val EXTRA_MORNING_TARGET_DATE = "probe_morning_target_date"
         const val EXTRA_MORNING_RETRY_STAGE = "probe_morning_retry_stage"
         const val EXTRA_MORNING_RETRY_ATTEMPT = "probe_morning_retry_attempt"
     }

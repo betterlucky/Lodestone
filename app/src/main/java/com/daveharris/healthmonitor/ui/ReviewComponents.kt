@@ -190,6 +190,7 @@ fun ReviewDatePickerField(
     hasSavedReview: Boolean,
     hasFoodImport: Boolean,
     flashSuccess: Boolean,
+    todayDate: String,
     onClearFlash: () -> Unit,
     onDateSelected: (String) -> Unit
 ) {
@@ -275,7 +276,7 @@ fun ReviewDatePickerField(
                     Icon(Icons.Outlined.ChevronLeft, contentDescription = "Previous day")
                 }
                 OutlinedButton(
-                    onClick = { onDateSelected(LocalDate.now().toString()) }
+                    onClick = { onDateSelected(todayDate) }
                 ) {
                     Text("Today")
                 }

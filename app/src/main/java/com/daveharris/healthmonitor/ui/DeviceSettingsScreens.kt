@@ -42,7 +42,6 @@ import com.daveharris.healthmonitor.data.ObservedCapabilityEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.polar.sdk.api.model.PolarDeviceInfo
 import kotlinx.coroutines.delay
-import java.time.LocalDate
 
 @Composable
 fun DeviceScreen(
@@ -172,7 +171,7 @@ fun SettingsScreen(
         cooldownTicker = System.currentTimeMillis()
     }
     cooldownTicker
-    val today = LocalDate.now().toString()
+    val today = viewModel.currentLodestoneDate()
     val todayMorningRead = morningRead?.takeIf { it.sourceDate == today }
     val finalSleepReportPresent = todayMorningRead?.sleepDataReady == true
     val ppiPresent = todayMorningRead?.rawPpiGoodEpochCount != null ||

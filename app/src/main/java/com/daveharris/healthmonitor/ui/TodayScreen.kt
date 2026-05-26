@@ -24,7 +24,7 @@ import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
-import java.time.LocalDate
+import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 
 @Composable
 fun DataScreen(
@@ -37,7 +37,10 @@ fun DataScreen(
     actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
 ) {
-    val today = LocalDate.now().toString()
+    val today = resolveLodestoneDisplayDate(
+        latestMorningReadSourceDate = morningRead?.sourceDate,
+        wakeMarkers = wakeMarkers
+    ).sourceDate
     val todayStatus = todayReadinessStatus(
         today = today,
         morningRead = morningRead,
