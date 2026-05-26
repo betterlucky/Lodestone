@@ -56,6 +56,19 @@ enum class TodayReadinessStage {
     NOT_STARTED
 }
 
+enum class TodayDataQualityState {
+    READY,
+    WAITING,
+    PARTIAL
+}
+
+data class TodayDataQualitySummary(
+    val state: TodayDataQualityState,
+    val label: String,
+    val missingInputs: List<String>,
+    val supportingGaps: List<String>
+)
+
 data class TodayReadinessStatus(
     val stage: TodayReadinessStage,
     val title: String,
@@ -63,6 +76,7 @@ data class TodayReadinessStatus(
     val ppiReceipt: String,
     val message: String,
     val hrvDetail: String,
+    val dataQuality: TodayDataQualitySummary,
     val connectionPrompt: String? = null,
     val heroPrompt: String? = null
 )
@@ -86,6 +100,18 @@ fun todayReadinessStatus(
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
     val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
         relevantMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
+    val dataQuality = todayDataQualitySummary(
+        stage = when {
+            isSleeping -> TodayReadinessStage.SLEEP_TIME
+            syncRunning -> TodayReadinessStage.STARTING_SYNC
+            hasFinalSleep -> TodayReadinessStage.UPDATE_COMPLETE
+            hasPpi -> TodayReadinessStage.INITIAL_PPI
+            else -> TodayReadinessStage.NOT_STARTED
+        },
+        morningRead = relevantMorningRead,
+        hasFinalSleep = hasFinalSleep,
+        hasPpi = hasPpi
+    )
 
     return when {
         isSleeping -> TodayReadinessStatus(
@@ -94,7 +120,8 @@ fun todayReadinessStatus(
             sleepReport = "Cleared for tonight",
             ppiReceipt = "Waiting for wake sync",
             message = "Bedtime is marked. Today's old read is hidden until you wake and sync again.",
-            hrvDetail = "Sleep mode is active. Overnight HRV detail will appear after you tap I'm awake and Lodestone syncs the Loop."
+            hrvDetail = "Sleep mode is active. Overnight HRV detail will appear after you tap I'm awake and Lodestone syncs the Loop.",
+            dataQuality = dataQuality
         )
         syncRunning -> TodayReadinessStatus(
             stage = TodayReadinessStage.STARTING_SYNC,
@@ -103,6 +130,7 @@ fun todayReadinessStatus(
             ppiReceipt = "Checking Loop",
             message = "Lodestone is connecting and pulling the morning core data.",
             hrvDetail = "Sync is running. PPI detail will appear as soon as the Loop returns enough data.",
+            dataQuality = dataQuality,
             connectionPrompt = "Keep the phone close to the Loop until PPI finishes. If Bluetooth drops, Lodestone will retry instead of storing duplicate data.",
             heroPrompt = "Stay near Loop"
         )
@@ -112,7 +140,8 @@ fun todayReadinessStatus(
             sleepReport = "Final report present",
             ppiReceipt = ppiReceiptLabel(relevantMorningRead),
             message = "The final sleep report and morning signal are ready.",
-            hrvDetail = "Raw PPI has been aligned to the resolved Loop sleep window."
+            hrvDetail = "Raw PPI has been aligned to the resolved Loop sleep window.",
+            dataQuality = dataQuality
         )
         hasPpi -> TodayReadinessStatus(
             stage = TodayReadinessStage.INITIAL_PPI,
@@ -130,7 +159,8 @@ fun todayReadinessStatus(
                 "The interim morning signal is using Lodestone's calibrated onset estimate and your wake marker while Polar's final sleep report is pending."
             } else {
                 "The interim morning signal can use manual bed/wake timing, but treat it as provisional until the final sleep report arrives."
-            }
+            },
+            dataQuality = dataQuality
         )
         else -> TodayReadinessStatus(
             stage = TodayReadinessStage.NOT_STARTED,
@@ -138,8 +168,46 @@ fun todayReadinessStatus(
             sleepReport = "Not synced yet",
             ppiReceipt = "Not received yet",
             message = "Tap I'm awake when you are ready to mark wake time and pull the morning data.",
-            hrvDetail = "The raw overnight signal is stored from normal sync, but there is no current-day PPI or resolved sleep-window alignment yet."
+            hrvDetail = "The raw overnight signal is stored from normal sync, but there is no current-day PPI or resolved sleep-window alignment yet.",
+            dataQuality = dataQuality
         )
+    }
+}
+
+fun todayDataQualitySummary(
+    stage: TodayReadinessStage,
+    morningRead: MorningReadSnapshot?,
+    hasFinalSleep: Boolean = morningRead?.sleepDataReady == true,
+    hasPpi: Boolean = morningRead?.rawPpiGoodEpochCount != null ||
+        morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
+): TodayDataQualitySummary {
+    val coreMissing = buildList {
+        if (!hasFinalSleep) add("Final Loop sleep report")
+        if (!hasPpi) add("24/7 PPI epochs")
+    }
+    val supportingGaps = buildList {
+        if (morningRead == null) {
+            add("Morning-read snapshot")
+        } else {
+            if (morningRead.nightlyRmssd == null) add("Nightly Recharge RMSSD")
+            if ((morningRead.rawPpiCoverageHours ?: 0.0) < 4.0 && hasPpi) add("Long PPI coverage window")
+            if (!morningRead.baselineReady) add("Personal baseline")
+        }
+    }
+    return when {
+        stage == TodayReadinessStage.SLEEP_TIME || stage == TodayReadinessStage.STARTING_SYNC ->
+            TodayDataQualitySummary(TodayDataQualityState.WAITING, "Waiting", coreMissing, supportingGaps)
+        coreMissing.isEmpty() ->
+            TodayDataQualitySummary(
+                state = if (supportingGaps.isEmpty()) TodayDataQualityState.READY else TodayDataQualityState.PARTIAL,
+                label = if (supportingGaps.isEmpty()) "Ready" else "Ready, supporting gaps",
+                missingInputs = emptyList(),
+                supportingGaps = supportingGaps
+            )
+        hasPpi || hasFinalSleep ->
+            TodayDataQualitySummary(TodayDataQualityState.PARTIAL, "Partial", coreMissing, supportingGaps)
+        else ->
+            TodayDataQualitySummary(TodayDataQualityState.WAITING, "Waiting", coreMissing, supportingGaps)
     }
 }
 
@@ -378,7 +446,8 @@ fun HrvTrajectoryDialog(
                             sleepReport = "",
                             ppiReceipt = "",
                             message = "",
-                            hrvDetail = ""
+                            hrvDetail = "",
+                            dataQuality = todayDataQualitySummary(TodayReadinessStage.UPDATE_COMPLETE, morningRead)
                         )
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -325,6 +325,7 @@ class ProbeRepository(
 
                 withContext(NonCancellable) {
                     dao.pruneLargeSyncDomainResultPayloads()
+                    pruneRawPpiBuffer(syncRunId, deviceId)
                     val existingRun = dao.getSyncRun(syncRunId)
                     if (existingRun != null) {
                         val status = if (domainFailures.isEmpty()) "success" else "partial_failure"
@@ -509,6 +510,42 @@ class ProbeRepository(
             }
             "${profile.runNotes} completed with domain failures: $failedDomains"
         }
+
+    private suspend fun pruneRawPpiBuffer(syncRunId: Long, deviceId: String) {
+        val startedAt = System.currentTimeMillis()
+        val cutoffDate = LocalDate.now(ZoneOffset.UTC).minusDays(RAW_PPI_RETENTION_DAYS).toString()
+        val prunableDates = dao.getPrunablePpiRawSourceDatesBefore(deviceId, cutoffDate)
+        if (prunableDates.isEmpty()) return
+        val deletedRows = dao.deletePpiRawRecordsForDates(deviceId, prunableDates)
+        val detail = "raw PPI retention kept ${RAW_PPI_RETENTION_DAYS}d buffer; deletedRows=$deletedRows, dates=${prunableDates.size}, cutoff=$cutoffDate"
+        dao.insertSyncDomainResult(
+            SyncDomainResultEntity(
+                syncRunId = syncRunId,
+                deviceId = deviceId,
+                domain = ProbeDomain.PPI_247.name,
+                requestedRange = "raw_ppi_retention",
+                status = ProbeStatus.SUPPORTED.name,
+                recordCount = deletedRows,
+                parserVersion = PARSER_VERSION,
+                parseStatus = ProbeStatus.RAW_ONLY.name,
+                detailSummary = detail,
+                rawPayloadJson = GsonProvider.gson.toJson(
+                    mapOf(
+                        "purpose" to "raw_ppi_retention",
+                        "retentionDays" to RAW_PPI_RETENTION_DAYS,
+                        "cutoffDate" to cutoffDate,
+                        "deletedRows" to deletedRows,
+                        "deletedSourceDates" to prunableDates
+                    )
+                ),
+                manualNotes = null,
+                startedAtEpochMs = startedAt,
+                endedAtEpochMs = System.currentTimeMillis(),
+                errorCode = null,
+                errorMessage = null
+            )
+        )
+    }
 
     private suspend fun pruneOversizedSyncResultPayloads() = withContext(Dispatchers.IO) {
         val prunedRows = dao.pruneLargeSyncDomainResultPayloads()
@@ -2699,6 +2736,7 @@ private const val SECONDARY_VALIDATION_RETENTION_DAYS = 14L
 private const val OFFLINE_PPI_RETENTION_DAYS = 14L
 private const val GENERIC_OFFLINE_RETENTION_DAYS = 14L
 private const val DEVICE_STORED_DATA_RETENTION_DAYS = 14L
+private const val RAW_PPI_RETENTION_DAYS = 21L
 private const val STALE_RUNNING_SYNC_AFTER_MS = 15 * 60 * 1000L
 private const val MANUAL_SYNC_TIMEOUT_MS = 7 * 60 * 1000L
 private const val SYNC_NOTIFICATION_START_ATTEMPTS = 5

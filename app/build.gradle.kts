@@ -85,6 +85,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.health.connect:connect-client:1.1.0-alpha12")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    testImplementation(kotlin("test"))
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

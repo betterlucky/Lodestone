@@ -178,6 +178,26 @@ interface ProbeDao {
     @Query("DELETE FROM ppi247_day_raw WHERE deviceId = :deviceId AND sourceDate = :sourceDate AND keySummary = :keySummary")
     suspend fun deletePpiRecordsForDateAndKeySummary(deviceId: String, sourceDate: String, keySummary: String)
 
+    @Query(
+        """
+        SELECT DISTINCT raw.sourceDate
+        FROM ppi247_day_raw raw
+        WHERE raw.deviceId = :deviceId
+          AND raw.sourceDate < :cutoffDate
+          AND EXISTS (
+              SELECT 1
+              FROM ppi247_epoch epoch
+              WHERE epoch.sourceDate = raw.sourceDate
+                AND epoch.deviceId = raw.deviceId
+          )
+        ORDER BY raw.sourceDate ASC
+        """
+    )
+    suspend fun getPrunablePpiRawSourceDatesBefore(deviceId: String, cutoffDate: String): List<String>
+
+    @Query("DELETE FROM ppi247_day_raw WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)")
+    suspend fun deletePpiRawRecordsForDates(deviceId: String, sourceDates: List<String>): Int
+
     @Query("DELETE FROM ppi247_epoch WHERE sourceDate IN (:sourceDates)")
     suspend fun deletePpi247EpochsForDates(sourceDates: List<String>)
 

@@ -79,6 +79,27 @@ fun DataScreen(
             MorningSignalSection(activeMorningRead, todayStatus)
         }
         item {
+            SectionCard(title = "Data quality", subtitle = "Morning-read inputs") {
+                DetailRow("State", todayStatus.dataQuality.label)
+                DetailRow(
+                    "Core inputs",
+                    if (todayStatus.dataQuality.missingInputs.isEmpty()) {
+                        "Complete"
+                    } else {
+                        "Missing ${todayStatus.dataQuality.missingInputs.joinToString(", ")}"
+                    }
+                )
+                DetailRow(
+                    "Supporting context",
+                    if (todayStatus.dataQuality.supportingGaps.isEmpty()) {
+                        "No gaps flagged"
+                    } else {
+                        todayStatus.dataQuality.supportingGaps.joinToString(", ")
+                    }
+                )
+            }
+        }
+        item {
             SectionCard(title = "Morning sync", subtitle = "Loop readiness checklist") {
                 SupportText("Use I'm going to bed to mark intended sleep time, then I'm awake when you are ready to mark the day and run the normal Lodestone sync.")
                 DetailRow("Status", todayStatus.title)
