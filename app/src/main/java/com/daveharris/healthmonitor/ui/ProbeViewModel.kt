@@ -223,7 +223,11 @@ class ProbeViewModel(
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
                 firmwareRediscoveryNeeded = false
-                statusMessage = "Manual sync completed."
+                statusMessage = if (result.recoveredMorningPpi) {
+                    "Manual sync recovered PPI after reconnecting to the Loop."
+                } else {
+                    "Manual sync completed."
+                }
             }
         }
     }
@@ -245,7 +249,11 @@ class ProbeViewModel(
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
-                statusMessage = "Awake recorded. Normal sync completed."
+                statusMessage = if (result.recoveredMorningPpi) {
+                    "Awake recorded. PPI recovered after reconnecting to the Loop."
+                } else {
+                    "Awake recorded. Normal sync completed."
+                }
             }
         }
     }

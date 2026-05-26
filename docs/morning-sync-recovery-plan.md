@@ -49,5 +49,12 @@ matching the active connected Loop while the PPI pull is in flight, Lodestone
 records the domain as failed and lets the existing morning retry chain attempt
 the same date range again.
 
+For morning core and morning PPI retry profiles, Lodestone also performs a
+bounded immediate recovery pass if today's PPI epochs are still absent after the
+first sync run. It waits briefly, reconnects with shorter recovery timeouts, and
+re-runs the PPI-only profile under the same sync mutex. If PPI still does not
+arrive, the scheduled retry chain remains the fallback.
+
 The Today screen also shows a short `Stay near Loop` nudge while the morning
-sync is running.
+sync is running, plus a compact connection badge so the user can see whether the
+Loop link is solid, reconnecting, or unavailable.
