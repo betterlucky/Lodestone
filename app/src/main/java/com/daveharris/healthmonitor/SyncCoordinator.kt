@@ -6,6 +6,7 @@ import com.daveharris.healthmonitor.data.SyncRunProfile
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -32,7 +33,7 @@ class SyncCoordinator(
             MorningReadScheduler.cancel(appContext)
         }
         morningReadGuard?.ensureCurrent(appContext)
-        val targetDate = LocalDate.now().toString()
+        val targetDate = morningReadGuard?.targetDate ?: LocalDate.now().toString()
 
         var connectedId = deviceId
         var syncRunId: Long? = null
@@ -70,7 +71,7 @@ class SyncCoordinator(
         } finally {
             // A failed first wake sync should still leave the app with a recovery path.
             if (scheduleMorningRetryIfNeeded) {
-                scheduleMorningReadCheckIfNeeded(connectedId)
+                scheduleMorningReadCheckIfNeeded(connectedId, targetDate)
             }
         }
     }
@@ -136,6 +137,7 @@ class SyncCoordinator(
                     readyTimeoutMs = RECOVERY_READY_TIMEOUT_MS
                 )
             } catch (error: CancellationException) {
+                if (error is TimeoutCancellationException) return@repeat
                 throw error
             } catch (_: Throwable) {
                 return@repeat
@@ -149,6 +151,7 @@ class SyncCoordinator(
                     profile = SyncRunProfile.MORNING_PPI_RETRY
                 ).getOrThrow()
             } catch (error: CancellationException) {
+                if (error is TimeoutCancellationException) return@repeat
                 throw error
             } catch (_: Throwable) {
                 return@repeat
@@ -167,8 +170,7 @@ class SyncCoordinator(
         )
     }
 
-    private suspend fun scheduleMorningReadCheckIfNeeded(deviceId: String) {
-        val targetDate = LocalDate.now().toString()
+    private suspend fun scheduleMorningReadCheckIfNeeded(deviceId: String, targetDate: String) {
         if (repository.hasSleepRecordForDate(targetDate)) {
             MorningReadScheduler.cancel(appContext)
         } else if (repository.hasPpiRecordForDate(targetDate)) {
