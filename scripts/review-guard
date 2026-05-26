@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ -n "${REVIEW_GUARD_RUNNER:-}" ]; then
+  RUNNER="$REVIEW_GUARD_RUNNER"
+elif [ -f "$HOME/.codex/skills/review-guard/scripts/review_guard.py" ]; then
+  RUNNER="$HOME/.codex/skills/review-guard/scripts/review_guard.py"
+elif [ -f "$HOME/.claude/skills/review-guard/scripts/review_guard.py" ]; then
+  RUNNER="$HOME/.claude/skills/review-guard/scripts/review_guard.py"
+else
+  RUNNER="/Users/daveharris/dev/Kanban/skills/review-guard/scripts/review_guard.py"
+fi
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/review-guard <command> [options]
+
+Commands:
+  doctor              Validate .codex/review-guard.json
+  run [--dry-run]     Run configured local verification commands
+  review [options]    Run the shared multi-review guard
+
+Compatibility:
+  Passing review options directly, such as --context or --lock-status,
+  is treated as `review <options>`.
+USAGE
+}
+
+if [ ! -f "$RUNNER" ]; then
+  echo "review-guard runner not found: $RUNNER" >&2
+  echo "Set REVIEW_GUARD_RUNNER or install the Kanban review-guard skill." >&2
+  exit 1
+fi
+
+if [ "$#" -eq 0 ]; then
+  usage
+  exit 0
+fi
+
+case "$1" in
+  -h|--help)
+    usage
+    ;;
+  doctor|run|review)
+    exec python3 "$RUNNER" "$@"
+    ;;
+  --range|--staged|--unstaged|--context|--output-dir|--settle-seconds|--lock-timeout|--review-timeout|--gemini-timeout|--max-chars|--lock-status|--clear-stale-lock|--skip-local|--skip-gemini)
+    exec python3 "$RUNNER" review "$@"
+    ;;
+  *)
+    echo "unknown review-guard command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
