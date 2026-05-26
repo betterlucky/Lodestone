@@ -19,6 +19,9 @@ import com.polar.sdk.api.model.sleep.PolarNightlyRechargeData
 import com.polar.sdk.api.model.sleep.PolarSleepData
 import com.polar.sdk.api.model.PolarSkinTemperatureData
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +34,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -1191,7 +1195,13 @@ class ProbeRepository(
         val requestedRange = "$from..$to"
         try {
             val result = withTimeout(timeoutMs) {
-                block(from to to)
+                if (domain == ProbeDomain.PPI_247) {
+                    runWhileDeviceConnected(deviceId, domain) {
+                        block(from to to)
+                    }
+                } else {
+                    block(from to to)
+                }
             }
             dao.insertSyncDomainResult(
                 SyncDomainResultEntity(
@@ -1235,6 +1245,51 @@ class ProbeRepository(
             )
             return error
         }
+    }
+
+    private suspend fun <T> runWhileDeviceConnected(
+        deviceId: String,
+        domain: ProbeDomain,
+        block: suspend () -> T
+    ): T {
+        if (!runtimeState.value.isConnectedTo(deviceId)) {
+            throw DeviceDisconnectedDuringSyncException(domain)
+        }
+        return coroutineScope {
+            val operation = async { block() }
+            val disconnect = async<T> {
+                runtimeState.first { runtime -> !runtime.isConnectedTo(deviceId) }
+                throw DeviceDisconnectedDuringSyncException(domain)
+            }
+            try {
+                select {
+                    operation.onAwait { result ->
+                        disconnect.cancel()
+                        result
+                    }
+                    disconnect.onAwait { result ->
+                        operation.cancel()
+                        result
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } finally {
+                disconnect.cancel()
+                if (!operation.isCompleted) {
+                    operation.cancel()
+                }
+            }
+        }
+    }
+
+    private fun com.daveharris.healthmonitor.polar.DeviceRuntimeState.isConnectedTo(deviceId: String): Boolean {
+        val device = connectedDevice ?: return false
+        return connectionPhase == "connected" &&
+            (
+                device.deviceId.equals(deviceId, ignoreCase = true) ||
+                    device.address.equals(deviceId, ignoreCase = true)
+                )
     }
 
     private suspend fun persistSleep(deviceId: String, data: List<PolarSleepData>, requestedRange: String) {
@@ -2633,6 +2688,9 @@ private data class SyncDomainFailure(
     val domain: ProbeDomain,
     val error: Throwable
 )
+
+private class DeviceDisconnectedDuringSyncException(domain: ProbeDomain) :
+    IllegalStateException("${domain.name} sync interrupted: Loop connection was lost. Keep the phone near the Loop; Lodestone will retry.")
 
 private const val SOFT_STORAGE_MAINTENANCE_USED_PERCENT = 70.0
 private const val HARD_STORAGE_MAINTENANCE_USED_PERCENT = 85.0

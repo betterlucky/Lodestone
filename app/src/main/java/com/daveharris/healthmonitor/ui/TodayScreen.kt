@@ -90,6 +90,7 @@ fun DataScreen(
                 DetailRow("Final Loop sleep report", todayStatus.sleepReport)
                 DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
                 SupportText(todayStatus.message)
+                todayStatus.connectionPrompt?.let { SupportText(it) }
                 SupportText("PPI may arrive before the final Loop sleep report. Lodestone can show a provisional read from your bed/wake markers and calibrated PPI, then replace it with the confirmed read when the final report resolves.")
                 ButtonRow {
                     OutlinedButton(
