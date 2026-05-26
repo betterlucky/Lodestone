@@ -48,6 +48,10 @@ object MorningReadScheduler {
     fun fromWireName(value: String?): MorningRetryStage? =
         MorningRetryStage.entries.firstOrNull { it.name == value }
 
+    fun scheduledTargetDate(context: Context): String? =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(TARGET_DATE, null)
+
     private fun scheduleRetry(
         context: Context,
         targetDate: String,
@@ -64,7 +68,7 @@ object MorningReadScheduler {
             AlarmManager.RTC_WAKEUP,
             triggerAtMs,
             windowMs(stage),
-            pendingIntent(context, deviceId, generation, stage, clampedAttempt)
+            pendingIntent(context, targetDate, deviceId, generation, stage, clampedAttempt)
         )
         prefs.edit()
             .putLong(NEXT_CHECK_EPOCH_MS, triggerAtMs)
@@ -82,6 +86,7 @@ object MorningReadScheduler {
         alarmManager.cancel(
             pendingIntent(
                 context = context,
+                targetDate = prefs.getString(TARGET_DATE, null),
                 deviceId = null,
                 generation = prefs.getLong(GENERATION, 0L),
                 stage = MorningRetryStage.PPI,
@@ -129,6 +134,7 @@ object MorningReadScheduler {
 
     private fun pendingIntent(
         context: Context,
+        targetDate: String?,
         deviceId: String?,
         generation: Long,
         stage: MorningRetryStage,
@@ -137,6 +143,7 @@ object MorningReadScheduler {
         val intent = Intent(context, ProbeCommandReceiver::class.java).apply {
             putExtra(ProbeCommandReceiver.EXTRA_COMMAND, "morning_read_check")
             deviceId?.let { putExtra(ProbeCommandReceiver.EXTRA_DEVICE_ID, it) }
+            targetDate?.let { putExtra(ProbeCommandReceiver.EXTRA_MORNING_TARGET_DATE, it) }
             putExtra(ProbeCommandReceiver.EXTRA_MORNING_READ_GENERATION, generation)
             putExtra(ProbeCommandReceiver.EXTRA_MORNING_RETRY_STAGE, stage.name)
             putExtra(ProbeCommandReceiver.EXTRA_MORNING_RETRY_ATTEMPT, attempt)

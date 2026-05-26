@@ -379,10 +379,14 @@ fun morningReadBasisLabel(
             "Provisional calibrated sleep window + PPI"
         morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_pending_sleep_report" ->
             "Provisional manual sleep window + PPI"
+        morningRead?.overnightAutonomicSource == "raw_ppi_inferred_window_pending_sleep_report" ->
+            "Provisional PPI-inferred sleep window"
         morningRead?.overnightAutonomicSource == "raw_ppi_calibrated_window_primary_with_sleep_report" ->
             "Calibrated sleep window + PPI, Loop report as context"
         morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_primary_with_sleep_report" ->
             "Manual sleep window + PPI, Loop report as context"
+        morningRead?.overnightAutonomicSource == "raw_ppi_inferred_window_primary_with_sleep_report" ->
+            "PPI-inferred sleep window, Loop report as context"
         morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
             "Confirmed Loop sleep report + aligned PPI"
         morningRead?.sleepDataReady == true ->
@@ -411,8 +415,10 @@ private fun autonomicSourceDisplayLabel(source: String): String =
         "ppi247_sleep_window" -> "24/7 PPI aligned to sleep"
         "raw_ppi_calibrated_window_pending_sleep_report" -> "24/7 PPI, calibrated provisional window"
         "raw_ppi_manual_window_pending_sleep_report" -> "24/7 PPI, manual provisional window"
+        "raw_ppi_inferred_window_pending_sleep_report" -> "24/7 PPI, inferred provisional window"
         "raw_ppi_calibrated_window_primary_with_sleep_report" -> "24/7 PPI, calibrated primary window"
         "raw_ppi_manual_window_primary_with_sleep_report" -> "24/7 PPI, manual primary window"
+        "raw_ppi_inferred_window_primary_with_sleep_report" -> "24/7 PPI, inferred primary window"
         "raw_ppi_pending_manual_sleep_window" -> "24/7 PPI, waiting for bedtime marker"
         "raw_ppi_pending_sleep_window" -> "24/7 PPI, waiting for final sleep window"
         "nightly_recharge_summary" -> "Nightly Recharge summary"

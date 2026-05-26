@@ -14,6 +14,8 @@ import com.daveharris.healthmonitor.HealthMonitorApp
 import com.daveharris.healthmonitor.MorningReadScheduler
 import com.daveharris.healthmonitor.SyncCommandWorker
 import com.daveharris.healthmonitor.SyncCoordinator
+import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
+import com.daveharris.healthmonitor.sleepTargetDateForBedtime
 import com.daveharris.healthmonitor.data.DailyReviewRepository
 import com.daveharris.healthmonitor.data.DeviceProfileEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
@@ -260,7 +262,7 @@ class ProbeViewModel(
 
     fun retryFinalSleepReport() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
-        val today = LocalDate.now().toString()
+        val today = currentLodestoneDate()
         val remainingMs = sleepReportRetryCooldownUntilEpochMs - System.currentTimeMillis()
         if (remainingMs > 0L) {
             statusMessage = "Sleep report retry is cooling down. Try again in about ${remainingMinutes(remainingMs)}m."
@@ -304,7 +306,7 @@ class ProbeViewModel(
     }
 
     fun markGoingToBed() {
-        val today = LocalDate.now().toString()
+        val today = sleepTargetDateForBedtime().toString()
         viewModelScope.launch {
             runBusyAction("Recording bedtime marker…") {
                 repository.recordWakeMarker(
@@ -347,11 +349,14 @@ class ProbeViewModel(
     }
 
     fun setCheckInDateToToday() {
-        selectCheckInDate(LocalDate.now().toString())
+        selectCheckInDate(currentLodestoneDate())
     }
 
     fun setCheckInDateToYesterday() {
-        selectCheckInDate(LocalDate.now().minusDays(1).toString())
+        selectCheckInDate(
+            runCatching { LocalDate.parse(currentLodestoneDate()).minusDays(1).toString() }
+                .getOrElse { LocalDate.now().minusDays(1).toString() }
+        )
     }
 
     fun resetSelectedReviewDate() {
@@ -361,7 +366,7 @@ class ProbeViewModel(
             return
         }
         viewModelScope.launch {
-            if (date == LocalDate.now().toString()) {
+            if (date == currentLodestoneDate()) {
                 runBusyAction("Resetting today…") {
                     eveningOutcomeDraft = null
                     approachToDayDraft = null
@@ -659,6 +664,12 @@ class ProbeViewModel(
             currentDailyWeight = dailyReviewRepository.getDailyWeight(date)
         }
     }
+
+    fun currentLodestoneDate(): String =
+        resolveLodestoneDisplayDate(
+            latestMorningReadSourceDate = morningRead.value?.sourceDate,
+            wakeMarkers = recentWakeMarkers.value
+        ).sourceDate
 
     companion object {
         private const val SETTINGS_PREFS_NAME = "lodestone_settings_tools"
