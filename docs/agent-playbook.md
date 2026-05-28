@@ -125,7 +125,10 @@ Default local endpoint:
 scripts/ask_local_model.py --prompt "Question here"
 ```
 
-The script defaults to `http://127.0.0.1:8000/v1`, model `Qwen3-8B-MLX-4bit`, and API key `5555`. Override with `LOCAL_MODEL_BASE_URL`, `LOCAL_MODEL_NAME`, or `LOCAL_MODEL_API_KEY`.
+The script delegates to the shared review-guard model sidecar. It defaults to
+`http://127.0.0.1:8000/v1`, dynamically selects from available local models
+unless `LOCAL_MODEL_NAME` is set, and uses API key `5555`. Override with
+`LOCAL_MODEL_BASE_URL`, `LOCAL_MODEL_NAME`, or `LOCAL_MODEL_API_KEY`.
 
 Keep local calls small:
 
