@@ -43,6 +43,7 @@ enum class SyncRunProfile(
     val runNotes: String,
     val successNotes: String
 ) {
+    CHECK_IN("check-in sync", "check-in sync completed"),
     MORNING_CORE("morning core sync", "morning core sync completed"),
     MORNING_PPI_RETRY("morning PPI retry sync", "morning PPI retry completed"),
     MORNING_SLEEP_RETRY("morning sleep report retry sync", "morning sleep report retry completed"),
@@ -79,6 +80,28 @@ enum class TrafficLightStatus {
     OK,
     UNSTEADY,
     CRASH
+}
+
+object SleepEpisodeKinds {
+    const val MAIN_SLEEP = "main_sleep"
+    const val NAP = "nap"
+    const val REST_CANDIDATE = "rest_candidate"
+    const val NO_SLEEP = "no_sleep"
+}
+
+object SleepEpisodeSources {
+    const val MANUAL = "manual"
+    const val EDITED = "edited"
+    const val PPI_INFERRED = "ppi_inferred"
+    const val POLAR_SLEEP = "polar_sleep"
+    const val MIXED = "mixed"
+}
+
+object SleepEpisodeConfidences {
+    const val USER_CONFIRMED = "user_confirmed"
+    const val HIGH = "high"
+    const val MEDIUM = "medium"
+    const val LOW = "low"
 }
 
 const val PARSER_VERSION = 3

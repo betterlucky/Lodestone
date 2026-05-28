@@ -193,6 +193,7 @@ fun ProbeApp(
                                             morningRead = morningRead,
                                             syncRuns = syncRuns,
                                             wakeMarkers = recentWakeMarkers,
+                                            dailyCheckIns = dailyCheckIns,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }

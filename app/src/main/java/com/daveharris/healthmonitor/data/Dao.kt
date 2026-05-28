@@ -28,6 +28,45 @@ interface ProbeDao {
     suspend fun insertMorningPredictionSnapshot(entity: MorningPredictionSnapshotEntity): Long
 
     @Insert
+    suspend fun insertSleepEpisode(entity: SleepEpisodeEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertSleepEpisodes(entities: List<SleepEpisodeEntity>)
+
+    @Update
+    suspend fun updateSleepEpisode(entity: SleepEpisodeEntity)
+
+    @Query("DELETE FROM sleep_episode WHERE id = :id")
+    suspend fun deleteSleepEpisode(id: Long)
+
+    @Query(
+        """
+        DELETE FROM sleep_episode
+        WHERE sourceDate = :sourceDate
+          AND source = :source
+          AND isPrimaryForReadiness = 0
+          AND confidence != :confirmedConfidence
+        """
+    )
+    suspend fun deleteUnconfirmedSleepEpisodeCandidatesForDate(
+        sourceDate: String,
+        source: String,
+        confirmedConfidence: String
+    )
+
+    @Query("SELECT * FROM sleep_episode WHERE sourceDate = :sourceDate ORDER BY startEpochMs ASC, id ASC")
+    suspend fun getSleepEpisodesForDate(sourceDate: String): List<SleepEpisodeEntity>
+
+    @Query("SELECT * FROM sleep_episode WHERE sourceDate = :sourceDate AND isPrimaryForReadiness = 1 ORDER BY updatedAtEpochMs DESC, id DESC LIMIT 1")
+    suspend fun getPrimarySleepEpisodeForDate(sourceDate: String): SleepEpisodeEntity?
+
+    @Query("SELECT * FROM sleep_episode WHERE sourceDate = :sourceDate ORDER BY startEpochMs ASC, id ASC")
+    fun observeSleepEpisodesForDate(sourceDate: String): Flow<List<SleepEpisodeEntity>>
+
+    @Query("SELECT * FROM sleep_episode ORDER BY COALESCE(startEpochMs, updatedAtEpochMs) DESC LIMIT 100")
+    fun observeRecentSleepEpisodes(): Flow<List<SleepEpisodeEntity>>
+
+    @Insert
     suspend fun insertWakeMarker(entity: WakeMarkerEntity): Long
 
     @Query(
@@ -384,6 +423,33 @@ interface ProbeDao {
                    'morning_prediction_snapshot' AS domain
             FROM morning_prediction_snapshot
             UNION ALL
+            SELECT COALESCE(deviceId, '') AS deviceId, sourceDate, '-' AS requestedRange, updatedAtEpochMs AS syncTimestampEpochMs,
+                   ('episode=' || episodeKind ||
+                    ', source=' || source ||
+                    ', confidence=' || confidence ||
+                    CASE WHEN isPrimaryForReadiness THEN ', primary=true' ELSE '' END ||
+                    CASE WHEN notes IS NOT NULL AND notes != '' THEN ', notes=' || notes ELSE '' END) AS keySummary,
+                   json_object(
+                       'id', id,
+                       'sourceDate', sourceDate,
+                       'startEpochMs', startEpochMs,
+                       'endEpochMs', endEpochMs,
+                       'episodeKind', episodeKind,
+                       'source', source,
+                       'confidence', confidence,
+                       'isPrimaryForReadiness', isPrimaryForReadiness,
+                       'deviceId', deviceId,
+                       'linkedSleepRawId', linkedSleepRawId,
+                       'evidence', evidenceJson,
+                       'notes', notes,
+                       'createdAtEpochMs', createdAtEpochMs,
+                       'updatedAtEpochMs', updatedAtEpochMs
+                   ) AS rawPayloadJson,
+                   1 AS parserVersion,
+                   'DERIVED' AS parseStatus,
+                   'sleep_episode' AS domain
+            FROM sleep_episode
+            UNION ALL
             SELECT '' AS deviceId, sourceDate, '-' AS requestedRange, markerEpochMs AS syncTimestampEpochMs,
                    ('marker=' || markerSource ||
                     CASE WHEN deviceId IS NOT NULL THEN ', device=' || deviceId ELSE '' END ||
@@ -463,6 +529,8 @@ interface ProbeDao {
         SELECT sourceDate FROM sleep_night_raw WHERE sourceDate IS NOT NULL
         UNION
         SELECT sourceDate FROM nightly_recharge_raw WHERE sourceDate IS NOT NULL
+        UNION
+        SELECT sourceDate FROM sleep_episode
         UNION
         SELECT sourceDate FROM ppi247_epoch
         ORDER BY sourceDate ASC

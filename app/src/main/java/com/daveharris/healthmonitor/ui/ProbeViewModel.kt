@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import kotlin.math.ceil
 
 class ProbeViewModel(
@@ -229,6 +230,63 @@ class ProbeViewModel(
                     "Manual sync recovered PPI after reconnecting to the Loop."
                 } else {
                     "Manual sync completed."
+                }
+            }
+        }
+    }
+
+    fun runCheckInSync() {
+        val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
+        val today = currentLodestoneDate()
+        selectCheckInDate(today)
+        viewModelScope.launch {
+            runBusyAction("Checking in…") {
+                SyncCommandWorker.cancelBulkWork(getApplication())
+                val result = syncCoordinator.runSync(
+                    deviceId = deviceId,
+                    config = syncWindowConfig,
+                    profile = SyncRunProfile.CHECK_IN
+                )
+                selectedDeviceId = result.connectedDeviceId
+                persistAppSettings()
+                firmwareRediscoveryNeeded = false
+                val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(today))
+                statusMessage = if (result.recoveredMorningPpi) {
+                    "Check-in sync recovered PPI after reconnecting to the Loop.${candidateCount.sleepCandidateSuffix()}"
+                } else {
+                    "Check-in sync completed.${candidateCount.sleepCandidateSuffix()}"
+                }
+            }
+        }
+    }
+
+    fun runCatchUpSync() {
+        val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
+        val today = currentLodestoneDate()
+        val sourceDates = catchUpSourceDates(today)
+        selectCheckInDate(today)
+        viewModelScope.launch {
+            runBusyAction("Catching up…") {
+                SyncCommandWorker.cancelBulkWork(getApplication())
+                val catchUpConfig = syncWindowConfig.copy(
+                    sleepDays = syncWindowConfig.sleepDays.coerceAtLeast(14),
+                    nightlyRechargeDays = syncWindowConfig.nightlyRechargeDays.coerceAtLeast(14),
+                    hrDays = syncWindowConfig.hrDays.coerceAtLeast(7),
+                    ppiDays = syncWindowConfig.ppiDays.coerceAtLeast(7)
+                )
+                val result = syncCoordinator.runSync(
+                    deviceId = deviceId,
+                    config = catchUpConfig,
+                    profile = SyncRunProfile.CHECK_IN
+                )
+                selectedDeviceId = result.connectedDeviceId
+                persistAppSettings()
+                firmwareRediscoveryNeeded = false
+                val candidateCount = refreshInferredSleepEpisodeCandidates(sourceDates)
+                statusMessage = if (result.recoveredMorningPpi) {
+                    "Catch-up sync recovered PPI after reconnecting to the Loop.${candidateCount.sleepCandidateSuffix()}"
+                } else {
+                    "Catch-up sync completed.${candidateCount.sleepCandidateSuffix()}"
                 }
             }
         }
@@ -671,10 +729,36 @@ class ProbeViewModel(
             wakeMarkers = recentWakeMarkers.value
         ).sourceDate
 
+    private suspend fun refreshInferredSleepEpisodeCandidates(sourceDates: List<String>): Int =
+        sourceDates.distinct().sumOf { sourceDate ->
+            repository.refreshInferredSleepEpisodeCandidatesForDate(sourceDate)
+        }
+
+    private fun catchUpSourceDates(today: String): List<String> {
+        val todayDate = runCatching { LocalDate.parse(today) }.getOrNull() ?: return listOf(today)
+        val latestReadDate = morningRead.value?.sourceDate
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+        val startDate = latestReadDate
+            ?.plusDays(1)
+            ?.takeIf { !it.isAfter(todayDate) }
+            ?: todayDate
+        val days = ChronoUnit.DAYS.between(startDate, todayDate).coerceAtLeast(0L)
+        return (0..days.coerceAtMost(MAX_CATCH_UP_CANDIDATE_DAYS - 1L))
+            .map { offset -> startDate.plusDays(offset).toString() }
+    }
+
+    private fun Int.sleepCandidateSuffix(): String =
+        if (this > 0) {
+            " Found $this sleep/rest candidate${if (this == 1) "" else "s"}."
+        } else {
+            " No sleep/rest candidates found yet."
+        }
+
     companion object {
         private const val SETTINGS_PREFS_NAME = "lodestone_settings_tools"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_UNTIL = "sleep_report_retry_cooldown_until"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_MS = 30 * 60 * 1000L
+        private const val MAX_CATCH_UP_CANDIDATE_DAYS = 7L
 
         private fun loadSleepReportRetryCooldown(context: Context): Long =
             context

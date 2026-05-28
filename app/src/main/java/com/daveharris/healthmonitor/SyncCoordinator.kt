@@ -199,7 +199,9 @@ data class SyncCoordinatorResult(
 )
 
 private fun SyncRunProfile.needsMorningPpi(): Boolean =
-    this == SyncRunProfile.MORNING_CORE || this == SyncRunProfile.MORNING_PPI_RETRY
+    this == SyncRunProfile.CHECK_IN ||
+        this == SyncRunProfile.MORNING_CORE ||
+        this == SyncRunProfile.MORNING_PPI_RETRY
 
 private fun DeviceRuntimeState.matchesConnectedDevice(deviceId: String): Boolean {
     val device = connectedDevice

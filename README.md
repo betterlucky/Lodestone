@@ -1,24 +1,25 @@
 # Lodestone
 
 Lodestone is an Android-first personal health-monitoring prototype for pacing,
-recovery tracking, and morning/evening reflection. It is currently a research
+recovery tracking, and current-condition reflection. It is currently a research
 project rather than a polished consumer app: the goal is to find out which
 wearable signals are genuinely useful before pretending we have a finished
 model.
 
 The project grew out of a practical question: can a relatively simple wearable
-workflow provide an early, interpretable read on how cautiously to approach the
-day, especially when vendor apps expose scores but hide much of the underlying
-physiology?
+workflow provide an early, interpretable read on how cautiously to approach what
+comes next, especially when vendor apps expose scores but hide much of the
+underlying physiology?
 
 ## What It Does Today
 
 - Syncs directly with a Polar Loop / Polar 360-class device over the Polar BLE
   SDK.
-- Stores local raw and derived lanes for sleep, Nightly Recharge, `PPI_247`,
-  `HR_247`, skin temperature, daily summaries, and activity context.
-- Produces an interim morning signal from raw PPI plus user sleep/wake markers,
-  then a confirmed morning read once the final Polar sleep report is available.
+- Stores local raw and derived lanes for sleep/rest episodes, Nightly Recharge,
+  `PPI_247`, `HR_247`, skin temperature, daily summaries, and activity context.
+- Produces a readiness signal from raw PPI plus manual or inferred sleep/rest
+  windows, with Polar sleep reports kept as supporting context rather than the
+  canonical gate.
 - Shows an overnight HRV trajectory view with raw RMSSD, rolling-median, and
   linear-trend overlays.
 - Captures daily review labels such as evening outcome, approach to the day,
@@ -34,10 +35,10 @@ These are project findings, not general medical claims:
 - Polar's normal `PPI_247` feed can provide the raw overnight autonomic lane we
   originally thought was missing, but device timing and sync behaviour need to
   be handled carefully.
-- Vendor sleep finalisation can lag wake time, so a useful morning UX should not
-  require waiting for the final sleep report before showing anything.
-- A provisional sleep window based on bedtime/wake markers plus a sustained
-  low-motion HR drop appears promising enough to use while the final report is
+- Vendor sleep finalisation can lag wake time, so a useful readiness UX should
+  not require waiting for the final sleep report before showing anything.
+- A provisional sleep/rest window based on markers plus sustained low-motion HR
+  drop appears promising enough to propose candidates while the final report is
   pending.
 - Polar Flow is still useful for firmware and sleep-report workflows, but it
   competes for the Loop's single BLE connection. Lodestone therefore treats Flow
@@ -56,13 +57,15 @@ More detail lives in:
 
 ## Daily Workflow
 
-The intended low-friction flow is:
+The intended low-friction flow is moving toward:
 
-1. Mark bedtime with `I'm going to bed`.
-2. On waking, tap `I'm awake` to record wake time and run the morning sync.
-3. Use the provisional or confirmed morning signal as a pacing prompt, not as a
-   diagnosis.
-4. At day's end, record the subjective outcome and optional context.
+1. Use `Check in` to sync and assess the current situation without implying a
+   sleep/wake event.
+2. Use `I'm going to bed` and `I'm awake` when those explicit markers are useful.
+3. Use `Catch up` when Lodestone detects stale syncs, missing markers, or
+   unresolved sleep/rest candidates.
+4. Use the readiness/stability signal as a pacing prompt, not as a diagnosis.
+5. At day's end, record the subjective outcome and optional context.
 
 The evening labels are deliberately important. The model is still being trained
 against lived outcomes rather than treated as proven because a graph looked
@@ -110,7 +113,7 @@ health product.
 
 Still in progress:
 
-- collecting enough paired morning-prediction/evening-outcome data to judge the
+- collecting enough paired readiness/evening-outcome data to judge the
   model honestly
 - deciding which food, weight, and context variables are genuinely useful
 - refining the daily UX now that the exploratory probe phase is mostly over
