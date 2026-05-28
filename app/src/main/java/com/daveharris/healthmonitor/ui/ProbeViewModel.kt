@@ -245,7 +245,8 @@ class ProbeViewModel(
                 val result = syncCoordinator.runSync(
                     deviceId = deviceId,
                     config = syncWindowConfig,
-                    profile = SyncRunProfile.CHECK_IN
+                    profile = SyncRunProfile.CHECK_IN,
+                    lodestoneTargetDate = today
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
@@ -277,7 +278,8 @@ class ProbeViewModel(
                 val result = syncCoordinator.runSync(
                     deviceId = deviceId,
                     config = catchUpConfig,
-                    profile = SyncRunProfile.CHECK_IN
+                    profile = SyncRunProfile.CHECK_IN,
+                    lodestoneTargetDate = today
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
@@ -305,7 +307,8 @@ class ProbeViewModel(
                     profile = SyncRunProfile.MORNING_CORE,
                     scheduleMorningRetryIfNeeded = true,
                     cancelMorningRetryFirst = true,
-                    wakeMarkerNotes = "I’m awake button"
+                    wakeMarkerNotes = "I’m awake button",
+                    lodestoneTargetDate = today
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
@@ -337,7 +340,8 @@ class ProbeViewModel(
                 val result = syncCoordinator.runSync(
                     deviceId = deviceId,
                     config = syncWindowConfig,
-                    profile = SyncRunProfile.MORNING_SLEEP_RETRY
+                    profile = SyncRunProfile.MORNING_SLEEP_RETRY,
+                    lodestoneTargetDate = today
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
@@ -742,9 +746,11 @@ class ProbeViewModel(
             ?.plusDays(1)
             ?.takeIf { !it.isAfter(todayDate) }
             ?: todayDate
-        val days = ChronoUnit.DAYS.between(startDate, todayDate).coerceAtLeast(0L)
-        return (0..days.coerceAtMost(MAX_CATCH_UP_CANDIDATE_DAYS - 1L))
-            .map { offset -> startDate.plusDays(offset).toString() }
+        val trailingDays = ChronoUnit.DAYS.between(startDate, todayDate)
+            .coerceAtLeast(0L)
+            .coerceAtMost(MAX_CATCH_UP_CANDIDATE_DAYS - 1L)
+        return (trailingDays downTo 0L)
+            .map { offset -> todayDate.minusDays(offset).toString() }
     }
 
     private fun Int.sleepCandidateSuffix(): String =

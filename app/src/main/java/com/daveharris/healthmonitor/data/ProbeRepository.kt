@@ -2837,12 +2837,7 @@ class ProbeRepository(
     ): SleepEpisodeEntity {
         val durationMs = endEpochMs - startEpochMs
         val isRestCandidate = source == RAW_PPI_REST_CANDIDATE_SOURCE || durationMs < MIN_INFERRED_SLEEP_WINDOW_MS
-        val episodeSource = when {
-            source == RAW_PPI_REST_CANDIDATE_SOURCE -> SleepEpisodeSources.PPI_INFERRED
-            source == "raw_ppi_inferred_window_pending_sleep_report" -> SleepEpisodeSources.PPI_INFERRED
-            source == "raw_ppi_manual_window_pending_sleep_report" -> SleepEpisodeSources.MANUAL
-            else -> SleepEpisodeSources.MIXED
-        }
+        val episodeSource = SleepEpisodeSources.PPI_INFERRED
         val confidence = when {
             hasExplicitWakeMarker -> SleepEpisodeConfidences.MEDIUM
             durationMs >= MIN_INFERRED_SLEEP_WINDOW_MS -> SleepEpisodeConfidences.MEDIUM

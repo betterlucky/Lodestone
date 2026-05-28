@@ -59,12 +59,14 @@ More detail lives in:
 
 The intended low-friction flow is moving toward:
 
-1. Use `Check in` to sync and assess the current situation without implying a
+1. Run `Check in` to sync and assess the current situation without implying a
    sleep/wake event.
-2. Use `I'm going to bed` and `I'm awake` when those explicit markers are useful.
-3. Use `Catch up` when Lodestone detects stale syncs, missing markers, or
+2. Record sleep/wake events with `I'm going to bed` and `I'm awake` when those
+   explicit markers are useful.
+3. Run `Catch up` when Lodestone detects stale syncs, missing markers, or
    unresolved sleep/rest candidates.
-4. Use the readiness/stability signal as a pacing prompt, not as a diagnosis.
+4. Interpret the readiness/stability signal as a pacing prompt, not as a
+   diagnosis.
 5. At day's end, record the subjective outcome and optional context.
 
 The evening labels are deliberately important. The model is still being trained

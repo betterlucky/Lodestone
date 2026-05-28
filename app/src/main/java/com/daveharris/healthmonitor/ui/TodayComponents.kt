@@ -98,11 +98,14 @@ fun todayReadinessStatus(
     val latestRealMarker = wakeMarkers
         .filterNot { it.notes == "manual awake command" }
         .maxByOrNull { it.markerEpochMs }
-    val latestMorningSync = syncRuns
-        .filter { it.notes?.contains("morning", ignoreCase = true) == true }
+    val latestReadinessSync = syncRuns
+        .filter {
+            it.notes?.contains("morning", ignoreCase = true) == true ||
+                it.notes?.contains("check-in", ignoreCase = true) == true
+        }
         .maxByOrNull { it.startedAtEpochMs }
     val isSleeping = latestRealMarker?.markerSource == "manual_going_to_bed"
-    val syncRunning = isBusy || latestMorningSync?.status == "running"
+    val syncRunning = isBusy || latestReadinessSync?.status == "running"
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
     val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
         relevantMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
