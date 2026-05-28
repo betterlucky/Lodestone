@@ -6,10 +6,12 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 
 ## Product Shape
 
-- Lodestone is a personal health-monitoring prototype for daily pacing, recovery tracking, and morning/evening reflection.
+- Lodestone is a personal health-monitoring prototype for daily pacing, recovery tracking, and current-condition reflection.
 - The app is currently Android-first and Kotlin/Compose-based.
 - The primary daily flow is intended to be low-friction:
-  - wake / sync / morning read
+  - Check in / sync / readiness read
+  - optional explicit sleep and wake markers
+  - Catch up when stale syncs, missed markers, or unresolved sleep/rest candidates need repair
   - optional food-log import
   - evening review with outcome, approach-to-day, notes, and muscle weakness flag
 - The app should avoid becoming a general quantified-self dashboard unless a metric has plausible pacing/recovery value.
@@ -28,6 +30,9 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 - The Loop can expose useful `PPI_247` data, but availability has appeared inconsistent across sync timing/device state.
 - Do not assume missing PPI means the device cannot record it; first check sync timing, date windows, and whether Flow/device processing has completed.
 - Sleep and Nightly Recharge data may appear after device-side processing delay.
+- Polar Sleep is now best treated as supporting/vendor context rather than the
+  canonical readiness gate. Raw PPI plus manual or inferred sleep/rest episodes
+  should become the primary local readiness basis.
 - Flow sync often appears to make sleep reports available, but at least one test suggested Lodestone-only sync can eventually retrieve resolved sleep data too.
 - The current hypothesis is not fully settled:
   - the Loop likely does some processing locally
@@ -42,10 +47,12 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 
 ## Polar Data Lanes
 
-- `PPI_247` belongs in the real autonomic lane if present for the sleep window.
+- `PPI_247` belongs in the real autonomic lane if present for accepted or
+  inferred sleep/rest windows.
 - `HR_247` is useful context but is not a substitute for PPI/HRV.
-- Nightly Recharge remains useful as a semi-derived overnight autonomic lane.
-- Sleep structure, sleep timing, respiration, skin temperature, and previous-day context are useful supporting lanes.
+- Nightly Recharge remains useful as a semi-derived supporting autonomic lane.
+- Sleep structure, vendor sleep timing, respiration, skin temperature, and
+  previous-day context are useful supporting lanes.
 - Offline PPI/PPG recording was valuable as an investigation route, but is not part of the normal workflow now.
 - Offline recording docs and code may be archived for future reference, but should not clutter the live daily UI.
 
@@ -195,9 +202,9 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 
 ## Near-Term Next Checks
 
-- Confirm next pure Lodestone morning sync behaviour without Flow interference.
+- Confirm next pure Lodestone Check in sync behaviour without Flow interference.
 - Continue watching whether Loop PPI/sleep data appears reliably after processing delay.
 - Run another Health Connect export after force-stopping Sleep2 before an H10 night.
 - Decide whether Sleep2 data is retrievable enough to matter or only useful as screenshot/manual calibration.
-- Keep collecting paired morning/evening subjective ratings before revisiting model weights seriously.
+- Keep collecting paired readiness/evening subjective ratings before revisiting model weights seriously.
 - Revisit UX polish when data collection feels stable.

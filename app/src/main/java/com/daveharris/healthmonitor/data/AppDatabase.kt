@@ -28,12 +28,13 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AppSettingsEntity::class,
         DailyCheckInEntity::class,
         MorningPredictionSnapshotEntity::class,
+        SleepEpisodeEntity::class,
         WakeMarkerEntity::class,
         FoodDailySummaryEntity::class,
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -331,6 +332,35 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS sleep_episode (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        startEpochMs INTEGER,
+                        endEpochMs INTEGER,
+                        episodeKind TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        confidence TEXT NOT NULL,
+                        isPrimaryForReadiness INTEGER NOT NULL,
+                        deviceId TEXT,
+                        linkedSleepRawId INTEGER,
+                        evidenceJson TEXT,
+                        notes TEXT,
+                        createdAtEpochMs INTEGER NOT NULL,
+                        updatedAtEpochMs INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sleep_episode_sourceDate ON sleep_episode(sourceDate)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sleep_episode_startEpochMs ON sleep_episode(startEpochMs)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sleep_episode_sourceDate_isPrimaryForReadiness ON sleep_episode(sourceDate, isPrimaryForReadiness)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sleep_episode_episodeKind ON sleep_episode(episodeKind)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -348,7 +378,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_16_17,
             MIGRATION_17_18,
             MIGRATION_18_19,
-            MIGRATION_19_20
+            MIGRATION_19_20,
+            MIGRATION_20_21
         )
             .build()
     }

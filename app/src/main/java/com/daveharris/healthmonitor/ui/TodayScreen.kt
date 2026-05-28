@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
@@ -33,6 +34,7 @@ fun DataScreen(
     morningRead: MorningReadSnapshot?,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
+    dailyCheckIns: List<DailyCheckInEntity>,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
@@ -46,6 +48,7 @@ fun DataScreen(
         morningRead = morningRead,
         syncRuns = syncRuns,
         wakeMarkers = wakeMarkers,
+        dailyCheckIns = dailyCheckIns,
         isBusy = viewModel.isBusy
     )
     val activeMorningRead = morningRead
@@ -103,9 +106,11 @@ fun DataScreen(
             }
         }
         item {
-            SectionCard(title = "Morning sync", subtitle = "Loop readiness checklist") {
-                SupportText("Use I'm going to bed to mark intended sleep time, then I'm awake when you are ready to mark the day and run the normal Lodestone sync.")
+            SectionCard(title = "Check in", subtitle = "Loop readiness checklist") {
+                SupportText("Use Check in to sync and assess the current situation without marking wake time. Use the sleep/wake buttons only when you want to record those events.")
                 DetailRow("Status", todayStatus.title)
+                DetailRow("Last used", todayStatus.lastUsedLabel ?: "No recent input")
+                DetailRow("Loop sync", todayStatus.lastLoopSyncLabel ?: "Not synced yet")
                 DetailRow("Device", viewModel.selectedDeviceId ?: "None selected")
                 DetailRow(
                     "Connection",
@@ -121,9 +126,24 @@ fun DataScreen(
                 DetailRow("Final Loop sleep report", todayStatus.sleepReport)
                 DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
                 SupportText(todayStatus.message)
+                todayStatus.catchUpPrompt?.let { SupportText(it) }
                 todayStatus.connectionPrompt?.let { SupportText(it) }
-                SupportText("PPI may arrive before the final Loop sleep report. Lodestone can show a provisional read from your bed/wake markers and calibrated PPI, then replace it with the confirmed read when the final report resolves.")
+                SupportText("PPI may arrive before the final Loop sleep report. Lodestone can show a provisional read from markers or inferred windows, then keep the vendor sleep report as context when it resolves.")
                 ButtonRow {
+                    Button(
+                        onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
+                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                    ) {
+                        Text("Check in")
+                    }
+                    if (todayStatus.catchUpPrompt != null) {
+                        OutlinedButton(
+                            onClick = { if (actionsEnabled) viewModel.runCatchUpSync() },
+                            enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                        ) {
+                            Text("Catch up")
+                        }
+                    }
                     OutlinedButton(
                         onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
                         enabled = !viewModel.isBusy
@@ -160,10 +180,10 @@ fun DataScreen(
                         Text("View HRV trajectory")
                     }
                     OutlinedButton(
-                        onClick = { if (actionsEnabled) viewModel.runManualSync() },
+                        onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
                     ) {
-                        Text("Run sync")
+                        Text("Check in")
                     }
                 }
             }

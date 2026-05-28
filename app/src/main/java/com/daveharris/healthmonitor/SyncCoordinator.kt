@@ -27,13 +27,14 @@ class SyncCoordinator(
         scheduleMorningRetryIfNeeded: Boolean = false,
         cancelMorningRetryFirst: Boolean = false,
         wakeMarkerNotes: String? = null,
-        morningReadGuard: MorningReadGuard? = null
+        morningReadGuard: MorningReadGuard? = null,
+        lodestoneTargetDate: String? = null
     ): SyncCoordinatorResult = syncMutex.withLock {
         if (cancelMorningRetryFirst) {
             MorningReadScheduler.cancel(appContext)
         }
         morningReadGuard?.ensureCurrent(appContext)
-        val targetDate = morningReadGuard?.targetDate ?: LocalDate.now().toString()
+        val targetDate = morningReadGuard?.targetDate ?: lodestoneTargetDate ?: LocalDate.now().toString()
 
         var connectedId = deviceId
         var syncRunId: Long? = null
@@ -199,7 +200,9 @@ data class SyncCoordinatorResult(
 )
 
 private fun SyncRunProfile.needsMorningPpi(): Boolean =
-    this == SyncRunProfile.MORNING_CORE || this == SyncRunProfile.MORNING_PPI_RETRY
+    this == SyncRunProfile.CHECK_IN ||
+        this == SyncRunProfile.MORNING_CORE ||
+        this == SyncRunProfile.MORNING_PPI_RETRY
 
 private fun DeviceRuntimeState.matchesConnectedDevice(deviceId: String): Boolean {
     val device = connectedDevice

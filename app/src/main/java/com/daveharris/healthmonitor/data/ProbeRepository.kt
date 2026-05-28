@@ -66,6 +66,7 @@ class ProbeRepository(
     val inspectorRows = dao.observeInspectorRows()
     val appSettings = dao.observeAppSettings()
     val morningPredictionSnapshots = dao.observeMorningPredictionSnapshots()
+    val recentSleepEpisodes = dao.observeRecentSleepEpisodes()
     val morningRead = combine(
         dao.observeLatestSleepRecord(),
         dao.observeLatestNightlyRechargeRecord(),
@@ -127,6 +128,60 @@ class ProbeRepository(
 
     suspend fun hasPpiRecordForDate(sourceDate: String): Boolean =
         dao.countPpi247EpochsForDate(sourceDate) > 0
+
+    suspend fun getSleepEpisodesForDate(sourceDate: String): List<SleepEpisodeEntity> =
+        dao.getSleepEpisodesForDate(sourceDate)
+
+    fun observeSleepEpisodesForDate(sourceDate: String): Flow<List<SleepEpisodeEntity>> =
+        dao.observeSleepEpisodesForDate(sourceDate)
+
+    suspend fun getPrimarySleepEpisodeForDate(sourceDate: String): SleepEpisodeEntity? =
+        dao.getPrimarySleepEpisodeForDate(sourceDate)
+
+    suspend fun insertSleepEpisode(entity: SleepEpisodeEntity): Long =
+        dao.insertSleepEpisode(entity)
+
+    suspend fun updateSleepEpisode(entity: SleepEpisodeEntity) =
+        dao.updateSleepEpisode(entity)
+
+    suspend fun deleteSleepEpisode(id: Long) =
+        dao.deleteSleepEpisode(id)
+
+    suspend fun inferSleepEpisodeCandidatesForDate(sourceDate: String): List<SleepEpisodeEntity> {
+        val bounds = sleepSearchBoundsForDate(sourceDate)
+        val targetDate = runCatching { LocalDate.parse(sourceDate) }
+            .getOrDefault(LocalDate.now(ZoneId.systemDefault()))
+        val sourceDates = listOf(targetDate.minusDays(1).toString(), targetDate.toString())
+        val markers = dao.getWakeMarkersBetween(bounds.startEpochMs, bounds.endEpochMs)
+        val epochs = dao.getPpi247EpochsForDates(sourceDates)
+        val now = System.currentTimeMillis()
+        return sleepWindowEstimatesForDate(
+            sourceDate = sourceDate,
+            wakeMarkers = markers,
+            ppi247Epochs = epochs,
+            includeRestCandidates = true
+        ).map { estimate ->
+            estimate.toSleepEpisodeCandidate(
+                sourceDate = sourceDate,
+                nowEpochMs = now
+            )
+        }
+    }
+
+    suspend fun refreshInferredSleepEpisodeCandidatesForDate(sourceDate: String): Int {
+        val candidates = inferSleepEpisodeCandidatesForDate(sourceDate)
+        database.withTransaction {
+            dao.deleteUnconfirmedSleepEpisodeCandidatesForDate(
+                sourceDate = sourceDate,
+                source = SleepEpisodeSources.PPI_INFERRED,
+                confirmedConfidence = SleepEpisodeConfidences.USER_CONFIRMED
+            )
+            if (candidates.isNotEmpty()) {
+                dao.upsertSleepEpisodes(candidates)
+            }
+        }
+        return candidates.size
+    }
 
     suspend fun recordMorningPredictionSnapshot(
         snapshot: MorningReadSnapshot,
@@ -447,6 +502,7 @@ class ProbeRepository(
                 addSleepTask()
                 addNightlyRechargeTask()
             }
+            SyncRunProfile.CHECK_IN,
             SyncRunProfile.MORNING_CORE,
             SyncRunProfile.FULL -> {
                 addSleepTask()
@@ -2506,31 +2562,32 @@ class ProbeRepository(
         sourceDate: String,
         wakeMarkers: List<WakeMarkerEntity>,
         ppi247Epochs: List<Ppi247EpochEntity>
-    ): SleepWindowEstimate? {
+    ): SleepWindowEstimate? =
+        sleepWindowEstimatesForDate(
+            sourceDate = sourceDate,
+            wakeMarkers = wakeMarkers,
+            ppi247Epochs = ppi247Epochs,
+            includeRestCandidates = false
+        ).firstOrNull()
+
+    private fun sleepWindowEstimatesForDate(
+        sourceDate: String,
+        wakeMarkers: List<WakeMarkerEntity>,
+        ppi247Epochs: List<Ppi247EpochEntity>,
+        includeRestCandidates: Boolean
+    ): List<SleepWindowEstimate> {
         val now = System.currentTimeMillis()
-        val targetDate = runCatching { LocalDate.parse(sourceDate) }
-            .getOrDefault(LocalDate.now(ZoneId.systemDefault()))
-        val earliestUsefulMarker = targetDate
-            .minusDays(1)
-            .atTime(LocalTime.NOON)
-            .atZone(ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
-        val latestUsefulMarker = targetDate
-            .atTime(LocalTime.NOON)
-            .atZone(ZoneId.systemDefault())
-            .toInstant()
-            .toEpochMilli()
+        val bounds = sleepSearchBoundsForDate(sourceDate)
         val markers = wakeMarkers
             .asSequence()
-            .filter { it.markerEpochMs >= earliestUsefulMarker }
-            .filter { it.markerEpochMs <= latestUsefulMarker }
+            .filter { it.markerEpochMs >= bounds.startEpochMs }
+            .filter { it.markerEpochMs <= bounds.endEpochMs }
             .filterNot { it.notes == "manual awake command" }
             .sortedBy { it.markerEpochMs }
             .toList()
         val windowEpochs = ppi247Epochs
             .asSequence()
-            .filter { it.epochStartEpochMs >= earliestUsefulMarker && it.epochStartEpochMs <= latestUsefulMarker }
+            .filter { it.epochStartEpochMs >= bounds.startEpochMs && it.epochStartEpochMs <= bounds.endEpochMs }
             .sortedBy { it.epochStartEpochMs }
             .toList()
         val bed = markers.lastOrNull { it.markerSource == "manual_going_to_bed" }
@@ -2539,8 +2596,8 @@ class ProbeRepository(
                 marker.markerSource == "manual_im_awake" &&
                     (bed == null || marker.markerEpochMs > bed.markerEpochMs)
             }
-        val latestAllowedWake = minOf(awakeMarker?.markerEpochMs ?: now, latestUsefulMarker)
-        val searchStart = bed?.markerEpochMs ?: earliestUsefulMarker
+        val latestAllowedWake = minOf(awakeMarker?.markerEpochMs ?: now, bounds.endEpochMs)
+        val searchStart = bed?.markerEpochMs ?: bounds.startEpochMs
         val boundedWake = latestAllowedWake.coerceAtLeast(searchStart)
         val ppiOnset = estimateSleepOnsetEpochMs(
             searchStartEpochMs = searchStart,
@@ -2548,22 +2605,70 @@ class ProbeRepository(
             epochs = windowEpochs,
             hasManualBedMarker = bed != null
         )
-        if (bed == null && ppiOnset == null) return null
-        val ppiWake = ppiOnset?.let {
-            estimateSleepEndEpochMs(
-                onsetEpochMs = it,
-                latestAllowedEpochMs = boundedWake,
+        val primaryWindow = if (bed == null && ppiOnset == null) {
+            null
+        } else {
+            buildPrimarySleepWindowEstimate(
+                bed = bed,
+                awakeMarker = awakeMarker,
+                searchStartEpochMs = searchStart,
+                boundedWakeEpochMs = boundedWake,
+                ppiOnsetEpochMs = ppiOnset,
                 epochs = windowEpochs
             )
         }
-        val manualWake = awakeMarker?.markerEpochMs?.let { (it - MANUAL_WAKE_BACKDATE_MS).coerceAtLeast(searchStart) }
+        val restCandidates = if (includeRestCandidates) {
+            inferPpiRestWindowCandidates(windowEpochs)
+                .filterNot { candidate ->
+                    primaryWindow?.let { candidate.overlaps(it) } == true
+                }
+        } else {
+            emptyList()
+        }
+        return listOfNotNull(primaryWindow) + restCandidates
+    }
+
+    private fun sleepSearchBoundsForDate(sourceDate: String): SleepSearchBounds {
+        val targetDate = runCatching { LocalDate.parse(sourceDate) }
+            .getOrDefault(LocalDate.now(ZoneId.systemDefault()))
+        val startEpochMs = targetDate
+            .minusDays(1)
+            .atTime(LocalTime.NOON)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        val endEpochMs = targetDate
+            .atTime(LocalTime.NOON)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return SleepSearchBounds(startEpochMs, endEpochMs)
+    }
+
+    private fun buildPrimarySleepWindowEstimate(
+        bed: WakeMarkerEntity?,
+        awakeMarker: WakeMarkerEntity?,
+        searchStartEpochMs: Long,
+        boundedWakeEpochMs: Long,
+        ppiOnsetEpochMs: Long?,
+        epochs: List<Ppi247EpochEntity>
+    ): SleepWindowEstimate? {
+        if (bed == null && ppiOnsetEpochMs == null) return null
+        val ppiWake = ppiOnsetEpochMs?.let {
+            estimateSleepEndEpochMs(
+                onsetEpochMs = it,
+                latestAllowedEpochMs = boundedWakeEpochMs,
+                epochs = epochs
+            )
+        }
+        val manualWake = awakeMarker?.markerEpochMs?.let { (it - MANUAL_WAKE_BACKDATE_MS).coerceAtLeast(searchStartEpochMs) }
         val estimatedWake = when {
             ppiWake != null && manualWake != null && manualWake - ppiWake > MANUAL_WAKE_OUTLIER_MS -> ppiWake
             manualWake != null -> manualWake
             ppiWake != null -> ppiWake
-            else -> boundedWake
-        }.coerceAtLeast(searchStart)
-        val estimatedOnset = ppiOnset ?: bed?.markerEpochMs ?: return null
+            else -> boundedWakeEpochMs
+        }.coerceAtLeast(searchStartEpochMs)
+        val estimatedOnset = ppiOnsetEpochMs ?: bed?.markerEpochMs ?: return null
         if (estimatedWake <= estimatedOnset) return null
         val source = when {
             bed == null -> "raw_ppi_inferred_window_pending_sleep_report"
@@ -2584,6 +2689,68 @@ class ProbeRepository(
             label = label,
             hasExplicitWakeMarker = awakeMarker != null
         )
+    }
+
+    private fun inferPpiRestWindowCandidates(epochs: List<Ppi247EpochEntity>): List<SleepWindowEstimate> {
+        val sleepLikeEpochs = epochs
+            .asSequence()
+            .filter { it.isSleepLikePpiEpoch() }
+            .sortedBy { it.epochStartEpochMs }
+            .toList()
+        if (sleepLikeEpochs.size < SLEEP_ONSET_WINDOW_EPOCHS) return emptyList()
+
+        val blocks = mutableListOf<List<Ppi247EpochEntity>>()
+        var currentBlock = mutableListOf<Ppi247EpochEntity>()
+        sleepLikeEpochs.forEach { epoch ->
+            val previous = currentBlock.lastOrNull()
+            if (previous == null || epoch.epochStartEpochMs - previous.epochEndEpochMs <= PPI_REST_CANDIDATE_MAX_GAP_MS) {
+                currentBlock += epoch
+            } else {
+                blocks += currentBlock
+                currentBlock = mutableListOf(epoch)
+            }
+        }
+        if (currentBlock.isNotEmpty()) {
+            blocks += currentBlock
+        }
+
+        return blocks.mapNotNull { block ->
+            val startEpochMs = block.firstOrNull()?.epochStartEpochMs ?: return@mapNotNull null
+            val endEpochMs = block.lastOrNull()?.epochEndEpochMs ?: return@mapNotNull null
+            val durationMs = endEpochMs - startEpochMs
+            if (durationMs < MIN_REST_CANDIDATE_WINDOW_MS || block.size < SLEEP_ONSET_WINDOW_EPOCHS) return@mapNotNull null
+            val hasHrDrop = hasLocalHrDrop(startEpochMs, block, epochs)
+            val label = if (durationMs >= MIN_INFERRED_SLEEP_WINDOW_MS && hasHrDrop) {
+                "PPI-inferred main sleep candidate"
+            } else {
+                "PPI sleep/rest candidate"
+            }
+            SleepWindowEstimate(
+                startEpochMs = startEpochMs,
+                endEpochMs = endEpochMs,
+                source = RAW_PPI_REST_CANDIDATE_SOURCE,
+                label = label,
+                hasExplicitWakeMarker = false
+            )
+        }
+    }
+
+    private fun hasLocalHrDrop(
+        candidateStartEpochMs: Long,
+        block: List<Ppi247EpochEntity>,
+        epochs: List<Ppi247EpochEntity>
+    ): Boolean {
+        val baselineHr = epochs
+            .asSequence()
+            .filter { it.epochStartEpochMs < candidateStartEpochMs }
+            .filter { it.epochStartEpochMs >= candidateStartEpochMs - MARKERLESS_ONSET_BASELINE_MS }
+            .filterNot { it.epochQuality.startsWith("poor") }
+            .mapNotNull { it.meanHrBpm }
+            .toList()
+            .takeIf { it.size >= 3 }
+            ?.medianOrNull() ?: return false
+        val candidateHr = block.mapNotNull { it.meanHrBpm }.medianOrNull() ?: return false
+        return candidateHr <= baselineHr - SLEEP_ONSET_MIN_HR_DROP_BPM
     }
 
     private fun estimateSleepOnsetEpochMs(
@@ -2659,6 +2826,47 @@ class ProbeRepository(
         return meanHrBpm != null &&
             !epochQuality.startsWith("poor") &&
             movementRatio <= SLEEP_ONSET_MAX_MOVEMENT_RATIO
+    }
+
+    private fun SleepWindowEstimate.overlaps(other: SleepWindowEstimate): Boolean =
+        startEpochMs < other.endEpochMs && other.startEpochMs < endEpochMs
+
+    private fun SleepWindowEstimate.toSleepEpisodeCandidate(
+        sourceDate: String,
+        nowEpochMs: Long
+    ): SleepEpisodeEntity {
+        val durationMs = endEpochMs - startEpochMs
+        val isRestCandidate = source == RAW_PPI_REST_CANDIDATE_SOURCE || durationMs < MIN_INFERRED_SLEEP_WINDOW_MS
+        val episodeSource = SleepEpisodeSources.PPI_INFERRED
+        val confidence = when {
+            hasExplicitWakeMarker -> SleepEpisodeConfidences.MEDIUM
+            durationMs >= MIN_INFERRED_SLEEP_WINDOW_MS -> SleepEpisodeConfidences.MEDIUM
+            else -> SleepEpisodeConfidences.LOW
+        }
+        val evidenceJson = GsonProvider.gson.toJson(
+            mapOf(
+                "label" to label,
+                "estimateSource" to source,
+                "durationMinutes" to durationMinutes,
+                "hasExplicitWakeMarker" to hasExplicitWakeMarker,
+                "candidateOnly" to true
+            )
+        )
+        return SleepEpisodeEntity(
+            sourceDate = sourceDate,
+            startEpochMs = startEpochMs,
+            endEpochMs = endEpochMs,
+            episodeKind = if (isRestCandidate) SleepEpisodeKinds.REST_CANDIDATE else SleepEpisodeKinds.MAIN_SLEEP,
+            source = episodeSource,
+            confidence = confidence,
+            isPrimaryForReadiness = false,
+            deviceId = null,
+            linkedSleepRawId = null,
+            evidenceJson = evidenceJson,
+            notes = null,
+            createdAtEpochMs = nowEpochMs,
+            updatedAtEpochMs = nowEpochMs
+        )
     }
 
     private fun parsePolarDateTimeEpochMs(value: String): Long? =
@@ -2827,8 +3035,11 @@ private const val SLEEP_ONSET_MAX_HR_STD_BPM = 3.0
 private const val SLEEP_ONSET_MAX_MOVEMENT_RATIO = 0.05
 private const val MARKERLESS_ONSET_BASELINE_MS = 2 * 60 * 60_000L
 private const val MIN_INFERRED_SLEEP_WINDOW_MS = 3 * 60 * 60_000L
+private const val MIN_REST_CANDIDATE_WINDOW_MS = 20 * 60_000L
+private const val PPI_REST_CANDIDATE_MAX_GAP_MS = 10 * 60_000L
 private const val MANUAL_WAKE_OUTLIER_MS = 30 * 60_000L
 private const val SLEEP_REPORT_DISAGREEMENT_MINUTES = 30
+private const val RAW_PPI_REST_CANDIDATE_SOURCE = "raw_ppi_rest_candidate"
 private const val MORNING_MODEL_VERSION = "morning_v1_primary_ppi_window_2026-05-15"
 const val MORNING_PREDICTION_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
 private const val MORNING_PREDICTION_ORIGIN_BACKFILLED = "BACKFILLED_RECALCULATED"
@@ -2862,6 +3073,11 @@ private data class SleepWindowEstimate(
     val durationMinutes: Int
         get() = ((endEpochMs - startEpochMs) / 60_000L).toInt()
 }
+
+private data class SleepSearchBounds(
+    val startEpochMs: Long,
+    val endEpochMs: Long
+)
 
 private data class Hr247EpochRebuildResult(
     val epochCount: Int,

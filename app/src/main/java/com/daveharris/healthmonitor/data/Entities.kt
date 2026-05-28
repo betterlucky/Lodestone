@@ -323,6 +323,32 @@ data class MorningPredictionSnapshotEntity(
 )
 
 @Entity(
+    tableName = "sleep_episode",
+    indices = [
+        Index("sourceDate"),
+        Index("startEpochMs"),
+        Index("sourceDate", "isPrimaryForReadiness"),
+        Index("episodeKind")
+    ]
+)
+data class SleepEpisodeEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sourceDate: String,
+    val startEpochMs: Long?,
+    val endEpochMs: Long?,
+    val episodeKind: String,
+    val source: String,
+    val confidence: String,
+    val isPrimaryForReadiness: Boolean,
+    val deviceId: String?,
+    val linkedSleepRawId: Long?,
+    val evidenceJson: String?,
+    val notes: String?,
+    val createdAtEpochMs: Long,
+    val updatedAtEpochMs: Long
+)
+
+@Entity(
     tableName = "wake_marker",
     indices = [Index("sourceDate")]
 )
