@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -20,6 +21,7 @@ from pathlib import Path
 DEFAULT_BASE_URL = "http://127.0.0.1:8000/v1"
 DEFAULT_MODEL = "Qwen3-8B-MLX-4bit"
 DEFAULT_TIMEOUT_SECONDS = 60
+REVIEW_GUARD_HINT_PATTERN = re.compile(r"\b(review|pr|pull request|diff|guard)\b", re.IGNORECASE)
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,6 +60,16 @@ def read_prompt(args: argparse.Namespace) -> str:
     return prompt
 
 
+def maybe_warn_about_review_guard(prompt: str) -> None:
+    if not REVIEW_GUARD_HINT_PATTERN.search(prompt):
+        return
+    print(
+        "Note: ask_local_model.py is a single-model advisory sidecar. "
+        "For the standard multi-review guard, run `scripts/review-guard review`.",
+        file=sys.stderr,
+    )
+
+
 def post_chat_completion(args: argparse.Namespace, prompt: str) -> dict:
     url = args.base_url.rstrip("/") + "/chat/completions"
     payload = {
@@ -92,6 +104,7 @@ def post_chat_completion(args: argparse.Namespace, prompt: str) -> dict:
 def main() -> None:
     args = parse_args()
     prompt = read_prompt(args)
+    maybe_warn_about_review_guard(prompt)
     response = post_chat_completion(args, prompt)
     if args.json:
         print(json.dumps(response, indent=2))

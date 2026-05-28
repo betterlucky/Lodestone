@@ -108,6 +108,16 @@ Local model tasks should be read-only by default:
 - Review a small diff for obvious regressions.
 
 Local model output is advisory. The main agent must still inspect, patch, and verify.
+Do not describe a one-off `ask_local_model.py` pass as the standard guard.
+For PR-backed work or anything that calls for the standard review guard, run:
+
+```bash
+scripts/review-guard review --context "Describe the PR or change under review"
+```
+
+The guard wrapper reads `.codex/review-guard.json` and orchestrates the configured
+reviewers, which may include local models and Gemini. A sidecar Qwen call is only
+one optional input, not a substitute for the configured guard.
 
 Default local endpoint:
 
