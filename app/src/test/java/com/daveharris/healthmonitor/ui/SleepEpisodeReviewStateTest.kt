@@ -50,6 +50,7 @@ class SleepEpisodeReviewStateTest {
         assertNull(item.primaryLabel)
         assertTrue(item.isCandidate)
         assertFalse(item.isConfirmed)
+        assertFalse(item.canClearDecision)
         assertFalse(group.hasPrimaryReadinessWindow)
     }
 
@@ -119,6 +120,7 @@ class SleepEpisodeReviewStateTest {
         assertEquals(listOf("Confirmed sleep", "No main sleep"), state.dateGroups[1].items.map { it.title })
         assertEquals("Confirmed", state.dateGroups[1].repairStatusLabel)
         assertTrue(state.dateGroups[1].hasPrimaryReadinessWindow)
+        assertTrue(state.dateGroups[1].items.first().canClearDecision)
         assertEquals("No candidates", state.dateGroups[2].repairStatusLabel)
         assertTrue(state.dateGroups[2].needsAttention)
     }

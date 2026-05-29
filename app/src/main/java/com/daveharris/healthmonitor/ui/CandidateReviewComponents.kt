@@ -277,7 +277,7 @@ private fun CandidateReviewWindow(
                         onClick = { onClearDecision(item.id) },
                         enabled = actionsEnabled
                     ) {
-                        Text("Undo no sleep")
+                        Text(if (item.isNoSleep) "Undo no sleep" else "Reset")
                     }
                 }
                 if (!item.isNoSleep && item.startEpochMs != null && item.endEpochMs != null) {

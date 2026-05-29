@@ -166,7 +166,7 @@ fun SleepEpisodeEntity.toSleepEpisodeDisplayItem(
         isCandidate = isCandidate,
         isConfirmed = isConfirmed,
         isNoSleep = isNoSleep,
-        canClearDecision = isNoSleep && isConfirmed,
+        canClearDecision = isConfirmed && !isCandidate,
         isPrimaryForReadiness = isPrimaryForReadiness
     )
 }
