@@ -23,19 +23,26 @@ import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.ProbeRepository
+import com.daveharris.healthmonitor.data.SleepEpisodeKinds
+import com.daveharris.healthmonitor.data.SleepEpisodeSources
 import com.daveharris.healthmonitor.data.SyncRunProfile
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
 import com.daveharris.healthmonitor.health.Sleep2ScreenshotImporter
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.ceil
 
 class ProbeViewModel(
@@ -45,6 +52,8 @@ class ProbeViewModel(
     private val dailyReviewRepository: DailyReviewRepository,
     private val healthConnectAnalysisExporter: HealthConnectAnalysisExporter
 ) : AndroidViewModel(application) {
+    private val initialCheckInDate = LocalDate.now().toString()
+    private val sleepEpisodeReviewDates = MutableStateFlow(listOf(initialCheckInDate))
     val runtimeState = repository.runtimeState.stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
@@ -61,6 +70,23 @@ class ProbeViewModel(
     val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val recentWakeMarkers = repository.recentWakeMarkers.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val sleepEpisodeReviewState = combine(
+        repository.recentSleepEpisodes,
+        sleepEpisodeReviewDates,
+        dailyReviewRepository.dailyCheckIns
+    ) { episodes, dates, checkIns ->
+        buildSleepEpisodeReviewState(
+            activeDate = checkInDate,
+            reviewDates = dates,
+            episodes = episodes,
+            reviewedDates = checkIns.map { it.sourceDate }.toSet()
+        )
+    }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            SleepEpisodeReviewState.empty(initialCheckInDate)
+        )
     var isBusy by mutableStateOf(false)
         private set
     var statusMessage by mutableStateOf<String?>(null)
@@ -71,7 +97,7 @@ class ProbeViewModel(
         private set
     var firmwareRediscoveryNeeded by mutableStateOf(false)
         private set
-    var checkInDate by mutableStateOf(LocalDate.now().toString())
+    var checkInDate by mutableStateOf(initialCheckInDate)
         private set
     var eveningOutcomeDraft by mutableStateOf<TrafficLightStatus?>(null)
         private set
@@ -285,6 +311,7 @@ class ProbeViewModel(
                 persistAppSettings()
                 firmwareRediscoveryNeeded = false
                 val candidateCount = refreshInferredSleepEpisodeCandidates(sourceDates)
+                setSleepEpisodeReviewDates(today, sourceDates)
                 statusMessage = if (result.recoveredMorningPpi) {
                     "Catch-up sync recovered PPI after reconnecting to the Loop.${candidateCount.sleepCandidateSuffix()}"
                 } else {
@@ -406,6 +433,132 @@ class ProbeViewModel(
         statusMessage = null
     }
 
+    fun acceptSleepEpisodeAsMain(id: Long) {
+        viewModelScope.launch {
+            runBusyAction("Saving sleep decision…") {
+                val saved = repository.confirmSleepEpisode(
+                    id = id,
+                    episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+                    source = SleepEpisodeSources.MIXED,
+                    isPrimaryForReadiness = true,
+                    notes = "Accepted as main sleep"
+                )
+                statusMessage = if (saved) {
+                    "Sleep window confirmed for readiness."
+                } else {
+                    "Sleep window was not found."
+                }
+            }
+        }
+    }
+
+    fun acceptSleepEpisodeAsNap(id: Long) {
+        viewModelScope.launch {
+            runBusyAction("Saving nap decision…") {
+                val saved = repository.confirmSleepEpisode(
+                    id = id,
+                    episodeKind = SleepEpisodeKinds.NAP,
+                    source = SleepEpisodeSources.MIXED,
+                    isPrimaryForReadiness = false,
+                    notes = "Accepted as nap"
+                )
+                statusMessage = if (saved) {
+                    "Nap saved as context."
+                } else {
+                    "Sleep/rest window was not found."
+                }
+            }
+        }
+    }
+
+    fun markSleepEpisodeAsRest(id: Long) {
+        viewModelScope.launch {
+            runBusyAction("Saving rest decision…") {
+                val saved = repository.confirmSleepEpisode(
+                    id = id,
+                    episodeKind = SleepEpisodeKinds.REST_CANDIDATE,
+                    source = SleepEpisodeSources.MIXED,
+                    isPrimaryForReadiness = false,
+                    notes = "Marked as rest, not main sleep"
+                )
+                statusMessage = if (saved) {
+                    "Rest window saved as context."
+                } else {
+                    "Sleep/rest window was not found."
+                }
+            }
+        }
+    }
+
+    fun rejectSleepEpisodeCandidate(id: Long) {
+        viewModelScope.launch {
+            runBusyAction("Dismissing suggestion…") {
+                val saved = repository.confirmSleepEpisode(
+                    id = id,
+                    episodeKind = SleepEpisodeKinds.REST_CANDIDATE,
+                    source = SleepEpisodeSources.MIXED,
+                    isPrimaryForReadiness = false,
+                    notes = "Dismissed as not sleep"
+                )
+                statusMessage = if (saved) {
+                    "Suggestion dismissed as not sleep."
+                } else {
+                    "Sleep/rest suggestion was not found."
+                }
+            }
+        }
+    }
+
+    fun clearSleepEpisodeDecision(id: Long) {
+        viewModelScope.launch {
+            runBusyAction("Clearing sleep decision…") {
+                repository.deleteSleepEpisode(id)
+                statusMessage = "Sleep decision cleared. Run Check in or Catch up to refresh candidates."
+            }
+        }
+    }
+
+    fun editSleepEpisodeWindow(id: Long, startInput: String, endInput: String) {
+        val startEpochMs = parseSleepWindowInput(startInput)
+        val endEpochMs = parseSleepWindowInput(endInput)
+        if (startEpochMs == null || endEpochMs == null) {
+            statusMessage = "Use start and end as yyyy-MM-dd HH:mm."
+            return
+        }
+        if (endEpochMs <= startEpochMs) {
+            statusMessage = "Sleep/rest end must be after the start."
+            return
+        }
+        viewModelScope.launch {
+            runBusyAction("Saving edited window…") {
+                val saved = repository.editSleepEpisodeWindow(
+                    id = id,
+                    startEpochMs = startEpochMs,
+                    endEpochMs = endEpochMs,
+                    notes = "Edited window"
+                )
+                statusMessage = if (saved) {
+                    "Sleep/rest window edited."
+                } else {
+                    "Sleep/rest window was not found."
+                }
+            }
+        }
+    }
+
+    fun markNoMainSleep(sourceDate: String) {
+        if (runCatching { LocalDate.parse(sourceDate) }.isFailure) {
+            statusMessage = "Choose a valid date first."
+            return
+        }
+        viewModelScope.launch {
+            runBusyAction("Saving no-sleep decision…") {
+                repository.markNoMainSleep(sourceDate)
+                statusMessage = "No main sleep saved for $sourceDate."
+            }
+        }
+    }
+
     fun updateCheckInDate(value: String) {
         selectCheckInDate(value)
     }
@@ -476,7 +629,7 @@ class ProbeViewModel(
     }
 
     fun loadDailyCheckIn(date: String = checkInDate) {
-        checkInDate = date
+        setSleepEpisodeReviewDates(date)
         reviewLoadJob?.cancel()
         reviewLoadJob = viewModelScope.launch {
             val existing = dailyReviewRepository.getDailyCheckIn(date)
@@ -485,7 +638,7 @@ class ProbeViewModel(
                 hydrateDailyCheckIn(existing)
                 statusMessage = "Loaded saved check-in for $date."
             } else {
-                checkInDate = date
+                setSleepEpisodeReviewDates(date)
                 statusMessage = "No saved check-in for $date. Current draft left unchanged."
             }
             refreshFoodImportForDate(date)
@@ -688,8 +841,17 @@ class ProbeViewModel(
     private fun remainingMinutes(remainingMs: Long): Int =
         ceil(remainingMs / 60_000.0).toInt().coerceAtLeast(1)
 
+    private fun parseSleepWindowInput(value: String): Long? =
+        runCatching {
+            LocalDateTime
+                .parse(value.trim(), SLEEP_WINDOW_INPUT_FORMATTER)
+                .atZone(ZoneId.systemDefault())
+                .toInstant()
+                .toEpochMilli()
+        }.getOrNull()
+
     private fun hydrateDailyCheckIn(entity: DailyCheckInEntity) {
-        checkInDate = entity.sourceDate
+        setSleepEpisodeReviewDates(entity.sourceDate)
         eveningOutcomeDraft = runCatching { TrafficLightStatus.valueOf(entity.eveningOutcome) }.getOrNull()
         approachToDayDraft = entity.approachToDay?.let { value ->
             runCatching { TrafficLightStatus.valueOf(value) }.getOrNull()
@@ -699,7 +861,7 @@ class ProbeViewModel(
     }
 
     private fun selectCheckInDate(date: String) {
-        checkInDate = date
+        setSleepEpisodeReviewDates(date)
         if (runCatching { LocalDate.parse(date) }.isFailure) {
             return
         }
@@ -717,6 +879,14 @@ class ProbeViewModel(
             }
             refreshFoodImportForDate(date)
         }
+    }
+
+    private fun setSleepEpisodeReviewDates(
+        activeDate: String,
+        reviewDates: List<String> = listOf(activeDate)
+    ) {
+        checkInDate = activeDate
+        sleepEpisodeReviewDates.value = reviewDates.distinct().ifEmpty { listOf(activeDate) }
     }
 
     private fun refreshFoodImportForDate(date: String) {
@@ -739,18 +909,10 @@ class ProbeViewModel(
         }
 
     private fun catchUpSourceDates(today: String): List<String> {
-        val todayDate = runCatching { LocalDate.parse(today) }.getOrNull() ?: return listOf(today)
-        val latestReadDate = morningRead.value?.sourceDate
-            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        val startDate = latestReadDate
-            ?.plusDays(1)
-            ?.takeIf { !it.isAfter(todayDate) }
-            ?: todayDate
-        val trailingDays = ChronoUnit.DAYS.between(startDate, todayDate)
-            .coerceAtLeast(0L)
-            .coerceAtMost(MAX_CATCH_UP_CANDIDATE_DAYS - 1L)
-        return (trailingDays downTo 0L)
-            .map { offset -> todayDate.minusDays(offset).toString() }
+        return catchUpRepairSourceDates(
+            today = today,
+            latestReadSourceDate = morningRead.value?.sourceDate
+        )
     }
 
     private fun Int.sleepCandidateSuffix(): String =
@@ -764,7 +926,8 @@ class ProbeViewModel(
         private const val SETTINGS_PREFS_NAME = "lodestone_settings_tools"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_UNTIL = "sleep_report_retry_cooldown_until"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_MS = 30 * 60 * 1000L
-        private const val MAX_CATCH_UP_CANDIDATE_DAYS = 7L
+        private val SLEEP_WINDOW_INPUT_FORMATTER: DateTimeFormatter =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.UK)
 
         private fun loadSleepReportRetryCooldown(context: Context): Long =
             context

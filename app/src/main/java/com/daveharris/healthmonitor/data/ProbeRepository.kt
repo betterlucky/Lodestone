@@ -71,9 +71,10 @@ class ProbeRepository(
         dao.observeLatestSleepRecord(),
         dao.observeLatestNightlyRechargeRecord(),
         dao.observeRecentPpi247Epochs(),
-        dao.observeRecentWakeMarkers()
-    ) { sleep, nightly, ppi247Epochs, wakeMarkers ->
-        deriveMorningRead(sleep, nightly, ppi247Epochs, wakeMarkers)
+        dao.observeRecentWakeMarkers(),
+        dao.observeRecentSleepEpisodes()
+    ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
+        deriveMorningRead(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
     }
     val recentWakeMarkers = dao.observeRecentWakeMarkers()
 
@@ -147,6 +148,111 @@ class ProbeRepository(
     suspend fun deleteSleepEpisode(id: Long) =
         dao.deleteSleepEpisode(id)
 
+    suspend fun confirmSleepEpisode(
+        id: Long,
+        episodeKind: String,
+        source: String,
+        isPrimaryForReadiness: Boolean,
+        notes: String? = null
+    ): Boolean {
+        val existing = dao.getSleepEpisodeById(id) ?: return false
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            if (isPrimaryForReadiness) {
+                dao.clearPrimarySleepEpisodeForDate(existing.sourceDate, now)
+            }
+            dao.updateSleepEpisode(
+                existing.copy(
+                    episodeKind = episodeKind,
+                    source = source,
+                    confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+                    isPrimaryForReadiness = isPrimaryForReadiness,
+                    notes = notes ?: existing.notes,
+                    updatedAtEpochMs = now
+                )
+            )
+        }
+        return true
+    }
+
+    suspend fun editSleepEpisodeWindow(
+        id: Long,
+        startEpochMs: Long,
+        endEpochMs: Long,
+        notes: String? = null
+    ): Boolean {
+        val existing = dao.getSleepEpisodeById(id) ?: return false
+        val now = System.currentTimeMillis()
+        database.withTransaction {
+            dao.updateSleepEpisode(
+                existing.copy(
+                    startEpochMs = startEpochMs,
+                    endEpochMs = endEpochMs,
+                    source = SleepEpisodeSources.EDITED,
+                    confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+                    notes = notes ?: existing.notes,
+                    updatedAtEpochMs = now
+                )
+            )
+        }
+        return true
+    }
+
+    suspend fun markNoMainSleep(sourceDate: String): Long {
+        val now = System.currentTimeMillis()
+        val evidenceJson = GsonProvider.gson.toJson(
+            mapOf(
+                "userDecision" to "no_main_sleep",
+                "candidateOnly" to false
+            )
+        )
+        var rowId = 0L
+        database.withTransaction {
+            dao.clearPrimarySleepEpisodeForDate(sourceDate, now)
+            dao.deleteUnconfirmedSleepEpisodeCandidatesForDateAndKind(
+                sourceDate = sourceDate,
+                source = SleepEpisodeSources.PPI_INFERRED,
+                episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+                confirmedConfidence = SleepEpisodeConfidences.USER_CONFIRMED
+            )
+            val existing = dao.getLatestSleepEpisodeForDateAndKind(sourceDate, SleepEpisodeKinds.NO_SLEEP)
+            if (existing == null) {
+                rowId = dao.insertSleepEpisode(
+                    SleepEpisodeEntity(
+                        sourceDate = sourceDate,
+                        startEpochMs = null,
+                        endEpochMs = null,
+                        episodeKind = SleepEpisodeKinds.NO_SLEEP,
+                        source = SleepEpisodeSources.MANUAL,
+                        confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+                        isPrimaryForReadiness = false,
+                        deviceId = null,
+                        linkedSleepRawId = null,
+                        evidenceJson = evidenceJson,
+                        notes = "No main sleep for this day",
+                        createdAtEpochMs = now,
+                        updatedAtEpochMs = now
+                    )
+                )
+            } else {
+                rowId = existing.id
+                dao.updateSleepEpisode(
+                    existing.copy(
+                        startEpochMs = null,
+                        endEpochMs = null,
+                        source = SleepEpisodeSources.MANUAL,
+                        confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+                        isPrimaryForReadiness = false,
+                        evidenceJson = existing.evidenceJson ?: evidenceJson,
+                        notes = existing.notes ?: "No main sleep for this day",
+                        updatedAtEpochMs = now
+                    )
+                )
+            }
+        }
+        return rowId
+    }
+
     suspend fun inferSleepEpisodeCandidatesForDate(sourceDate: String): List<SleepEpisodeEntity> {
         val bounds = sleepSearchBoundsForDate(sourceDate)
         val targetDate = runCatching { LocalDate.parse(sourceDate) }
@@ -170,17 +276,23 @@ class ProbeRepository(
 
     suspend fun refreshInferredSleepEpisodeCandidatesForDate(sourceDate: String): Int {
         val candidates = inferSleepEpisodeCandidatesForDate(sourceDate)
+        var insertedCount = 0
         database.withTransaction {
             dao.deleteUnconfirmedSleepEpisodeCandidatesForDate(
                 sourceDate = sourceDate,
                 source = SleepEpisodeSources.PPI_INFERRED,
                 confirmedConfidence = SleepEpisodeConfidences.USER_CONFIRMED
             )
-            if (candidates.isNotEmpty()) {
-                dao.upsertSleepEpisodes(candidates)
+            val confirmedOrEditedEpisodes = dao.getSleepEpisodesForDate(sourceDate)
+            val insertableCandidates = candidates.filterNot { candidate ->
+                confirmedOrEditedEpisodes.any { it.blocksInferredCandidate(candidate) }
+            }
+            if (insertableCandidates.isNotEmpty()) {
+                dao.upsertSleepEpisodes(insertableCandidates)
+                insertedCount = insertableCandidates.size
             }
         }
-        return candidates.size
+        return insertedCount
     }
 
     suspend fun recordMorningPredictionSnapshot(
@@ -230,6 +342,7 @@ class ProbeRepository(
         val nightly = dao.getLatestNightlyRechargeRecordForDate(sourceDate)
         val ppiSourceDates = listOf(date.minusDays(1).toString(), sourceDate)
         val ppiEpochs = dao.getPpi247EpochsForDates(ppiSourceDates)
+        val sleepEpisodes = dao.getSleepEpisodesForDate(sourceDate)
         val markerStart = date
             .minusDays(1)
             .atTime(LocalTime.NOON)
@@ -248,6 +361,7 @@ class ProbeRepository(
             nightlyRow = nightly,
             ppi247Epochs = ppiEpochs,
             wakeMarkers = wakeMarkers,
+            sleepEpisodes = sleepEpisodes,
             expectedSourceDate = sourceDate,
             allowProvisional = allowProvisional
         )
@@ -2118,20 +2232,30 @@ class ProbeRepository(
         nightlyRow: NightlyRechargeRawEntity?,
         ppi247Epochs: List<Ppi247EpochEntity>,
         wakeMarkers: List<WakeMarkerEntity>,
+        sleepEpisodes: List<SleepEpisodeEntity> = emptyList(),
         expectedSourceDate: String = LocalDate.now(ZoneId.systemDefault()).toString(),
         allowProvisional: Boolean = true
     ): MorningReadSnapshot? {
-        if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty()) return null
+        if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty() && sleepEpisodes.isEmpty()) return null
 
         val todayPpiEpochs = ppi247Epochs.filter { it.sourceDate == expectedSourceDate }
+        val primaryEpisodeWindow = selectedPrimaryReadinessEpisode(expectedSourceDate, sleepEpisodes)
+            ?.toPrimaryReadinessWindow()
         val latestNightlyJson = nightlyRow?.rawPayloadJson?.let {
             runCatching { GsonProvider.gson.fromJson(it, JsonObject::class.java) }.getOrNull()
         }
         val latestNightlySummary = latestNightlyJson?.getAsJsonObject("summary")
         val latestBaselineReady = latestNightlySummary?.booleanOrNull("baselineReady") ?: false
+        if (primaryEpisodeWindow == null && hasConfirmedNoMainSleep(expectedSourceDate, sleepEpisodes)) {
+            return noMainSleepMorningRead(
+                sourceDate = expectedSourceDate,
+                baselineReady = latestBaselineReady
+            )
+        }
         if (sleepRow?.sourceDate != expectedSourceDate) {
             if (!allowProvisional) return null
-            val provisionalWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
+            val provisionalWindow = primaryEpisodeWindow
+                ?: provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
             val ppi247Autonomic = provisionalWindow?.let {
                 summarizePpi247ForSleepWindow(
                     sourceDate = null,
@@ -2213,7 +2337,8 @@ class ProbeRepository(
             ?.let(::parsePolarDateTimeEpochMs)
         if (durationMinutes == null || sleepStartEpochMs == null || sleepEndEpochMs == null) {
             if (!allowProvisional) return null
-            val provisionalWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
+            val provisionalWindow = primaryEpisodeWindow
+                ?: provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
             val ppi247Autonomic = provisionalWindow?.let {
                 summarizePpi247ForSleepWindow(
                     sourceDate = null,
@@ -2291,7 +2416,7 @@ class ProbeRepository(
             sleepEndEpochMs = sleepEndEpochMs,
             epochs = ppi247Epochs
         )
-        val primaryWindow = provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
+        val primaryWindow = primaryEpisodeWindow ?: provisionalSleepWindowForDate(expectedSourceDate, wakeMarkers, ppi247Epochs)
             ?.takeIf { it.hasExplicitWakeMarker }
         val primaryWindowPpi247Autonomic = primaryWindow?.let {
             summarizePpi247ForSleepWindow(
@@ -2371,6 +2496,69 @@ class ProbeRepository(
             rawPpiPoorEpochCount = ppi247Autonomic?.poorEpochCount,
             rawPpiCoverageHours = ppi247Autonomic?.coverageHours,
             hrvTrajectory = ppi247Autonomic?.trajectoryPoints.orEmpty()
+        )
+    }
+
+    private fun SleepEpisodeEntity.toPrimaryReadinessWindow(): SleepWindowEstimate? {
+        val start = startEpochMs ?: return null
+        val end = endEpochMs ?: return null
+        if (end <= start) return null
+        val sourceLabel = when (source) {
+            SleepEpisodeSources.EDITED -> "edited_sleep_episode_primary"
+            SleepEpisodeSources.MIXED -> "mixed_sleep_episode_primary"
+            SleepEpisodeSources.MANUAL -> "manual_sleep_episode_primary"
+            else -> "confirmed_sleep_episode_primary"
+        }
+        val label = when (episodeKind) {
+            SleepEpisodeKinds.NAP -> "selected nap window"
+            SleepEpisodeKinds.REST_CANDIDATE -> "selected rest window"
+            else -> "confirmed sleep window"
+        }
+        return SleepWindowEstimate(
+            startEpochMs = start,
+            endEpochMs = end,
+            source = sourceLabel,
+            label = label,
+            hasExplicitWakeMarker = true
+        )
+    }
+
+    private fun noMainSleepMorningRead(
+        sourceDate: String,
+        baselineReady: Boolean
+    ): MorningReadSnapshot {
+        val autonomicSource = "user_confirmed_no_sleep"
+        val scoreResult = scoreMorningRead(
+            durationMinutes = 0,
+            autonomicRmssd = null,
+            autonomicSource = autonomicSource,
+            ppi247Autonomic = null,
+            cycleCount = null,
+            wakePhases = null,
+            baselineReady = baselineReady,
+            recoveryAvailable = false,
+            ansAvailable = false,
+            ppiWindowLabel = "no main sleep",
+            missingPpiReason = "No main sleep window was selected, so overnight PPI was not aligned to a fabricated window."
+        )
+        val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
+        return MorningReadSnapshot(
+            sourceDate = sourceDate,
+            status = status,
+            confidence = "user_confirmed",
+            overnightAutonomicSource = autonomicSource,
+            sleepDurationMinutes = 0,
+            nightlyRmssd = null,
+            baselineReady = baselineReady,
+            recoveryAvailable = false,
+            summary = "${status.name.lowercase().replaceFirstChar { it.titlecase() }} (user confirmed no sleep)",
+            reasons = listOf("You marked this day as having no main sleep window.") + scoreResult.reasons,
+            isInterim = false,
+            sleepDataReady = true,
+            rawPpiGoodEpochCount = null,
+            rawPpiPoorEpochCount = null,
+            rawPpiCoverageHours = null,
+            hrvTrajectory = emptyList()
         )
     }
 
@@ -2949,6 +3137,11 @@ class ProbeRepository(
             "raw_ppi_calibrated_window_primary_with_sleep_report" -> "Calibrated-window PPI"
             "raw_ppi_manual_window_primary_with_sleep_report" -> "Manual-window PPI"
             "raw_ppi_inferred_window_primary_with_sleep_report" -> "PPI-inferred-window PPI"
+            "edited_sleep_episode_primary" -> "Edited-window PPI"
+            "mixed_sleep_episode_primary" -> "Confirmed-window PPI"
+            "manual_sleep_episode_primary" -> "Manual-window PPI"
+            "confirmed_sleep_episode_primary" -> "Confirmed-window PPI"
+            "user_confirmed_no_sleep" -> "No-sleep"
             "nightly_recharge_summary" -> "Nightly Recharge"
             else -> "Overnight"
         }
