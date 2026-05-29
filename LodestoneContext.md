@@ -12,6 +12,7 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
   - Check in / sync / readiness read
   - optional explicit sleep and wake markers
   - Catch up when stale syncs, missed markers, or unresolved sleep/rest candidates need repair
+  - candidate review for possible sleep, nap, rest, no-sleep, and edited windows
   - optional food-log import
   - evening review with outcome, approach-to-day, notes, and muscle weakness flag
 - The app should avoid becoming a general quantified-self dashboard unless a metric has plausible pacing/recovery value.
@@ -33,6 +34,10 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 - Polar Sleep is now best treated as supporting/vendor context rather than the
   canonical readiness gate. Raw PPI plus manual or inferred sleep/rest episodes
   should become the primary local readiness basis.
+- Inferred PPI sleep/rest rows are suggestions until the user accepts or edits
+  them. User-confirmed primary episodes can drive the readiness window;
+  confirmed naps/rest remain context unless explicitly selected, and confirmed
+  no-sleep days avoid fabricating sleep timing.
 - Flow sync often appears to make sleep reports available, but at least one test suggested Lodestone-only sync can eventually retrieve resolved sleep data too.
 - The current hypothesis is not fully settled:
   - the Loop likely does some processing locally
@@ -49,6 +54,8 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 
 - `PPI_247` belongs in the real autonomic lane if present for accepted or
   inferred sleep/rest windows.
+- Candidate refresh should not reinsert inferred windows that overlap a
+  confirmed sleep/rest/no-sleep decision for the same date.
 - `HR_247` is useful context but is not a substitute for PPI/HRV.
 - Nightly Recharge remains useful as a semi-derived supporting autonomic lane.
 - Sleep structure, vendor sleep timing, respiration, skin temperature, and
@@ -127,6 +134,14 @@ Treat this document as a snapshot and guidance aid, not the source of truth. If 
 
 - The model is still prototype/deterministic and should be presented as interim.
 - Do not claim the model “works” until enough paired daily prediction/outcome data exists.
+- Use `scripts/readiness_outcome_report.py` to audit paired readiness/outcome
+  days, stability transitions, coarse next-day payback context, and calibration
+  buckets for no-sleep nights, DSPS-like timings, naps, inferred candidates, and
+  zero-input days.
+- Use `scripts/daily_data_completeness.py --start-date ... --end-date ...` for
+  recent lane audits. It distinguishes raw-pruned derived rows, FULL-only
+  supporting lanes, disabled activity sample sync, and attempted-but-empty or
+  failed sync domains.
 - Current useful predictors likely include:
   - overnight PPI/RMSSD trajectory
   - sleep duration and timing

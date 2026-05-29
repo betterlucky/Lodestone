@@ -39,6 +39,28 @@ interface ProbeDao {
     @Query("DELETE FROM sleep_episode WHERE id = :id")
     suspend fun deleteSleepEpisode(id: Long)
 
+    @Query("SELECT * FROM sleep_episode WHERE id = :id LIMIT 1")
+    suspend fun getSleepEpisodeById(id: Long): SleepEpisodeEntity?
+
+    @Query(
+        """
+        SELECT * FROM sleep_episode
+        WHERE sourceDate = :sourceDate AND episodeKind = :episodeKind
+        ORDER BY updatedAtEpochMs DESC, id DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestSleepEpisodeForDateAndKind(sourceDate: String, episodeKind: String): SleepEpisodeEntity?
+
+    @Query(
+        """
+        UPDATE sleep_episode
+        SET isPrimaryForReadiness = 0, updatedAtEpochMs = :updatedAtEpochMs
+        WHERE sourceDate = :sourceDate AND isPrimaryForReadiness = 1
+        """
+    )
+    suspend fun clearPrimarySleepEpisodeForDate(sourceDate: String, updatedAtEpochMs: Long)
+
     @Query(
         """
         DELETE FROM sleep_episode
@@ -51,6 +73,23 @@ interface ProbeDao {
     suspend fun deleteUnconfirmedSleepEpisodeCandidatesForDate(
         sourceDate: String,
         source: String,
+        confirmedConfidence: String
+    )
+
+    @Query(
+        """
+        DELETE FROM sleep_episode
+        WHERE sourceDate = :sourceDate
+          AND source = :source
+          AND episodeKind = :episodeKind
+          AND isPrimaryForReadiness = 0
+          AND confidence != :confirmedConfidence
+        """
+    )
+    suspend fun deleteUnconfirmedSleepEpisodeCandidatesForDateAndKind(
+        sourceDate: String,
+        source: String,
+        episodeKind: String,
         confirmedConfidence: String
     )
 

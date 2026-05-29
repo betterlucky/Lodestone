@@ -35,6 +35,7 @@ fun DataScreen(
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
+    sleepEpisodeReviewState: SleepEpisodeReviewState,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
@@ -158,6 +159,19 @@ fun DataScreen(
                     }
                 }
             }
+        }
+        item {
+            CandidateReviewSection(
+                state = sleepEpisodeReviewState,
+                actionsEnabled = actionsEnabled && !viewModel.isBusy,
+                onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
+                onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
+                onMarkRest = viewModel::markSleepEpisodeAsRest,
+                onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
+                onClearDecision = viewModel::clearSleepEpisodeDecision,
+                onEditWindow = viewModel::editSleepEpisodeWindow,
+                onMarkNoMainSleep = viewModel::markNoMainSleep
+            )
         }
         item {
             SectionCard(title = "Overnight HRV detail", subtitle = "Signal coverage from normal Loop sync") {

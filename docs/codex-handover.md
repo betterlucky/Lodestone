@@ -15,10 +15,14 @@ This note preserves useful context from older Codex project threads that may sta
 
 - Repository remote is `https://github.com/betterlucky/Lodestone.git`.
 - `main` is the stable baseline unless a later handover says otherwise.
-- At the time this note was updated, branch `codex/provisional-autonomic-gate` contained the latest morning-read fix and PR #6 existed for it.
-- That fix addressed a real morning state where `PPI_247` timed out, leaving `0` epochs/no HRV, while the provisional model still showed `OK` from duration alone.
-- Intended behaviour after that fix: provisional status should remain pending/TBC until usable PPI-derived autonomic data exists, and wake-sync failures should still arm the morning retry schedule.
-- If a new session starts after PR #6 is merged, sync/pull `main` and delete the stale local branch.
+- Candidate Review 1-8 is implemented in the local working tree: contract, UI
+  state, review dialog, accept/edit/rest/dismiss/no-main-sleep actions, primary
+  readiness/no-sleep rules, catch-up repair status, docs, tests, and device
+  startup checks are in place.
+- Local analysis scripts now include readiness/outcome validation
+  (`scripts/readiness_outcome_report.py`) and richer daily lane completeness
+  diagnostics (`scripts/daily_data_completeness.py`) with range mode, raw-vs-
+  derived counts, and sync-profile interpretation.
 
 ## Core Decisions From Prior Threads
 
@@ -29,6 +33,12 @@ This note preserves useful context from older Codex project threads that may sta
 - **Flow handoff is practical reality.** Polar Flow competes for the single BLE connection. Lodestone should provide clear handoff/retry behaviour rather than promising seamless coexistence.
 - **Food stays separate.** FoodLog owns food capture. Lodestone imports daily CSVs and weight rows from the FoodLog workflow.
 - **User-selected date matters.** Review/import/reset behaviour should respect the active review date and should not accidentally rewrite ratings or notes for another date.
+- **Inferred candidates are not facts.** PPI-inferred sleep/rest windows remain
+  suggestions until the user accepts, edits, dismisses, marks rest, or marks no
+  main sleep.
+- **Primary readiness window is explicit.** A user-confirmed primary episode can
+  drive readiness. Naps/rest stay context unless explicitly primary. Confirmed
+  no-sleep days should not fabricate a sleep window.
 
 ## Current Research Memory
 
@@ -38,10 +48,17 @@ This note preserves useful context from older Codex project threads that may sta
 - Garmin Connect/givemydata access is fragile on macOS because of browser automation, permissions, Chrome profile/driver issues, and possible rate limits.
 - H10/Sleep2/Health Connect are calibration routes, not normal daily workflow. Sleep2 screenshot import uses the selected review date, so backdated imports need care.
 - The visible short-term need is more paired data, not a smarter-looking model.
+- Completeness reports need sync-profile context: Check in/morning-core do not
+  fetch skin temperature or daily summary, activity sample sync is disabled in
+  the current build, and HR/skin/activity raw rows may be pruned after derived
+  epoch/sample rebuilds.
 
 ## UX And Workflow Direction
 
-- Keep the daily flow low friction: bedtime marker, wake marker/sync, morning read, optional food import, evening review.
+- Keep the daily flow low friction: Check in, optional bedtime/wake markers,
+  candidate review when needed, optional food import, evening review.
+- Catch up now acts as a repair workflow across missing dates: it shows
+  candidate, confirmed/no-sleep, no-candidate, and saved-review states.
 - Avoid turning Lodestone into a generic quantified-self dashboard. Metrics should earn their place by helping pacing/recovery interpretation.
 - The dark theme worked for evening review but may feel gloomy for daytime use; colour/visual polish can be revisited once data collection is stable.
 - Settings should stay out of the main tab flow where possible.

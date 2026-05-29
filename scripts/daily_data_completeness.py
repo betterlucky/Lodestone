@@ -5,21 +5,26 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-from datetime import date
+from collections import Counter
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
+
+ACTIVITY_SAMPLE_SYNC_ENABLED = False
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Summarise whether the important daily data lanes are populated.")
     parser.add_argument("--health-db", required=True, help="Path to the Lodestone/HealthMonitor SQLite database.")
     parser.add_argument("--date", default=date.today().isoformat(), help="Source date to check, YYYY-MM-DD.")
+    parser.add_argument("--start-date", help="First source date to check, YYYY-MM-DD.")
+    parser.add_argument("--end-date", help="Last source date to check, YYYY-MM-DD.")
     parser.add_argument("--garmin-db", help="Optional Garmin givemydata SQLite database.")
     parser.add_argument("--json", action="store_true", help="Emit JSON instead of a compact text report.")
     return parser.parse_args()
 
 
-def connect(path: str) -> sqlite3.Connection:
+def connect(path: str | Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -27,6 +32,20 @@ def connect(path: str) -> sqlite3.Connection:
 
 def one(conn: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
     return conn.execute(query, params).fetchone()
+
+
+def date_range(start: str, end: str) -> list[str]:
+    start_date = date.fromisoformat(start)
+    end_date = date.fromisoformat(end)
+    if end_date < start_date:
+        return []
+    return [(start_date + timedelta(days=offset)).isoformat() for offset in range((end_date - start_date).days + 1)]
+
+
+def requested_dates(args: argparse.Namespace) -> list[str]:
+    if args.start_date or args.end_date:
+        return date_range(args.start_date or args.date, args.end_date or args.date)
+    return [args.date]
 
 
 def fetch_json(row: sqlite3.Row | None, column: str = "rawPayloadJson") -> dict[str, Any]:
@@ -38,6 +57,10 @@ def fetch_json(row: sqlite3.Row | None, column: str = "rawPayloadJson") -> dict[
         return {}
 
 
+def count_rows(conn: sqlite3.Connection, table: str, source_date: str) -> int:
+    return int(one(conn, f"select count(*) as n from {table} where sourceDate = ?", (source_date,))["n"])
+
+
 def sleep_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
     row = one(conn, "select * from sleep_night_raw where sourceDate = ? order by syncTimestampEpochMs desc limit 1", (source_date,))
     payload = fetch_json(row)
@@ -45,6 +68,7 @@ def sleep_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
     summary = result.get("summary") or {}
     return {
         "present": row is not None,
+        "records": count_rows(conn, "sleep_night_raw", source_date),
         "window": f"{result.get('sleepStartTime')} -> {result.get('sleepEndTime')}" if result.get("sleepStartTime") else None,
         "duration_minutes": summary.get("durationMinutes"),
         "cycles": summary.get("cycleCount"),
@@ -57,6 +81,7 @@ def nightly_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any
     summary = payload.get("summary") or payload
     return {
         "present": row is not None,
+        "records": count_rows(conn, "nightly_recharge_raw", source_date),
         "rmssd": summary.get("meanNightlyRecoveryRMSSD"),
         "rri": summary.get("meanNightlyRecoveryRRI"),
         "ans": payload.get("ansStatus") if payload.get("ansStatus") is not None else summary.get("ansCharge"),
@@ -91,9 +116,9 @@ def ppi_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
         (source_date,),
     )
     return {
-        "present": bool(raw and raw["samples"]),
-        "batches": raw["batches"] if raw else 0,
-        "samples": raw["samples"] if raw else 0,
+        "present": bool(raw and raw["samples"]) or bool(epochs and epochs["epochs"]),
+        "raw_batches": raw["batches"] if raw else 0,
+        "raw_samples": raw["samples"] if raw else 0,
         "first_start": raw["first_start"] if raw else None,
         "last_start": raw["last_start"] if raw else None,
         "epochs": epochs["epochs"] if epochs else 0,
@@ -105,8 +130,25 @@ def ppi_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
     }
 
 
-def simple_count(conn: sqlite3.Connection, table: str, source_date: str) -> int:
-    return int(one(conn, f"select count(*) as n from {table} where sourceDate = ?", (source_date,))["n"])
+def hr_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
+    epochs = one(
+        conn,
+        """
+        select count(*) as n, avg(meanHrBpm) as avg_hr, min(minHrBpm) as min_hr, max(maxHrBpm) as max_hr
+        from hr247_epoch
+        where sourceDate = ?
+        """,
+        (source_date,),
+    )
+    raw_records = count_rows(conn, "hr247_day_raw", source_date)
+    epoch_count = epochs["n"] if epochs else 0
+    return {
+        "present": raw_records > 0 or epoch_count > 0,
+        "raw_records": raw_records,
+        "epochs": epoch_count,
+        "avg_epoch_hr": round(epochs["avg_hr"], 1) if epochs and epochs["avg_hr"] is not None else None,
+        "range": f"{epochs['min_hr']}..{epochs['max_hr']}" if epochs and epochs["min_hr"] is not None and epochs["max_hr"] is not None else None,
+    }
 
 
 def skin_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
@@ -115,12 +157,210 @@ def skin_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
         "select count(*) as n, avg(temperatureCelsius) as avg_t, min(temperatureCelsius) as min_t, max(temperatureCelsius) as max_t from skin_temperature_sample where sourceDate = ?",
         (source_date,),
     )
+    raw_records = count_rows(conn, "skin_temperature_raw", source_date)
+    samples = row["n"] if row else 0
     return {
-        "present": bool(row and row["n"]),
-        "samples": row["n"] if row else 0,
+        "present": raw_records > 0 or samples > 0,
+        "raw_records": raw_records,
+        "samples": samples,
         "avg": round(row["avg_t"], 2) if row and row["avg_t"] is not None else None,
         "range": round(row["max_t"] - row["min_t"], 2) if row and row["max_t"] is not None and row["min_t"] is not None else None,
     }
+
+
+def daily_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
+    records = count_rows(conn, "daily_summary_raw", source_date)
+    return {"present": records > 0, "records": records}
+
+
+def activity_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
+    epochs = one(
+        conn,
+        "select count(*) as n, sum(steps) as steps, avg(met) as avg_met from activity_epoch where sourceDate = ?",
+        (source_date,),
+    )
+    raw_records = count_rows(conn, "activity_samples_raw", source_date)
+    epoch_count = epochs["n"] if epochs else 0
+    return {
+        "present": raw_records > 0 or epoch_count > 0,
+        "raw_records": raw_records,
+        "epochs": epoch_count,
+        "steps": epochs["steps"] if epochs else None,
+        "avg_met": round(epochs["avg_met"], 2) if epochs and epochs["avg_met"] is not None else None,
+    }
+
+
+def range_contains(requested_range: str | None, source_date: str) -> bool:
+    if not requested_range:
+        return False
+    if ".." not in requested_range:
+        return requested_range == source_date
+    start, end = requested_range.split("..", 1)
+    return bool(start and end and start <= source_date <= end)
+
+
+def profile_from_notes(notes: str | None) -> str | None:
+    if not notes:
+        return None
+    lowered = notes.lower()
+    if "manual sync" in lowered:
+        return "FULL"
+    if "check-in sync" in lowered:
+        return "CHECK_IN"
+    if "morning core sync" in lowered:
+        return "MORNING_CORE"
+    if "morning ppi retry" in lowered:
+        return "MORNING_PPI_RETRY"
+    if "morning sleep report retry" in lowered:
+        return "MORNING_SLEEP_RETRY"
+    return None
+
+
+def domain_sync_results(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        select dr.domain, dr.requestedRange, dr.status, dr.recordCount, dr.detailSummary,
+               dr.errorCode, dr.endedAtEpochMs, sr.status as runStatus, sr.notes as runNotes
+        from sync_domain_result dr
+        left join sync_run sr on sr.id = dr.syncRunId
+        order by dr.endedAtEpochMs desc, dr.id desc
+        """
+    ).fetchall()
+    latest_by_domain: dict[str, dict[str, Any]] = {}
+    profiles: Counter[str] = Counter()
+    for row in rows:
+        if not range_contains(row["requestedRange"], source_date):
+            continue
+        domain = str(row["domain"]).upper()
+        if domain == "STORAGE_MAINTENANCE":
+            continue
+        profile = profile_from_notes(row["runNotes"])
+        if profile:
+            profiles[profile] += 1
+        latest_by_domain.setdefault(
+            domain,
+            {
+                "domain": domain,
+                "status": row["status"],
+                "record_count": row["recordCount"],
+                "requested_range": row["requestedRange"],
+                "detail": row["detailSummary"],
+                "error": row["errorCode"],
+                "run_status": row["runStatus"],
+                "run_profile": profile,
+                "run_notes": row["runNotes"],
+                "ended_at_epoch_ms": row["endedAtEpochMs"],
+            },
+        )
+    return {
+        "profiles": dict(profiles),
+        "domains": latest_by_domain,
+        "has_full_run": profiles.get("FULL", 0) > 0,
+        "has_core_run": any(profiles.get(profile, 0) > 0 for profile in ("CHECK_IN", "MORNING_CORE", "FULL")),
+    }
+
+
+def domain_line(sync: dict[str, Any] | None) -> str:
+    if not sync:
+        return "not attempted"
+    status = sync.get("status")
+    records = sync.get("record_count")
+    error = sync.get("error")
+    suffix = f", error={error}" if error else ""
+    return f"{status}, records={records}, profile={sync.get('run_profile') or 'unknown'}{suffix}"
+
+
+def interpret_supporting_lanes(polar: dict[str, Any], sync: dict[str, Any]) -> dict[str, str]:
+    domains = sync["domains"]
+    has_full_run = sync["has_full_run"]
+    has_core_run = sync["has_core_run"]
+    interpretations: dict[str, str] = {}
+
+    hr = polar["hr247"]
+    hr_sync = domains.get("HR_247")
+    ppi_sync = domains.get("PPI_247")
+    if hr["epochs"] > 0 and hr["raw_records"] == 0:
+        interpretations["HR_247"] = "present from derived epochs; raw records were likely pruned after epoch rebuild"
+    elif hr["present"]:
+        interpretations["HR_247"] = "present"
+    elif hr_sync:
+        if hr_sync.get("status") == "ERROR":
+            interpretations["HR_247"] = f"sync issue: attempted but failed with {hr_sync.get('error') or 'error'}"
+        elif hr_sync.get("status") == "EMPTY":
+            interpretations["HR_247"] = "attempted but device returned no rows"
+        elif hr_sync.get("record_count", 0) > 0:
+            interpretations["HR_247"] = "reporting gap: sync recorded rows but raw/derived HR tables are empty"
+        else:
+            interpretations["HR_247"] = f"not populated after attempted sync ({hr_sync.get('status')})"
+    elif has_core_run:
+        if ppi_sync and ppi_sync.get("status") == "ERROR":
+            interpretations["HR_247"] = "sync gap: core profile should attempt HR_247 after PPI, but no HR result was recorded after a PPI failure/timeout"
+        else:
+            interpretations["HR_247"] = "sync/reporting gap: core profile should attempt HR_247 but no domain result was recorded"
+    else:
+        interpretations["HR_247"] = "not attempted by the recorded sync profile"
+
+    skin = polar["skin_temperature"]
+    skin_sync = domains.get("SKIN_TEMPERATURE")
+    if skin["samples"] > 0 and skin["raw_records"] == 0:
+        interpretations["SKIN_TEMPERATURE"] = "present from derived samples; raw records were pruned after sample rebuild"
+    elif skin["present"]:
+        interpretations["SKIN_TEMPERATURE"] = "present"
+    elif skin_sync:
+        if skin_sync.get("status") == "ERROR":
+            interpretations["SKIN_TEMPERATURE"] = f"sync issue: attempted but failed with {skin_sync.get('error') or 'error'}"
+        elif skin_sync.get("status") == "EMPTY":
+            interpretations["SKIN_TEMPERATURE"] = "attempted in FULL sync but device returned no rows"
+        elif skin_sync.get("record_count", 0) > 0:
+            interpretations["SKIN_TEMPERATURE"] = "reporting gap: sync recorded rows but raw/derived skin tables are empty"
+        else:
+            interpretations["SKIN_TEMPERATURE"] = f"not populated after attempted sync ({skin_sync.get('status')})"
+    elif not has_full_run:
+        interpretations["SKIN_TEMPERATURE"] = "expected for Check in/morning-core: only FULL manual sync attempts skin temperature"
+    else:
+        interpretations["SKIN_TEMPERATURE"] = "sync/reporting gap: FULL sync was seen but no skin-temperature domain result was recorded"
+
+    daily = polar["daily_summary"]
+    daily_sync = domains.get("DAILY_SUMMARY")
+    if daily["present"]:
+        interpretations["DAILY_SUMMARY"] = "present"
+    elif daily_sync:
+        if daily_sync.get("status") == "ERROR":
+            interpretations["DAILY_SUMMARY"] = f"sync issue: attempted but failed with {daily_sync.get('error') or 'error'}"
+        elif daily_sync.get("status") == "EMPTY":
+            interpretations["DAILY_SUMMARY"] = "attempted in FULL sync but device returned no rows"
+        elif daily_sync.get("record_count", 0) > 0:
+            interpretations["DAILY_SUMMARY"] = "reporting gap: sync recorded rows but daily_summary_raw is empty"
+        else:
+            interpretations["DAILY_SUMMARY"] = f"not populated after attempted sync ({daily_sync.get('status')})"
+    elif not has_full_run:
+        interpretations["DAILY_SUMMARY"] = "expected for Check in/morning-core: only FULL manual sync attempts daily summary"
+    else:
+        interpretations["DAILY_SUMMARY"] = "sync/reporting gap: FULL sync was seen but no daily-summary domain result was recorded"
+
+    activity = polar["activity_samples"]
+    activity_sync = domains.get("ACTIVITY_SAMPLES")
+    if activity["epochs"] > 0 and activity["raw_records"] == 0:
+        interpretations["ACTIVITY_SAMPLES"] = "present from derived epochs; raw records were pruned after epoch rebuild"
+    elif activity["present"]:
+        interpretations["ACTIVITY_SAMPLES"] = "present"
+    elif activity_sync:
+        if activity_sync.get("status") == "ERROR":
+            interpretations["ACTIVITY_SAMPLES"] = f"sync issue: attempted but failed with {activity_sync.get('error') or 'error'}"
+        elif activity_sync.get("status") == "EMPTY":
+            interpretations["ACTIVITY_SAMPLES"] = "attempted but device returned no rows"
+        elif activity_sync.get("record_count", 0) > 0:
+            interpretations["ACTIVITY_SAMPLES"] = "reporting gap: sync recorded rows but raw/derived activity tables are empty"
+        else:
+            interpretations["ACTIVITY_SAMPLES"] = f"not populated after attempted sync ({activity_sync.get('status')})"
+    elif not ACTIVITY_SAMPLE_SYNC_ENABLED:
+        interpretations["ACTIVITY_SAMPLES"] = "expected: activity sample sync is disabled in the current app build"
+    elif not has_full_run:
+        interpretations["ACTIVITY_SAMPLES"] = "expected for Check in/morning-core: activity samples are FULL-only when enabled"
+    else:
+        interpretations["ACTIVITY_SAMPLES"] = "sync/reporting gap: FULL sync was seen but no activity domain result was recorded"
+
+    return interpretations
 
 
 def latest_storage(conn: sqlite3.Connection) -> dict[str, Any]:
@@ -158,49 +398,87 @@ def garmin_summary(path: str | None, source_date: str) -> dict[str, Any]:
         conn.close()
 
 
+def build_report_for_connection(conn: sqlite3.Connection, source_date: str, garmin_db: str | None) -> dict[str, Any]:
+    food = one(conn, "select totalCaloriesKcal, eventCount, teaCount from food_daily_summary where sourceDate = ?", (source_date,))
+    review = one(conn, "select eveningOutcome, approachToDay, muscleWeaknessToday from daily_check_in where sourceDate = ?", (source_date,))
+    wake = one(
+        conn,
+        """
+        select markerEpochMs, markerSource from wake_marker
+        where sourceDate = ?
+          and coalesce(notes, '') != 'manual awake command'
+        order by markerEpochMs desc limit 1
+        """,
+        (source_date,),
+    )
+    sync = domain_sync_results(conn, source_date)
+    polar = {
+        "sleep": sleep_summary(conn, source_date),
+        "nightly_recharge": nightly_summary(conn, source_date),
+        "ppi247": ppi_summary(conn, source_date),
+        "hr247": hr_summary(conn, source_date),
+        "skin_temperature": skin_summary(conn, source_date),
+        "daily_summary": daily_summary(conn, source_date),
+        "activity_samples": activity_summary(conn, source_date),
+        "latest_storage": latest_storage(conn),
+    }
+    return {
+        "source_date": source_date,
+        "polar": polar,
+        "sync": sync,
+        "supporting_lane_interpretation": interpret_supporting_lanes(polar, sync),
+        "journal": {
+            "food_present": food is not None,
+            "calories": food["totalCaloriesKcal"] if food else None,
+            "food_events": food["eventCount"] if food else None,
+            "tea_count": food["teaCount"] if food else None,
+            "review_present": review is not None,
+            "outcome": review["eveningOutcome"] if review else None,
+            "approach": review["approachToDay"] if review else None,
+            "muscle_weakness": bool(review["muscleWeaknessToday"]) if review else None,
+            "wake_marker_present": wake is not None,
+            "wake_marker_source": wake["markerSource"] if wake else None,
+        },
+        "garmin": garmin_summary(garmin_db, source_date),
+    }
+
+
 def build_report(health_db: str, source_date: str, garmin_db: str | None) -> dict[str, Any]:
     conn = connect(health_db)
     try:
-        food = one(conn, "select totalCaloriesKcal, eventCount, teaCount from food_daily_summary where sourceDate = ?", (source_date,))
-        review = one(conn, "select eveningOutcome, approachToDay, muscleWeaknessToday from daily_check_in where sourceDate = ?", (source_date,))
-        wake = one(
-            conn,
-            """
-            select markerEpochMs, markerSource from wake_marker
-            where sourceDate = ?
-              and coalesce(notes, '') != 'manual awake command'
-            order by markerEpochMs desc limit 1
-            """,
-            (source_date,),
-        )
-        return {
-            "source_date": source_date,
-            "polar": {
-                "sleep": sleep_summary(conn, source_date),
-                "nightly_recharge": nightly_summary(conn, source_date),
-                "ppi247": ppi_summary(conn, source_date),
-                "hr247_raw_records": simple_count(conn, "hr247_day_raw", source_date),
-                "skin_temperature": skin_summary(conn, source_date),
-                "daily_summary_records": simple_count(conn, "daily_summary_raw", source_date),
-                "activity_records": simple_count(conn, "activity_samples_raw", source_date),
-                "latest_storage": latest_storage(conn),
-            },
-            "journal": {
-                "food_present": food is not None,
-                "calories": food["totalCaloriesKcal"] if food else None,
-                "food_events": food["eventCount"] if food else None,
-                "tea_count": food["teaCount"] if food else None,
-                "review_present": review is not None,
-                "outcome": review["eveningOutcome"] if review else None,
-                "approach": review["approachToDay"] if review else None,
-                "muscle_weakness": bool(review["muscleWeaknessToday"]) if review else None,
-                "wake_marker_present": wake is not None,
-                "wake_marker_source": wake["markerSource"] if wake else None,
-            },
-            "garmin": garmin_summary(garmin_db, source_date),
-        }
+        return build_report_for_connection(conn, source_date, garmin_db)
     finally:
         conn.close()
+
+
+def build_reports(health_db: str, source_dates: list[str], garmin_db: str | None) -> list[dict[str, Any]]:
+    conn = connect(health_db)
+    try:
+        return [build_report_for_connection(conn, source_date, garmin_db) for source_date in source_dates]
+    finally:
+        conn.close()
+
+
+def range_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    missing_by_lane: dict[str, list[str]] = {lane: [] for lane in ("HR_247", "SKIN_TEMPERATURE", "DAILY_SUMMARY", "ACTIVITY_SAMPLES")}
+    interpretations: Counter[str] = Counter()
+    for report in reports:
+        polar = report["polar"]
+        present = {
+            "HR_247": polar["hr247"]["present"],
+            "SKIN_TEMPERATURE": polar["skin_temperature"]["present"],
+            "DAILY_SUMMARY": polar["daily_summary"]["present"],
+            "ACTIVITY_SAMPLES": polar["activity_samples"]["present"],
+        }
+        for lane, is_present in present.items():
+            if not is_present:
+                missing_by_lane[lane].append(report["source_date"])
+                interpretations[f"{lane}: {report['supporting_lane_interpretation'][lane]}"] += 1
+    return {
+        "date_count": len(reports),
+        "missing_by_lane": missing_by_lane,
+        "interpretation_counts": dict(interpretations),
+    }
 
 
 def print_text(report: dict[str, Any]) -> None:
@@ -209,13 +487,19 @@ def print_text(report: dict[str, Any]) -> None:
     sleep = polar["sleep"]
     nightly = polar["nightly_recharge"]
     ppi = polar["ppi247"]
+    hr = polar["hr247"]
     skin = polar["skin_temperature"]
+    daily = polar["daily_summary"]
+    activity = polar["activity_samples"]
     journal = report["journal"]
     garmin = report["garmin"]
-    print(f"  Polar sleep: {'yes' if sleep['present'] else 'no'} {sleep.get('window') or ''}".rstrip())
-    print(f"  Nightly Recharge: {'yes' if nightly['present'] else 'no'} RMSSD={nightly.get('rmssd')} RRI={nightly.get('rri')} ANS={nightly.get('ans')}")
-    print(f"  PPI_247: {'yes' if ppi['present'] else 'no'} samples={ppi['samples']} epochs={ppi['epochs']} good/review/poor={ppi['good_epochs']}/{ppi['review_epochs']}/{ppi['poor_epochs']} avgRMSSD={ppi['avg_epoch_rmssd']}")
-    print(f"  HR/Skin/Activity: hrRaw={polar['hr247_raw_records']} skinSamples={skin['samples']} skinAvg={skin['avg']} daily={polar['daily_summary_records']} activity={polar['activity_records']}")
+    print(f"  Polar sleep: {'yes' if sleep['present'] else 'no'} records={sleep['records']} {sleep.get('window') or ''}".rstrip())
+    print(f"  Nightly Recharge: {'yes' if nightly['present'] else 'no'} records={nightly['records']} RMSSD={nightly.get('rmssd')} RRI={nightly.get('rri')} ANS={nightly.get('ans')}")
+    print(f"  PPI_247: {'yes' if ppi['present'] else 'no'} rawBatches={ppi['raw_batches']} rawSamples={ppi['raw_samples']} epochs={ppi['epochs']} good/review/poor={ppi['good_epochs']}/{ppi['review_epochs']}/{ppi['poor_epochs']} avgRMSSD={ppi['avg_epoch_rmssd']}")
+    print(f"  HR_247: {'yes' if hr['present'] else 'no'} rawRecords={hr['raw_records']} epochs={hr['epochs']} avgHR={hr['avg_epoch_hr']}")
+    print(f"  Skin temperature: {'yes' if skin['present'] else 'no'} rawRecords={skin['raw_records']} samples={skin['samples']} avg={skin['avg']}")
+    print(f"  Daily summary: {'yes' if daily['present'] else 'no'} records={daily['records']}")
+    print(f"  Activity samples: {'yes' if activity['present'] else 'no'} rawRecords={activity['raw_records']} epochs={activity['epochs']} steps={activity['steps']}")
     print(f"  Journal: food={'yes' if journal['food_present'] else 'no'} calories={journal['calories']} review={'yes' if journal['review_present'] else 'no'} wakeMarker={'yes' if journal['wake_marker_present'] else 'no'}")
     if garmin.get("configured"):
         present = [key for key in ("hrv", "sleep", "stress", "body_battery", "heart_rate", "respiration", "spo2") if garmin.get(key)]
@@ -223,15 +507,42 @@ def print_text(report: dict[str, Any]) -> None:
     else:
         print("  Garmin: not configured")
     print(f"  Storage: {polar['latest_storage'].get('summary') if polar['latest_storage'].get('present') else 'unknown'}")
+    print("  Supporting lane interpretation:")
+    for lane, message in report["supporting_lane_interpretation"].items():
+        print(f"    {lane}: {message}")
+    if report["sync"]["domains"]:
+        print("  Latest sync domain results covering this date:")
+        for domain in sorted(report["sync"]["domains"]):
+            print(f"    {domain}: {domain_line(report['sync']['domains'][domain])}")
+
+
+def print_range_text(reports: list[dict[str, Any]]) -> None:
+    for index, report in enumerate(reports):
+        if index:
+            print()
+        print_text(report)
+    if len(reports) > 1:
+        summary = range_summary(reports)
+        print()
+        print("Range summary")
+        print(f"  dates: {summary['date_count']}")
+        for lane, dates in summary["missing_by_lane"].items():
+            print(f"  {lane} missing: {', '.join(dates) if dates else 'none'}")
+        print("  interpretation counts:")
+        for message, count in sorted(summary["interpretation_counts"].items()):
+            print(f"    {count}x {message}")
 
 
 def main() -> None:
     args = parse_args()
-    report = build_report(args.health_db, args.date, args.garmin_db)
+    reports = build_reports(args.health_db, requested_dates(args), args.garmin_db)
     if args.json:
-        print(json.dumps(report, indent=2))
+        if len(reports) == 1 and not (args.start_date or args.end_date):
+            print(json.dumps(reports[0], indent=2))
+        else:
+            print(json.dumps({"reports": reports, "range_summary": range_summary(reports)}, indent=2))
     else:
-        print_text(report)
+        print_range_text(reports)
 
 
 if __name__ == "__main__":

@@ -20,13 +20,17 @@ underlying physiology?
 - Produces a readiness signal from raw PPI plus manual or inferred sleep/rest
   windows, with Polar sleep reports kept as supporting context rather than the
   canonical gate.
+- Lets the user review inferred sleep/rest candidates from Check in or Catch up,
+  accept/edit/dismiss them, mark rest or no main sleep, and choose which
+  confirmed window may drive readiness.
 - Shows an overnight HRV trajectory view with raw RMSSD, rolling-median, and
   linear-trend overlays.
 - Captures daily review labels such as evening outcome, approach to the day,
   notes, and muscle weakness.
 - Imports food-log CSVs and weight rows from a separate food-logging workflow.
-- Includes analysis helpers for sleep-window calibration, completeness checks,
-  Garmin sidecar comparison, and research-only Polar cloud probing.
+- Includes analysis helpers for sleep-window calibration, readiness/outcome
+  validation, completeness checks, Garmin sidecar comparison, and research-only
+  Polar cloud probing.
 
 ## Current Research Findings
 
@@ -40,6 +44,8 @@ These are project findings, not general medical claims:
 - A provisional sleep/rest window based on markers plus sustained low-motion HR
   drop appears promising enough to propose candidates while the final report is
   pending.
+- PPI-only candidates are suggestions until accepted or edited. Confirmed
+  no-sleep days are represented directly instead of fabricating a sleep window.
 - Polar Flow is still useful for firmware and sleep-report workflows, but it
   competes for the Loop's single BLE connection. Lodestone therefore treats Flow
   as an explicit handoff rather than something that can seamlessly coexist in
@@ -64,14 +70,29 @@ The intended low-friction flow is moving toward:
 2. Record sleep/wake events with `I'm going to bed` and `I'm awake` when those
    explicit markers are useful.
 3. Run `Catch up` when Lodestone detects stale syncs, missing markers, or
-   unresolved sleep/rest candidates.
-4. Interpret the readiness/stability signal as a pacing prompt, not as a
+   unresolved sleep/rest candidates. The repair dialog groups missing dates,
+   shows candidates, confirmed/no-sleep decisions, saved evening reviews, and
+   no-candidate days.
+4. Review inferred windows when needed: use a window as main sleep, keep it as a
+   nap/rest context row, edit the timing, dismiss it, or mark no main sleep.
+5. Interpret the readiness/stability signal as a pacing prompt, not as a
    diagnosis.
-5. At day's end, record the subjective outcome and optional context.
+6. At day's end, record the subjective outcome and optional context.
 
 The evening labels are deliberately important. The model is still being trained
 against lived outcomes rather than treated as proven because a graph looked
 convincing once.
+
+For local calibration, `scripts/readiness_outcome_report.py --health-db <db>`
+compares morning readiness snapshots with saved evening outcomes, day-to-day
+stability, coarse next-day payback context, and sleep-episode edge cases such as
+no-sleep nights, delayed timings, naps, and empty days. Its output is
+intentionally descriptive; it should not be used as a precise load-budget claim.
+
+For data-lane checks, `scripts/daily_data_completeness.py --health-db <db>
+--start-date <yyyy-mm-dd> --end-date <yyyy-mm-dd>` reports raw and derived lane
+counts, plus sync-profile diagnostics so FULL-only lanes and pruned raw records
+are not mistaken for missing data.
 
 ## Tech Stack
 

@@ -70,6 +70,7 @@ fun ProbeApp(
     val morningRead by viewModel.morningRead.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
     val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
+    val sleepEpisodeReviewState by viewModel.sleepEpisodeReviewState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { ProbeTab.entries.size })
     val pagerScope = rememberCoroutineScope()
@@ -194,6 +195,7 @@ fun ProbeApp(
                                             syncRuns = syncRuns,
                                             wakeMarkers = recentWakeMarkers,
                                             dailyCheckIns = dailyCheckIns,
+                                            sleepEpisodeReviewState = sleepEpisodeReviewState,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }
