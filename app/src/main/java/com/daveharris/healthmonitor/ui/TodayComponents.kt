@@ -285,21 +285,10 @@ fun todayDataQualitySummary(
 
 @Composable
 fun TodayHeroCard(
-    today: String,
-    todayStatus: TodayReadinessStatus,
-    morningRead: MorningReadSnapshot?,
+    nowState: NowScreenState,
     onOpenSettings: () -> Unit
 ) {
-    val statusLabel = morningRead?.status?.let { labelForStatus(it.name) } ?: "TBC"
-    val stability = stabilityLabel(morningRead)
-    val qualifier = when {
-        morningRead?.sleepDataReady == true -> "Confirmed"
-        morningRead?.status != null -> "Provisional"
-        todayStatus.stage == TodayReadinessStage.SLEEP_TIME -> "Sleep time"
-        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> "Starting sync"
-        else -> "TBC"
-    }
-    val confidence = morningRead?.confidence
+    val confidence = nowState.activeMorningRead?.confidence
         ?.takeUnless { it.equals("pending", ignoreCase = true) }
         ?.replaceFirstChar { it.titlecase() }
 
@@ -328,7 +317,7 @@ fun TodayHeroCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        formatHeroDate(today).uppercase(),
+                        formatHeroDate(nowState.today).uppercase(),
                         color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
@@ -343,7 +332,7 @@ fun TodayHeroCard(
                     }
                 }
                 Text(
-                    "Readiness: $statusLabel",
+                    nowState.currentState.label,
                     color = MaterialTheme.colorScheme.onPrimary,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
@@ -352,13 +341,16 @@ fun TodayHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    HeroPill(qualifier)
+                    HeroPill(nowState.currentState.qualifier)
+                    HeroPill("Signal: ${nowState.signalRobustness.label}")
                     confidence?.let { HeroPill("$it confidence") }
-                    stability?.let { HeroPill("Stability: $it") }
-                    todayStatus.heroPrompt?.let { HeroPill(it) }
+                    if (nowState.stateStability.availability != NowDataAvailability.MISSING) {
+                        HeroPill("Stability: ${nowState.stateStability.label}")
+                    }
+                    nowState.readinessStatus.heroPrompt?.let { HeroPill(it) }
                 }
                 Text(
-                    todayStatus.message,
+                    nowState.currentState.message,
                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.90f),
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -403,9 +395,10 @@ private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
 
 @Composable
 fun MorningSignalSection(
-    morningRead: MorningReadSnapshot?,
-    todayStatus: TodayReadinessStatus
+    nowState: NowScreenState
 ) {
+    val morningRead = nowState.activeMorningRead
+    val todayStatus = nowState.readinessStatus
     val tone = statusTone(morningRead?.status)
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -419,15 +412,17 @@ fun MorningSignalSection(
             if (morningRead == null) {
                 Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DetailRow("Current state", nowState.currentState.label)
                     DetailRow("Report state", todayStatus.sleepReport)
                     DetailRow("PPI", todayStatus.ppiReceipt)
+                    DetailRow("Marker", nowState.markerStatus.detail)
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Readiness", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
-                    DetailRow("Stability", stabilityLabel(morningRead) ?: "TBC")
+                    DetailRow("Stability", nowState.stateStability.label)
                     DetailRow("Report state", morningReadReportStateLabel(morningRead))
-                    DetailRow("Basis", morningReadBasisLabel(morningRead, todayStatus))
+                    DetailRow("Basis", nowState.signalRobustness.basisLabel)
                     DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
                 }
                 morningRead.reasons.take(3).forEach { reason ->

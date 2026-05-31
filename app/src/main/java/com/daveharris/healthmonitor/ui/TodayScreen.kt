@@ -44,17 +44,19 @@ fun DataScreen(
         latestMorningReadSourceDate = morningRead?.sourceDate,
         wakeMarkers = wakeMarkers
     ).sourceDate
-    val todayStatus = todayReadinessStatus(
+    val nowState = buildNowScreenState(
         today = today,
         morningRead = morningRead,
         syncRuns = syncRuns,
         wakeMarkers = wakeMarkers,
         dailyCheckIns = dailyCheckIns,
+        sleepEpisodeReviewState = sleepEpisodeReviewState,
+        runtime = runtime,
+        selectedDeviceId = viewModel.selectedDeviceId,
         isBusy = viewModel.isBusy
     )
-    val activeMorningRead = morningRead
-        ?.takeIf { it.sourceDate == today }
-        ?.takeUnless { todayStatus.stage == TodayReadinessStage.SLEEP_TIME }
+    val todayStatus = nowState.readinessStatus
+    val activeMorningRead = nowState.activeMorningRead
     var showHrvTrajectory by remember { mutableStateOf(false) }
     LaunchedEffect(activeMorningRead == null) {
         if (activeMorningRead == null) {
@@ -76,42 +78,32 @@ fun DataScreen(
     ) {
         item {
             TodayHeroCard(
-                today = today,
-                todayStatus = todayStatus,
-                morningRead = activeMorningRead,
+                nowState = nowState,
                 onOpenSettings = onOpenSettings
             )
         }
         item {
-            MorningSignalSection(activeMorningRead, todayStatus)
+            MorningSignalSection(nowState)
         }
         item {
             SectionCard(title = "Data quality", subtitle = "Morning-read inputs") {
-                DetailRow("State", todayStatus.dataQuality.label)
-                DetailRow(
-                    "Core inputs",
-                    if (todayStatus.dataQuality.missingInputs.isEmpty()) {
-                        "Complete"
-                    } else {
-                        "Missing ${todayStatus.dataQuality.missingInputs.joinToString(", ")}"
-                    }
-                )
-                DetailRow(
-                    "Supporting context",
-                    if (todayStatus.dataQuality.supportingGaps.isEmpty()) {
-                        "No gaps flagged"
-                    } else {
-                        todayStatus.dataQuality.supportingGaps.joinToString(", ")
-                    }
-                )
+                DetailRow("State", nowState.signalRobustness.label)
+                DetailRow("Basis", nowState.signalRobustness.basisLabel)
+                DetailRow("Sleep report", nowState.signalRobustness.sleepReport.detail)
+                DetailRow("PPI", nowState.signalRobustness.ppi.detail)
+                DetailRow("Baseline", nowState.signalRobustness.baseline.detail)
+                DetailRow("Nightly Recharge", nowState.signalRobustness.nightlyRecharge.detail)
             }
         }
         item {
             SectionCard(title = "Check in", subtitle = "Loop readiness checklist") {
                 SupportText("Use Check in to sync and assess the current situation without marking wake time. Use the sleep/wake buttons only when you want to record those events.")
-                DetailRow("Status", todayStatus.title)
-                DetailRow("Last used", todayStatus.lastUsedLabel ?: "No recent input")
-                DetailRow("Loop sync", todayStatus.lastLoopSyncLabel ?: "Not synced yet")
+                DetailRow("Status", nowState.currentState.label)
+                DetailRow("Robustness", nowState.signalRobustness.label)
+                DetailRow("Stability", nowState.stateStability.label)
+                DetailRow("Marker", nowState.markerStatus.label)
+                DetailRow("Last used", nowState.freshness.lastUsed.detail)
+                DetailRow("Loop sync", nowState.freshness.loopSync.detail)
                 DetailRow("Device", viewModel.selectedDeviceId ?: "None selected")
                 DetailRow(
                     "Connection",
@@ -133,29 +125,33 @@ fun DataScreen(
                 ButtonRow {
                     Button(
                         onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                        enabled = actionsEnabled && nowState.primaryActions.checkIn.enabled
                     ) {
                         Text("Check in")
                     }
-                    if (todayStatus.catchUpPrompt != null) {
+                    if (nowState.primaryActions.catchUp.visible) {
                         OutlinedButton(
                             onClick = { if (actionsEnabled) viewModel.runCatchUpSync() },
-                            enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                            enabled = actionsEnabled && nowState.primaryActions.catchUp.enabled
                         ) {
                             Text("Catch up")
                         }
                     }
-                    OutlinedButton(
-                        onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
-                        enabled = !viewModel.isBusy
-                    ) {
-                        Text("I'm going to bed")
+                    if (nowState.primaryActions.bedtime.visible) {
+                        OutlinedButton(
+                            onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
+                            enabled = actionsEnabled && nowState.primaryActions.bedtime.enabled
+                        ) {
+                            Text("I'm going to bed")
+                        }
                     }
-                    Button(
-                        onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("I'm awake")
+                    if (nowState.primaryActions.waking.visible) {
+                        Button(
+                            onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
+                            enabled = actionsEnabled && nowState.primaryActions.waking.enabled
+                        ) {
+                            Text("I'm awake")
+                        }
                     }
                 }
             }
