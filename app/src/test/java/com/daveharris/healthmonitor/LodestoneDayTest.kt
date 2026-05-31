@@ -90,6 +90,45 @@ class LodestoneDayTest {
     }
 
     @Test
+    fun bedtimeMarkerWithinThirtyHoursKeepsSleepInProgress() {
+        val resolution = resolveLodestoneDisplayDate(
+            nowEpochMs = epoch("2026-05-27T23:14:00"),
+            latestMorningReadSourceDate = "2026-05-26",
+            wakeMarkers = listOf(marker("2026-05-27", "2026-05-26T17:15:00", "manual_going_to_bed")),
+            zoneId = zone
+        )
+
+        assertEquals("2026-05-27", resolution.sourceDate)
+        assertEquals("sleep_in_progress", resolution.reason)
+    }
+
+    @Test
+    fun bedtimeMarkerAtThirtyHoursStillKeepsSleepInProgress() {
+        val resolution = resolveLodestoneDisplayDate(
+            nowEpochMs = epoch("2026-05-27T23:15:00"),
+            latestMorningReadSourceDate = "2026-05-26",
+            wakeMarkers = listOf(marker("2026-05-27", "2026-05-26T17:15:00", "manual_going_to_bed")),
+            zoneId = zone
+        )
+
+        assertEquals("2026-05-27", resolution.sourceDate)
+        assertEquals("sleep_in_progress", resolution.reason)
+    }
+
+    @Test
+    fun staleBedtimeMarkerDoesNotHoldDisplayDateForever() {
+        val resolution = resolveLodestoneDisplayDate(
+            nowEpochMs = epoch("2026-05-28T23:16:00"),
+            latestMorningReadSourceDate = "2026-05-27",
+            wakeMarkers = listOf(marker("2026-05-28", "2026-05-27T17:15:00", "manual_going_to_bed")),
+            zoneId = zone
+        )
+
+        assertEquals("2026-05-28", resolution.sourceDate)
+        assertEquals("wall_date", resolution.reason)
+    }
+
+    @Test
     fun latestMorningReadCanHoldDateBeforeNoonWhenNoMarkerExists() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T03:00:00"),

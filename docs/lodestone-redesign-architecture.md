@@ -108,6 +108,13 @@ For `Bedtime` mode:
   `Bedtime marker saved: 01:42`.
 - After a brief cooldown, collapse it to a quieter line such as
   `Last bedtime marker: 01:42`.
+- Treat the bedtime marker as active only while the following sleep episode is
+  unresolved. Once a later model-generated, manually edited, or Loop sleep
+  window is established, the bedtime marker becomes latency/provenance evidence
+  for that window rather than an active "still asleep" state.
+- If no resolving sleep window appears for a long period because the phone was
+  off, data was not collected, or sync was missed, age the marker into stale
+  context instead of keeping the day blocked.
 - A later plain `Check in` should work normally, even if the user checks the
   phone hours after waking.
 - Do not show a missing-wake warning in bedtime-only mode.
@@ -121,6 +128,13 @@ For `Bedtime + waking` mode:
   evidence as available.
 - Old bedtime markers should become stale context, not a blocking "still
   asleep" state.
+
+For `No markers` mode:
+
+- Hide front-page bedtime and waking actions.
+- Do not show marker-missing warnings or prompts.
+- Continue to show marker/window evidence in the evidence sheet when it exists
+  from previous modes, imports, calibration routes, or manual edits.
 
 All marker lines should be editable from the evidence sheet. The front page may
 also expose edit/clear actions when there is enough room and the marker is
@@ -162,6 +176,21 @@ The evidence sheet should show available sources:
 
 The user can inspect, add, edit, override, or mark no main sleep from this
 surface. The app should keep working when the user never opens it.
+
+When multiple sources provide plausible sleep windows for the same date, keep
+them visible as separate evidence rather than collapsing them too early. This is
+important both for user correction and for later model checking. The default
+active-window choice should be:
+
+1. user-selected override, if present
+2. model/auto-generated window, when available and usable
+3. marker/manual-derived window
+4. Loop final sleep report
+
+The Loop report should still be visible as provenance/context when it is not the
+active choice, especially when it disagrees with model or marker-derived
+windows. Settings should avoid a separate preferred-source control until real
+use shows that the marker mode cannot infer the right default.
 
 Only interrupt or strongly surface window review when:
 
@@ -244,6 +273,19 @@ Settings should be grouped by purpose:
 
 H10/Sleep2/Health Connect are calibration routes, not normal daily workflow.
 Keep them available but out of the front-page flow.
+
+Daily-flow settings should stay minimal during the data-collection phase. The
+marker mode can imply the default evidence behavior:
+
+- `No markers`: model/auto windows first, Loop report as fallback/context.
+- `Bedtime`: model/auto windows first; bedtime markers provide sleep-latency
+  and provenance evidence, with marker-derived fallback only when useful.
+- `Bedtime + waking`: model/auto windows first; marker-derived windows become a
+  stronger fallback and comparison source; Loop reports remain visible as
+  context.
+
+Only add an explicit preferred sleep-source setting if the inferred behavior
+proves frustrating in real use.
 
 ## Implementation Guardrails
 
