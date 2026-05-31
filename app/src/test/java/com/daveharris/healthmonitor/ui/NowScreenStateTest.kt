@@ -140,10 +140,38 @@ class NowScreenStateTest {
         val state = nowState(markerMode = NowMarkerMode.NO_MARKERS)
 
         assertEquals(NowMarkerState.NOT_APPLICABLE, state.markerStatus.state)
+        assertEquals(NowCheckInIntent.INFO, state.primaryActions.intent)
         assertFalse(state.primaryActions.bedtime.visible)
         assertFalse(state.primaryActions.waking.visible)
         assertTrue(state.primaryActions.checkIn.visible)
         assertTrue(state.primaryActions.checkIn.enabled)
+    }
+
+    @Test
+    fun bedtimeModeShowsBedtimeActionWithoutWakeAction() {
+        val state = nowState(markerMode = NowMarkerMode.BEDTIME)
+
+        assertTrue(state.primaryActions.bedtime.visible)
+        assertFalse(state.primaryActions.waking.visible)
+        assertEquals(NowDataAvailability.NOT_APPLICABLE, state.markerStatus.waking.availability)
+    }
+
+    @Test
+    fun bedtimeAndWakingModeShowsBothMarkerActions() {
+        val state = nowState(markerMode = NowMarkerMode.BEDTIME_AND_WAKING)
+
+        assertTrue(state.primaryActions.bedtime.visible)
+        assertTrue(state.primaryActions.waking.visible)
+    }
+
+    @Test
+    fun invalidIntentResetsToInfoForCurrentMarkerMode() {
+        val state = nowState(
+            markerMode = NowMarkerMode.BEDTIME,
+            checkInIntent = NowCheckInIntent.WAKING
+        )
+
+        assertEquals(NowCheckInIntent.INFO, state.primaryActions.intent)
     }
 
     @Test
@@ -171,6 +199,7 @@ class NowScreenStateTest {
         dailyCheckIns: List<DailyCheckInEntity> = emptyList(),
         sleepEpisodeReviewState: SleepEpisodeReviewState = SleepEpisodeReviewState.empty("2026-05-31"),
         markerMode: NowMarkerMode = NowMarkerMode.BEDTIME_AND_WAKING,
+        checkInIntent: NowCheckInIntent = NowCheckInIntent.INFO,
         selectedDeviceId: String? = "loop-1",
         runtime: DeviceRuntimeState = DeviceRuntimeState(bluetoothPowered = true)
     ): NowScreenState =
@@ -185,6 +214,7 @@ class NowScreenStateTest {
             selectedDeviceId = selectedDeviceId,
             isBusy = false,
             markerMode = markerMode,
+            checkInIntent = checkInIntent,
             nowEpochMs = now,
             zoneId = zone
         )

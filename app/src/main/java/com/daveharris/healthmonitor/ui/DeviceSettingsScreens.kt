@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 
 package com.daveharris.healthmonitor.ui
 
@@ -21,8 +21,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -199,6 +203,22 @@ fun SettingsScreen(
                 DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
                 DetailRow("Connected now", runtime.connectedDevice?.name ?: "None")
                 DetailRow("Saved sync profile", appSettingsSummary ?: "none")
+                DetailRow("Marker mode", viewModel.markerMode.settingsLabel())
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    NowMarkerMode.entries.forEachIndexed { index, mode ->
+                        SegmentedButton(
+                            selected = viewModel.markerMode == mode,
+                            onClick = { viewModel.updateMarkerMode(mode) },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = NowMarkerMode.entries.size
+                            ),
+                            enabled = !viewModel.isBusy
+                        ) {
+                            Text(mode.shortSettingsLabel())
+                        }
+                    }
+                }
                 ButtonRow {
                     Button(onClick = onSetFoodFolder, enabled = !viewModel.isBusy) {
                         Text("Set FoodLogData folder")
@@ -397,3 +417,10 @@ private fun KeyMetricPill(label: String, value: String) {
         )
     }
 }
+
+private fun NowMarkerMode.shortSettingsLabel(): String =
+    when (this) {
+        NowMarkerMode.NO_MARKERS -> "None"
+        NowMarkerMode.BEDTIME -> "Bedtime"
+        NowMarkerMode.BEDTIME_AND_WAKING -> "Bed + wake"
+    }

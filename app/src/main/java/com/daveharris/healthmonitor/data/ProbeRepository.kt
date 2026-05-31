@@ -107,7 +107,8 @@ class ProbeRepository(
     suspend fun saveAppSettings(
         selectedDeviceId: String?,
         syncWindowConfig: SyncWindowConfig,
-        lastKnownFirmwareBySelectedDevice: String?
+        lastKnownFirmwareBySelectedDevice: String?,
+        markerMode: String = "BEDTIME_AND_WAKING"
     ) {
         val normalizedConfig = syncWindowConfig.normalized()
         dao.upsertAppSettings(
@@ -117,6 +118,7 @@ class ProbeRepository(
                 nightlyRechargeDays = normalizedConfig.nightlyRechargeDays,
                 hrDays = normalizedConfig.hrDays,
                 ppiDays = normalizedConfig.ppiDays,
+                markerMode = markerMode,
                 lastKnownFirmwareBySelectedDevice = lastKnownFirmwareBySelectedDevice
             )
         )

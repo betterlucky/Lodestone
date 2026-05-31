@@ -53,7 +53,9 @@ fun DataScreen(
         sleepEpisodeReviewState = sleepEpisodeReviewState,
         runtime = runtime,
         selectedDeviceId = viewModel.selectedDeviceId,
-        isBusy = viewModel.isBusy
+        isBusy = viewModel.isBusy,
+        markerMode = viewModel.markerMode,
+        checkInIntent = viewModel.checkInIntent
     )
     val todayStatus = nowState.readinessStatus
     val activeMorningRead = nowState.activeMorningRead
@@ -142,7 +144,7 @@ fun DataScreen(
                             onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
                             enabled = actionsEnabled && nowState.primaryActions.bedtime.enabled
                         ) {
-                            Text("I'm going to bed")
+                            Text("Bedtime & sync")
                         }
                     }
                     if (nowState.primaryActions.waking.visible) {
@@ -150,7 +152,7 @@ fun DataScreen(
                             onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
                             enabled = actionsEnabled && nowState.primaryActions.waking.enabled
                         ) {
-                            Text("I'm awake")
+                            Text("Waking & sync")
                         }
                     }
                 }
