@@ -3,6 +3,7 @@ package com.daveharris.healthmonitor.data
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 @Entity(tableName = "device_profile")
 data class DeviceProfileEntity(
@@ -279,6 +280,7 @@ data class AppSettingsEntity(
     val nightlyRechargeDays: Int,
     val hrDays: Int,
     val ppiDays: Int,
+    @ColumnInfo(defaultValue = "'BEDTIME_AND_WAKING'") val markerMode: String,
     val lastKnownFirmwareBySelectedDevice: String?
 )
 

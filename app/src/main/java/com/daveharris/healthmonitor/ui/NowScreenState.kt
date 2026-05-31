@@ -36,6 +36,12 @@ enum class NowMarkerMode {
     BEDTIME_AND_WAKING
 }
 
+enum class NowCheckInIntent {
+    INFO,
+    BEDTIME,
+    WAKING
+}
+
 enum class NowMarkerState {
     NOT_APPLICABLE,
     NONE,
@@ -103,6 +109,7 @@ data class NowActionAvailability(
 )
 
 data class NowPrimaryActions(
+    val intent: NowCheckInIntent,
     val checkIn: NowActionAvailability,
     val catchUp: NowActionAvailability,
     val bedtime: NowActionAvailability,
@@ -133,6 +140,7 @@ fun buildNowScreenState(
     selectedDeviceId: String?,
     isBusy: Boolean,
     markerMode: NowMarkerMode = NowMarkerMode.BEDTIME_AND_WAKING,
+    checkInIntent: NowCheckInIntent = NowCheckInIntent.INFO,
     nowEpochMs: Long = System.currentTimeMillis(),
     zoneId: ZoneId = ZoneId.systemDefault()
 ): NowScreenState {
@@ -181,6 +189,7 @@ fun buildNowScreenState(
     )
     val primaryActions = buildPrimaryActions(
         markerMode = markerMode,
+        checkInIntent = checkInIntent,
         selectedDeviceId = selectedDeviceId,
         isBusy = isBusy,
         catchUpPrompt = catchUpPrompt
@@ -514,6 +523,7 @@ private fun buildMarkerStatus(
 
 private fun buildPrimaryActions(
     markerMode: NowMarkerMode,
+    checkInIntent: NowCheckInIntent,
     selectedDeviceId: String?,
     isBusy: Boolean,
     catchUpPrompt: String?
@@ -523,9 +533,9 @@ private fun buildPrimaryActions(
         selectedDeviceId == null -> "No Loop selected"
         else -> null
     }
-    val markerUnavailable = if (isBusy) "Sync already running" else null
     val syncEnabled = syncUnavailable == null
     return NowPrimaryActions(
+        intent = normalizeCheckInIntent(checkInIntent, markerMode),
         checkIn = NowActionAvailability(
             visible = true,
             enabled = syncEnabled,
@@ -538,8 +548,8 @@ private fun buildPrimaryActions(
         ),
         bedtime = NowActionAvailability(
             visible = markerMode != NowMarkerMode.NO_MARKERS,
-            enabled = markerUnavailable == null,
-            unavailableReason = markerUnavailable
+            enabled = syncEnabled,
+            unavailableReason = syncUnavailable
         ),
         waking = NowActionAvailability(
             visible = markerMode == NowMarkerMode.BEDTIME_AND_WAKING,
@@ -548,6 +558,15 @@ private fun buildPrimaryActions(
         )
     )
 }
+
+fun normalizeCheckInIntent(intent: NowCheckInIntent, markerMode: NowMarkerMode): NowCheckInIntent =
+    when (intent) {
+        NowCheckInIntent.INFO -> NowCheckInIntent.INFO
+        NowCheckInIntent.BEDTIME ->
+            if (markerMode == NowMarkerMode.NO_MARKERS) NowCheckInIntent.INFO else NowCheckInIntent.BEDTIME
+        NowCheckInIntent.WAKING ->
+            if (markerMode == NowMarkerMode.BEDTIME_AND_WAKING) NowCheckInIntent.WAKING else NowCheckInIntent.INFO
+    }
 
 private fun buildDeviceConnection(
     runtime: DeviceRuntimeState,

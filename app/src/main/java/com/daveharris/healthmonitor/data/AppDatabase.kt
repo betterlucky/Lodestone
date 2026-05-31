@@ -34,7 +34,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -361,6 +361,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE app_settings ADD COLUMN markerMode TEXT NOT NULL DEFAULT 'BEDTIME_AND_WAKING'")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
             context,
@@ -379,7 +385,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_17_18,
             MIGRATION_18_19,
             MIGRATION_19_20,
-            MIGRATION_20_21
+            MIGRATION_20_21,
+            MIGRATION_21_22
         )
             .build()
     }

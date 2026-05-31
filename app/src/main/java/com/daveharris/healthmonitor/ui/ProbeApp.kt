@@ -39,6 +39,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import kotlin.math.absoluteValue
 import kotlinx.coroutines.launch
 
@@ -82,6 +84,10 @@ fun ProbeApp(
         state = pagerState,
         snapPositionalThreshold = 0.36f
     )
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.resetCheckInIntent()
+    }
 
     LaunchedEffect(viewModel.statusMessage) {
         viewModel.statusMessage?.let {
@@ -159,7 +165,7 @@ fun ProbeApp(
                             ftuProfile = ftuProfile,
                             capabilities = capabilities,
                             appSettingsSummary = appSettings?.let {
-                                "selected=${it.selectedDeviceId ?: "none"}, windows=${it.sleepDays}/${it.nightlyRechargeDays}/${it.hrDays}/${it.ppiDays}"
+                                "selected=${it.selectedDeviceId ?: "none"}, markers=${it.markerMode.toMarkerModeLabel()}, windows=${it.sleepDays}/${it.nightlyRechargeDays}/${it.hrDays}/${it.ppiDays}"
                             },
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
                             viewModel = viewModel,
@@ -267,3 +273,7 @@ private fun MissingPermissionsScreen(padding: PaddingValues, onRequestPermission
         }
     }
 }
+
+private fun String.toMarkerModeLabel(): String =
+    runCatching { NowMarkerMode.valueOf(this).settingsLabel() }
+        .getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING.settingsLabel())

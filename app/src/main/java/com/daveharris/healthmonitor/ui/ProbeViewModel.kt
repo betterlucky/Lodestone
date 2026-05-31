@@ -37,6 +37,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -95,6 +96,10 @@ class ProbeViewModel(
         private set
     var syncWindowConfig by mutableStateOf(SyncWindowConfig())
         private set
+    var markerMode by mutableStateOf(NowMarkerMode.BEDTIME_AND_WAKING)
+        private set
+    var checkInIntent by mutableStateOf(NowCheckInIntent.INFO)
+        private set
     var firmwareRediscoveryNeeded by mutableStateOf(false)
         private set
     var checkInDate by mutableStateOf(initialCheckInDate)
@@ -123,6 +128,7 @@ class ProbeViewModel(
         private set
     private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
+    private var checkInIntentResetJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -134,6 +140,8 @@ class ProbeViewModel(
                     hrDays = settings.hrDays,
                     ppiDays = settings.ppiDays
                 )
+                markerMode = settings.markerMode.toNowMarkerMode()
+                checkInIntent = normalizeCheckInIntent(checkInIntent, markerMode)
             }
         }
         viewModelScope.launch {
@@ -209,6 +217,31 @@ class ProbeViewModel(
         persistAppSettings()
     }
 
+    fun updateMarkerMode(mode: NowMarkerMode) {
+        markerMode = mode
+        resetCheckInIntent()
+        persistAppSettings()
+        statusMessage = "Marker mode set to ${mode.settingsLabel()}."
+    }
+
+    fun resetCheckInIntent() {
+        checkInIntentResetJob?.cancel()
+        checkInIntentResetJob = null
+        checkInIntent = NowCheckInIntent.INFO
+    }
+
+    private fun selectCheckInIntent(intent: NowCheckInIntent) {
+        checkInIntent = normalizeCheckInIntent(intent, markerMode)
+        checkInIntentResetJob?.cancel()
+        checkInIntentResetJob = null
+        if (checkInIntent != NowCheckInIntent.INFO) {
+            checkInIntentResetJob = viewModelScope.launch {
+                delay(CHECK_IN_INTENT_RESET_MS)
+                resetCheckInIntent()
+            }
+        }
+    }
+
     fun refreshFtuStatus() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
@@ -263,6 +296,7 @@ class ProbeViewModel(
 
     fun runCheckInSync() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
+        selectCheckInIntent(NowCheckInIntent.INFO)
         val today = currentLodestoneDate()
         selectCheckInDate(today)
         viewModelScope.launch {
@@ -324,28 +358,98 @@ class ProbeViewModel(
     }
 
     fun markAwakeAndSync() {
+        runMarkerCheckIn(
+            intent = NowCheckInIntent.WAKING,
+            markerSource = "manual_im_awake",
+            markerNotes = "Waking & sync",
+            workingMessage = "Recording wake time and checking in…",
+            successMessage = "Wake marker saved. Check-in sync completed.",
+            recoveredMessage = "Wake marker saved. PPI recovered after reconnecting to the Loop."
+        )
+    }
+
+    fun markGoingToBed() {
+        runMarkerCheckIn(
+            intent = NowCheckInIntent.BEDTIME,
+            markerSource = "manual_going_to_bed",
+            markerNotes = "Bedtime & sync",
+            workingMessage = "Recording bedtime marker and checking in…",
+            successMessage = "Bedtime marker saved. Check-in sync completed.",
+            recoveredMessage = "Bedtime marker saved. PPI recovered after reconnecting to the Loop."
+        )
+    }
+
+    private fun runMarkerCheckIn(
+        intent: NowCheckInIntent,
+        markerSource: String,
+        markerNotes: String,
+        workingMessage: String,
+        successMessage: String,
+        recoveredMessage: String
+    ) {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
-        val today = LocalDate.now().toString()
-        selectCheckInDate(today)
+        selectCheckInIntent(intent)
+        val targetDate = if (intent == NowCheckInIntent.BEDTIME) {
+            sleepTargetDateForBedtime().toString()
+        } else {
+            currentLodestoneDate()
+        }
+        val markerEpochMs = System.currentTimeMillis()
+        selectCheckInDate(targetDate)
         viewModelScope.launch {
-            runBusyAction("Recording wake time and syncing…") {
+            isBusy = true
+            statusMessage = workingMessage
+            var syncCompleted = false
+            try {
                 SyncCommandWorker.cancelBulkWork(getApplication())
                 val result = syncCoordinator.runSync(
                     deviceId = deviceId,
                     config = syncWindowConfig,
-                    profile = SyncRunProfile.MORNING_CORE,
+                    profile = SyncRunProfile.CHECK_IN,
                     scheduleMorningRetryIfNeeded = true,
-                    cancelMorningRetryFirst = true,
-                    wakeMarkerNotes = "I’m awake button",
-                    lodestoneTargetDate = today
+                    cancelMorningRetryFirst = intent == NowCheckInIntent.WAKING,
+                    lodestoneTargetDate = targetDate
                 )
                 selectedDeviceId = result.connectedDeviceId
                 persistAppSettings()
+                firmwareRediscoveryNeeded = false
+                syncCompleted = true
+                repository.recordWakeMarker(
+                    sourceDate = targetDate,
+                    markerEpochMs = markerEpochMs,
+                    markerSource = markerSource,
+                    deviceId = result.connectedDeviceId,
+                    notes = markerNotes
+                )
+                val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(targetDate))
                 statusMessage = if (result.recoveredMorningPpi) {
-                    "Awake recorded. PPI recovered after reconnecting to the Loop."
+                    "$recoveredMessage${candidateCount.sleepCandidateSuffix()}"
                 } else {
-                    "Awake recorded. Normal sync completed."
+                    "$successMessage${candidateCount.sleepCandidateSuffix()}"
                 }
+            } catch (error: Throwable) {
+                val markerSaved = if (syncCompleted) {
+                    false
+                } else {
+                    runCatching {
+                        repository.recordWakeMarker(
+                            sourceDate = targetDate,
+                            markerEpochMs = markerEpochMs,
+                            markerSource = markerSource,
+                            deviceId = selectedDeviceId,
+                            notes = markerNotes
+                        )
+                    }.isSuccess
+                }
+                val message = error.message ?: error.javaClass.simpleName
+                statusMessage = when {
+                    syncCompleted -> "Check-in sync completed, but the marker was not saved: $message"
+                    markerSaved -> "${intent.markerSavedLabel()} saved, but check-in sync failed: $message"
+                    else -> "${intent.markerSavedLabel()} was not saved; check-in sync failed: $message"
+                }
+            } finally {
+                isBusy = false
+                resetCheckInIntent()
             }
         }
     }
@@ -393,21 +497,6 @@ class ProbeViewModel(
             "Available in about ${remainingMinutes(remainingMs)}m"
         } else {
             null
-        }
-    }
-
-    fun markGoingToBed() {
-        val today = sleepTargetDateForBedtime().toString()
-        viewModelScope.launch {
-            runBusyAction("Recording bedtime marker…") {
-                repository.recordWakeMarker(
-                    sourceDate = today,
-                    markerSource = "manual_going_to_bed",
-                    deviceId = selectedDeviceId,
-                    notes = "I’m going to bed button"
-                )
-                statusMessage = "Bedtime marker recorded."
-            }
         }
     }
 
@@ -818,6 +907,7 @@ class ProbeViewModel(
             statusMessage = error.message ?: error.javaClass.simpleName
         } finally {
             isBusy = false
+            resetCheckInIntent()
         }
     }
 
@@ -826,7 +916,8 @@ class ProbeViewModel(
             repository.saveAppSettings(
                 selectedDeviceId = selectedDeviceId,
                 syncWindowConfig = syncWindowConfig,
-                lastKnownFirmwareBySelectedDevice = runtimeState.value.firmwareVersion
+                lastKnownFirmwareBySelectedDevice = runtimeState.value.firmwareVersion,
+                markerMode = markerMode.name
             )
         }
     }
@@ -928,6 +1019,7 @@ class ProbeViewModel(
         private const val SETTINGS_PREFS_NAME = "lodestone_settings_tools"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_UNTIL = "sleep_report_retry_cooldown_until"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_MS = 30 * 60 * 1000L
+        private const val CHECK_IN_INTENT_RESET_MS = 90_000L
         private val SLEEP_WINDOW_INPUT_FORMATTER: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.UK)
 
@@ -957,3 +1049,20 @@ class ProbeViewModel(
         }
     }
 }
+
+private fun String?.toNowMarkerMode(): NowMarkerMode =
+    runCatching { NowMarkerMode.valueOf(this ?: "") }.getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING)
+
+fun NowMarkerMode.settingsLabel(): String =
+    when (this) {
+        NowMarkerMode.NO_MARKERS -> "No markers"
+        NowMarkerMode.BEDTIME -> "Bedtime"
+        NowMarkerMode.BEDTIME_AND_WAKING -> "Bedtime + waking"
+    }
+
+private fun NowCheckInIntent.markerSavedLabel(): String =
+    when (this) {
+        NowCheckInIntent.INFO -> "Check-in"
+        NowCheckInIntent.BEDTIME -> "Bedtime marker"
+        NowCheckInIntent.WAKING -> "Wake marker"
+    }
