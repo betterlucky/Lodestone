@@ -8,7 +8,7 @@ class MorningReadSchedulerTest {
     @Test
     fun maxAttemptsAreBoundedByRetryStage() {
         assertEquals(3, MorningReadScheduler.maxAttempts(MorningRetryStage.PPI))
-        assertEquals(3, MorningReadScheduler.maxAttempts(MorningRetryStage.SLEEP_REPORT))
+        assertEquals(6, MorningReadScheduler.maxAttempts(MorningRetryStage.SLEEP_REPORT))
     }
 
     @Test
