@@ -272,6 +272,7 @@ class ProbeViewModel(
                     deviceId = deviceId,
                     config = syncWindowConfig,
                     profile = SyncRunProfile.CHECK_IN,
+                    scheduleMorningRetryIfNeeded = true,
                     lodestoneTargetDate = today
                 )
                 selectedDeviceId = result.connectedDeviceId
@@ -305,6 +306,7 @@ class ProbeViewModel(
                     deviceId = deviceId,
                     config = catchUpConfig,
                     profile = SyncRunProfile.CHECK_IN,
+                    scheduleMorningRetryIfNeeded = true,
                     lodestoneTargetDate = today
                 )
                 selectedDeviceId = result.connectedDeviceId

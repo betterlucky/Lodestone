@@ -16,7 +16,7 @@ object MorningReadScheduler {
     private const val PPI_INTERVAL_MS = 10 * 60 * 1000L
     private const val SLEEP_REPORT_INTERVAL_MS = 60 * 60 * 1000L
     private const val PPI_MAX_ATTEMPTS = 3
-    private const val SLEEP_REPORT_MAX_ATTEMPTS = 3
+    private const val SLEEP_REPORT_MAX_ATTEMPTS = 6
 
     fun schedulePpiRetry(context: Context, targetDate: String, deviceId: String?, attempt: Int = 1): Long =
         scheduleRetry(context, targetDate, deviceId, MorningRetryStage.PPI, attempt)
