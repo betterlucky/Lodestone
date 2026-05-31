@@ -102,8 +102,6 @@ data class SleepEpisodeDisplayItem(
     val title: String,
     val timeRangeLabel: String,
     val durationLabel: String,
-    val startInputLabel: String,
-    val endInputLabel: String,
     val kindLabel: String,
     val sourceLabel: String,
     val confidenceLabel: String,
@@ -156,8 +154,6 @@ fun SleepEpisodeEntity.toSleepEpisodeDisplayItem(
         title = episodeTitle(episodeKind, source, isCandidate, isConfirmed),
         timeRangeLabel = timeRangeLabel(startEpochMs, endEpochMs, zoneId),
         durationLabel = durationLabel(startEpochMs, endEpochMs, isNoSleep),
-        startInputLabel = dateTimeInputLabel(startEpochMs, zoneId),
-        endInputLabel = dateTimeInputLabel(endEpochMs, zoneId),
         kindLabel = kindLabel(episodeKind),
         sourceLabel = sourceLabel(source),
         confidenceLabel = confidenceLabel(confidence),
@@ -174,9 +170,6 @@ fun SleepEpisodeEntity.toSleepEpisodeDisplayItem(
 private val timeFormatter: DateTimeFormatter =
     DateTimeFormatter.ofPattern("HH:mm", Locale.UK)
 
-private val dateTimeInputFormatter: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.UK)
-
 private fun timeRangeLabel(
     startEpochMs: Long?,
     endEpochMs: Long?,
@@ -187,11 +180,6 @@ private fun timeRangeLabel(
     val end = Instant.ofEpochMilli(endEpochMs).atZone(zoneId).format(timeFormatter)
     return "$start-$end"
 }
-
-private fun dateTimeInputLabel(epochMs: Long?, zoneId: ZoneId): String =
-    epochMs
-        ?.let { Instant.ofEpochMilli(it).atZone(zoneId).format(dateTimeInputFormatter) }
-        .orEmpty()
 
 private fun durationLabel(
     startEpochMs: Long?,

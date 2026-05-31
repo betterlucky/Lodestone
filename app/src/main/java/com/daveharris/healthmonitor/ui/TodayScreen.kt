@@ -60,10 +60,25 @@ fun DataScreen(
     val todayStatus = nowState.readinessStatus
     val activeMorningRead = nowState.activeMorningRead
     var showHrvTrajectory by remember { mutableStateOf(false) }
+    var markerEditor by remember { mutableStateOf<MarkerTimeEditorKind?>(null) }
     LaunchedEffect(activeMorningRead == null) {
         if (activeMorningRead == null) {
             showHrvTrajectory = false
         }
+    }
+    markerEditor?.let { kind ->
+        MarkerTimeEditorSheet(
+            kind = kind,
+            initialEpochMs = System.currentTimeMillis(),
+            onSave = { markerEpochMs ->
+                when (kind) {
+                    MarkerTimeEditorKind.BEDTIME -> viewModel.markGoingToBed(markerEpochMs)
+                    MarkerTimeEditorKind.WAKING -> viewModel.markAwakeAndSync(markerEpochMs)
+                }
+                markerEditor = null
+            },
+            onDismiss = { markerEditor = null }
+        )
     }
     if (showHrvTrajectory && activeMorningRead != null) {
         HrvTrajectoryDialog(
@@ -141,7 +156,7 @@ fun DataScreen(
                     }
                     if (nowState.primaryActions.bedtime.visible) {
                         OutlinedButton(
-                            onClick = { if (actionsEnabled) viewModel.markGoingToBed() },
+                            onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.BEDTIME },
                             enabled = actionsEnabled && nowState.primaryActions.bedtime.enabled
                         ) {
                             Text("Bedtime & sync")
@@ -149,7 +164,7 @@ fun DataScreen(
                     }
                     if (nowState.primaryActions.waking.visible) {
                         Button(
-                            onClick = { if (actionsEnabled) viewModel.markAwakeAndSync() },
+                            onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.WAKING },
                             enabled = actionsEnabled && nowState.primaryActions.waking.enabled
                         ) {
                             Text("Waking & sync")

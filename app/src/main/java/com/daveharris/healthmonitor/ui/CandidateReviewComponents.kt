@@ -22,7 +22,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,7 +42,7 @@ fun CandidateReviewSection(
     onMarkRest: (Long) -> Unit,
     onRejectCandidate: (Long) -> Unit,
     onClearDecision: (Long) -> Unit,
-    onEditWindow: (Long, String, String) -> Unit,
+    onEditWindow: (Long, Long, Long) -> Unit,
     onMarkNoMainSleep: (String) -> Unit
 ) {
     var showDialog by remember { mutableStateOf(false) }
@@ -92,7 +91,7 @@ fun CandidateReviewSection(
     }
 
     editingItem?.let { item ->
-        EditSleepWindowDialog(
+        SleepWindowTimeEditorSheet(
             item = item,
             onSave = { start, end ->
                 onEditWindow(item.id, start, end)
@@ -291,47 +290,6 @@ private fun CandidateReviewWindow(
             }
         }
     }
-}
-
-@Composable
-private fun EditSleepWindowDialog(
-    item: SleepEpisodeDisplayItem,
-    onSave: (String, String) -> Unit,
-    onDismiss: () -> Unit
-) {
-    var startInput by remember(item.id) { mutableStateOf(item.startInputLabel) }
-    var endInput by remember(item.id) { mutableStateOf(item.endInputLabel) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit window") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextField(
-                    value = startInput,
-                    onValueChange = { startInput = it },
-                    label = { Text("Start") },
-                    singleLine = true
-                )
-                TextField(
-                    value = endInput,
-                    onValueChange = { endInput = it },
-                    label = { Text("End") },
-                    singleLine = true
-                )
-                SupportText("Use yyyy-MM-dd HH:mm.")
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(startInput, endInput) }) {
-                Text("Save")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        }
-    )
 }
 
 @Composable

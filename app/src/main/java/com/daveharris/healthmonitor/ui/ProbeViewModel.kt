@@ -40,10 +40,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.LocalDate
-import java.time.LocalDateTime
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import kotlin.math.ceil
 
 class ProbeViewModel(
@@ -357,25 +353,27 @@ class ProbeViewModel(
         }
     }
 
-    fun markAwakeAndSync() {
+    fun markAwakeAndSync(markerEpochMs: Long = System.currentTimeMillis()) {
         runMarkerCheckIn(
             intent = NowCheckInIntent.WAKING,
             markerSource = "manual_im_awake",
             markerNotes = "Waking & sync",
             workingMessage = "Recording wake time and checking in…",
             successMessage = "Wake marker saved. Check-in sync completed.",
-            recoveredMessage = "Wake marker saved. PPI recovered after reconnecting to the Loop."
+            recoveredMessage = "Wake marker saved. PPI recovered after reconnecting to the Loop.",
+            markerEpochMs = markerEpochMs
         )
     }
 
-    fun markGoingToBed() {
+    fun markGoingToBed(markerEpochMs: Long = System.currentTimeMillis()) {
         runMarkerCheckIn(
             intent = NowCheckInIntent.BEDTIME,
             markerSource = "manual_going_to_bed",
             markerNotes = "Bedtime & sync",
             workingMessage = "Recording bedtime marker and checking in…",
             successMessage = "Bedtime marker saved. Check-in sync completed.",
-            recoveredMessage = "Bedtime marker saved. PPI recovered after reconnecting to the Loop."
+            recoveredMessage = "Bedtime marker saved. PPI recovered after reconnecting to the Loop.",
+            markerEpochMs = markerEpochMs
         )
     }
 
@@ -385,16 +383,20 @@ class ProbeViewModel(
         markerNotes: String,
         workingMessage: String,
         successMessage: String,
-        recoveredMessage: String
+        recoveredMessage: String,
+        markerEpochMs: Long = System.currentTimeMillis()
     ) {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         selectCheckInIntent(intent)
         val targetDate = if (intent == NowCheckInIntent.BEDTIME) {
-            sleepTargetDateForBedtime().toString()
+            sleepTargetDateForBedtime(markerEpochMs).toString()
         } else {
-            currentLodestoneDate()
+            resolveLodestoneDisplayDate(
+                nowEpochMs = markerEpochMs,
+                latestMorningReadSourceDate = morningRead.value?.sourceDate,
+                wakeMarkers = recentWakeMarkers.value
+            ).sourceDate
         }
-        val markerEpochMs = System.currentTimeMillis()
         selectCheckInDate(targetDate)
         viewModelScope.launch {
             isBusy = true
@@ -609,13 +611,7 @@ class ProbeViewModel(
         }
     }
 
-    fun editSleepEpisodeWindow(id: Long, startInput: String, endInput: String) {
-        val startEpochMs = parseSleepWindowInput(startInput)
-        val endEpochMs = parseSleepWindowInput(endInput)
-        if (startEpochMs == null || endEpochMs == null) {
-            statusMessage = "Use start and end as yyyy-MM-dd HH:mm."
-            return
-        }
+    fun editSleepEpisodeWindow(id: Long, startEpochMs: Long, endEpochMs: Long) {
         if (endEpochMs <= startEpochMs) {
             statusMessage = "Sleep/rest end must be after the start."
             return
@@ -934,15 +930,6 @@ class ProbeViewModel(
     private fun remainingMinutes(remainingMs: Long): Int =
         ceil(remainingMs / 60_000.0).toInt().coerceAtLeast(1)
 
-    private fun parseSleepWindowInput(value: String): Long? =
-        runCatching {
-            LocalDateTime
-                .parse(value.trim(), SLEEP_WINDOW_INPUT_FORMATTER)
-                .atZone(ZoneId.systemDefault())
-                .toInstant()
-                .toEpochMilli()
-        }.getOrNull()
-
     private fun hydrateDailyCheckIn(entity: DailyCheckInEntity) {
         setSleepEpisodeReviewDates(entity.sourceDate)
         eveningOutcomeDraft = runCatching { TrafficLightStatus.valueOf(entity.eveningOutcome) }.getOrNull()
@@ -1020,9 +1007,6 @@ class ProbeViewModel(
         private const val SLEEP_REPORT_RETRY_COOLDOWN_UNTIL = "sleep_report_retry_cooldown_until"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_MS = 30 * 60 * 1000L
         private const val CHECK_IN_INTENT_RESET_MS = 90_000L
-        private val SLEEP_WINDOW_INPUT_FORMATTER: DateTimeFormatter =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.UK)
-
         private fun loadSleepReportRetryCooldown(context: Context): Long =
             context
                 .getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
