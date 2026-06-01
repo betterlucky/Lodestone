@@ -5,13 +5,11 @@ package com.daveharris.healthmonitor.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -19,10 +17,12 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,10 +31,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.ZoneId
+
+private enum class TimeEditorMode {
+    DIAL,
+    TYPE
+}
 
 @Composable
 fun MarkerTimeEditorSheet(
@@ -62,7 +66,7 @@ fun MarkerTimeEditorSheet(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SheetTitle(kind.title, "Set an exact 24-hour time before syncing.")
+            SheetTitle(kind.title, "Set an exact time before syncing.")
             QuickActionRow(
                 onNow = {
                     value = timeEditorValueForQuickAction(nowEpochMsProvider(), minutesAgo = 0, zoneId)
@@ -123,7 +127,7 @@ fun SleepWindowTimeEditorSheet(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            SheetTitle("Edit window", "Use explicit dates and 24-hour time.")
+            SheetTitle("Edit window", "Use explicit dates and exact times.")
             QuickActionRow(
                 onNow = { end = timeEditorValueForQuickAction(nowEpochMsProvider(), minutesAgo = 0, zoneId) },
                 onFifteenAgo = { end = timeEditorValueForQuickAction(nowEpochMsProvider(), minutesAgo = 15, zoneId) },
@@ -279,59 +283,72 @@ private fun InstantEditorControls(
     value: TimeEditorValue,
     onValueChange: (TimeEditorValue) -> Unit
 ) {
+    var mode by remember { mutableStateOf(TimeEditorMode.DIAL) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         DateChipRow(
             selectedDate = value.date,
             onDateSelected = { onValueChange(value.copy(date = it)) }
         )
-        Text("Hour", style = MaterialTheme.typography.labelLarge)
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            (0 until 24).forEach { hour ->
-                FilterChip(
-                    selected = value.hour == hour,
-                    onClick = { onValueChange(value.copy(hour = hour)) },
-                    label = { Text(hour.twoDigits()) }
-                )
-            }
-        }
-        MinuteField(
-            minute = value.minute,
-            onMinuteChange = { onValueChange(value.copy(minute = it)) }
+        TimeEditorModeRow(
+            mode = mode,
+            onModeChange = { mode = it }
+        )
+        MaterialTimeEditor(
+            mode = mode,
+            value = value,
+            onValueChange = onValueChange
         )
     }
 }
 
 @Composable
-private fun MinuteField(
-    minute: Int,
-    onMinuteChange: (Int) -> Unit
+private fun TimeEditorModeRow(
+    mode: TimeEditorMode,
+    onModeChange: (TimeEditorMode) -> Unit
 ) {
-    var minuteText by remember { mutableStateOf(minute.twoDigits()) }
-    LaunchedEffect(minute) {
-        if (minuteText.toIntOrNull() != minute) {
-            minuteText = minute.twoDigits()
+    ButtonRow {
+        FilterChip(
+            selected = mode == TimeEditorMode.DIAL,
+            onClick = { onModeChange(TimeEditorMode.DIAL) },
+            label = { Text("Dial") }
+        )
+        FilterChip(
+            selected = mode == TimeEditorMode.TYPE,
+            onClick = { onModeChange(TimeEditorMode.TYPE) },
+            label = { Text("Type") }
+        )
+    }
+}
+
+@Composable
+private fun MaterialTimeEditor(
+    mode: TimeEditorMode,
+    value: TimeEditorValue,
+    onValueChange: (TimeEditorValue) -> Unit
+) {
+    val pickerState = rememberTimePickerState(
+        initialHour = value.hour,
+        initialMinute = value.minute,
+        is24Hour = false
+    )
+    LaunchedEffect(value.hour, value.minute) {
+        if (pickerState.hour != value.hour) {
+            pickerState.hour = value.hour
+        }
+        if (pickerState.minute != value.minute) {
+            pickerState.minute = value.minute
         }
     }
-    OutlinedTextField(
-        value = minuteText,
-        onValueChange = { raw ->
-            val digits = raw.filter(Char::isDigit).take(2)
-            minuteText = digits
-            val parsed = digits.toIntOrNull()
-            if (parsed != null && parsed in 0..59) {
-                onMinuteChange(parsed)
-            }
-        },
-        label = { Text("Minute") },
-        supportingText = { Text("00-59") },
-        singleLine = true,
-        isError = minuteText.toIntOrNull()?.let { it !in 0..59 } ?: true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-    )
+    LaunchedEffect(pickerState.hour, pickerState.minute) {
+        if (pickerState.hour != value.hour || pickerState.minute != value.minute) {
+            onValueChange(value.copy(hour = pickerState.hour, minute = pickerState.minute))
+        }
+    }
+    when (mode) {
+        TimeEditorMode.DIAL -> TimePicker(state = pickerState)
+        TimeEditorMode.TYPE -> TimeInput(state = pickerState)
+    }
 }
 
 @Composable

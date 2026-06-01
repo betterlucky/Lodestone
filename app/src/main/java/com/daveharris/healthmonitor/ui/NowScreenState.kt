@@ -3,6 +3,7 @@ package com.daveharris.healthmonitor.ui
 import com.daveharris.healthmonitor.ACTIVE_BEDTIME_MARKER_DURATION
 import com.daveharris.healthmonitor.ACTIVE_WAKE_MARKER_DURATION
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
+import com.daveharris.healthmonitor.data.MorningReadSource
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
@@ -301,7 +302,7 @@ private fun buildCurrentState(
             status = morningRead?.status,
             label = "Provisional read: ${morningRead?.status.readinessLabel()}",
             qualifier = "PPI received",
-            message = if (morningRead?.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window") {
+            message = if (morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW) {
                 "PPI is available, but Lodestone does not yet have a usable sleep window for a current read."
             } else {
                 "PPI is available before the final Loop sleep report, so this current signal remains provisional."
@@ -685,7 +686,7 @@ private fun hrvDetailForState(
             "The active analysis source is unclassified; review provenance before relying on HRV detail."
         analysisWindow.sourceType == NowAnalysisWindowSourceType.MARKER_DERIVED ->
             "Marker-derived timing is selected; PPI detail will appear when enough aligned data is available."
-        morningRead?.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW ->
             "PPI is available, but Lodestone has no usable sleep window for alignment yet."
         morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true ->
             "The provisional morning signal is using ${analysisWindow.label} while final sleep context is pending."
@@ -782,18 +783,7 @@ private fun MorningReadSnapshot?.hasPpiSignal(): Boolean =
 
 private fun MorningReadSnapshot?.hasEstablishedSleepWindow(): Boolean =
     this?.sleepDataReady == true ||
-        this?.overnightAutonomicSource in establishedSleepWindowSources
-
-private val establishedSleepWindowSources = setOf(
-    "ppi247_sleep_window",
-    "raw_ppi_calibrated_window_pending_sleep_report",
-    "raw_ppi_manual_window_pending_sleep_report",
-    "raw_ppi_inferred_window_pending_sleep_report",
-    "raw_ppi_calibrated_window_primary_with_sleep_report",
-    "raw_ppi_manual_window_primary_with_sleep_report",
-    "raw_ppi_inferred_window_primary_with_sleep_report",
-    "sleep_context_only"
-)
+        this?.morningReadSource()?.hasEstablishedSleepWindow == true
 
 private fun TrafficLightStatus?.readinessLabel(): String =
     this?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "TBC"
@@ -801,17 +791,17 @@ private fun TrafficLightStatus?.readinessLabel(): String =
 private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean): String =
     when {
         noMainSleep -> "No main sleep decision"
-        morningRead?.overnightAutonomicSource == "raw_ppi_calibrated_window_pending_sleep_report" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT ->
             "Provisional calibrated sleep window + PPI"
-        morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_pending_sleep_report" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT ->
             "Provisional manual sleep window + PPI"
-        morningRead?.overnightAutonomicSource == "raw_ppi_inferred_window_pending_sleep_report" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT ->
             "Provisional PPI-inferred sleep window"
-        morningRead?.overnightAutonomicSource == "raw_ppi_calibrated_window_primary_with_sleep_report" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Calibrated sleep window + PPI, Loop report as context"
-        morningRead?.overnightAutonomicSource == "raw_ppi_manual_window_primary_with_sleep_report" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Manual sleep window + PPI, Loop report as context"
-        morningRead?.overnightAutonomicSource == "raw_ppi_inferred_window_primary_with_sleep_report" ->
+        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "PPI-inferred sleep window, Loop report as context"
         morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
             "PPI aligned to final Loop sleep context"
@@ -822,49 +812,58 @@ private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean):
         else -> "Waiting for morning data"
     }
 
-private fun String.analysisWindowSourceType(): NowAnalysisWindowSourceType =
-    when (this) {
-        "user_confirmed_no_sleep" -> NowAnalysisWindowSourceType.NO_MAIN_SLEEP
-        "edited_sleep_episode_primary",
-        "mixed_sleep_episode_primary",
-        "manual_sleep_episode_primary",
-        "confirmed_sleep_episode_primary" -> NowAnalysisWindowSourceType.USER_SELECTED
-        "raw_ppi_manual_window_pending_sleep_report",
-        "raw_ppi_manual_window_primary_with_sleep_report" -> NowAnalysisWindowSourceType.MARKER_DERIVED
-        "raw_ppi_calibrated_window_pending_sleep_report",
-        "raw_ppi_calibrated_window_primary_with_sleep_report",
-        "raw_ppi_inferred_window_pending_sleep_report",
-        "raw_ppi_inferred_window_primary_with_sleep_report" -> NowAnalysisWindowSourceType.MODEL_ESTIMATE
-        "ppi247_sleep_window",
-        "nightly_recharge_summary",
-        "sleep_context_only" -> NowAnalysisWindowSourceType.LOOP_REPORT
-        "awaiting_sleep_data" -> NowAnalysisWindowSourceType.PENDING
-        else -> if (contains("pending", ignoreCase = true)) {
+private fun MorningReadSnapshot.morningReadSource(): MorningReadSource? =
+    MorningReadSource.fromKey(overnightAutonomicSource)
+
+private fun String.analysisWindowSourceType(): NowAnalysisWindowSourceType {
+    val source = MorningReadSource.fromKey(this)
+    return when (source) {
+        MorningReadSource.USER_CONFIRMED_NO_SLEEP -> NowAnalysisWindowSourceType.NO_MAIN_SLEEP
+        MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY,
+        MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY,
+        MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY,
+        MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> NowAnalysisWindowSourceType.USER_SELECTED
+        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT,
+        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> NowAnalysisWindowSourceType.MARKER_DERIVED
+        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT,
+        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT,
+        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT,
+        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> NowAnalysisWindowSourceType.MODEL_ESTIMATE
+        MorningReadSource.PPI247_SLEEP_WINDOW,
+        MorningReadSource.NIGHTLY_RECHARGE_SUMMARY,
+        MorningReadSource.SLEEP_CONTEXT_ONLY -> NowAnalysisWindowSourceType.LOOP_REPORT
+        MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW,
+        MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW,
+        MorningReadSource.AWAITING_SLEEP_DATA -> NowAnalysisWindowSourceType.PENDING
+        null -> if (contains("pending", ignoreCase = true)) {
             NowAnalysisWindowSourceType.PENDING
         } else {
             NowAnalysisWindowSourceType.UNKNOWN
         }
     }
+}
 
-private fun String.analysisWindowLabel(sleepDataReady: Boolean): String =
-    when (this) {
-        "raw_ppi_calibrated_window_pending_sleep_report" -> "calibrated sleep window"
-        "raw_ppi_manual_window_pending_sleep_report" -> "manual marker-derived sleep window"
-        "raw_ppi_inferred_window_pending_sleep_report" -> "PPI-inferred sleep window"
-        "raw_ppi_calibrated_window_primary_with_sleep_report" -> "calibrated primary window"
-        "raw_ppi_manual_window_primary_with_sleep_report" -> "manual primary window"
-        "raw_ppi_inferred_window_primary_with_sleep_report" -> "PPI-inferred primary window"
-        "edited_sleep_episode_primary" -> "edited user window"
-        "mixed_sleep_episode_primary",
-        "manual_sleep_episode_primary",
-        "confirmed_sleep_episode_primary" -> "confirmed user window"
-        "ppi247_sleep_window" -> "Loop sleep report window"
-        "nightly_recharge_summary" -> "Nightly Recharge sleep context"
-        "sleep_context_only" -> "Loop sleep context"
-        "raw_ppi_pending_manual_sleep_window" -> "sleep window pending"
-        "raw_ppi_pending_sleep_window" -> "sleep window pending"
+private fun String.analysisWindowLabel(sleepDataReady: Boolean): String {
+    val source = MorningReadSource.fromKey(this)
+    return when (source) {
+        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
+        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
+        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred sleep window"
+        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "calibrated primary window"
+        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "manual primary window"
+        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred primary window"
+        MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY -> "edited user window"
+        MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY,
+        MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY,
+        MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "confirmed user window"
+        MorningReadSource.PPI247_SLEEP_WINDOW -> "Loop sleep report window"
+        MorningReadSource.NIGHTLY_RECHARGE_SUMMARY -> "Nightly Recharge sleep context"
+        MorningReadSource.SLEEP_CONTEXT_ONLY -> "Loop sleep context"
+        MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW,
+        MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "sleep window pending"
         else -> if (sleepDataReady) "resolved sleep window" else "analysis window pending"
     }
+}
 
 private fun String.analysisWindowReason(sourceType: NowAnalysisWindowSourceType): String =
     when (sourceType) {
@@ -902,7 +901,7 @@ private fun ppiReceiptLabelForState(morningRead: MorningReadSnapshot?): String =
         }.orEmpty()
         "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
     }
-    morningRead?.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window" -> "Received, missing sleep window"
+    morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "Received, missing sleep window"
     morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, awaiting final sleep report"
     else -> "Not received yet"
 }
