@@ -254,7 +254,7 @@ fun ButtonRow(content: @Composable FlowRowScope.() -> Unit) {
 fun DetailRow(label: String, value: String) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top
     ) {
         Text(

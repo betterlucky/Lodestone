@@ -22,7 +22,15 @@ class DailyReviewRepository(
         eveningOutcome: String,
         approachToDay: String?,
         muscleWeaknessToday: Boolean,
-        notes: String?
+        notes: String?,
+        dayShapeCaptured: Boolean?,
+        mostlyHorizontal: Boolean?,
+        leftHouse: Boolean?,
+        majorTask: Boolean?,
+        majorTaskType: String?,
+        pemPaybackToday: Boolean?,
+        paybackPeakToday: Boolean?,
+        paybackPeakConfidence: String?
     ) {
         val now = System.currentTimeMillis()
         val existing = dao.getDailyCheckIn(sourceDate)
@@ -34,13 +42,34 @@ class DailyReviewRepository(
                 muscleWeaknessToday = muscleWeaknessToday,
                 notes = notes?.takeIf { it.isNotBlank() },
                 createdAtEpochMs = existing?.createdAtEpochMs ?: now,
-                updatedAtEpochMs = now
+                updatedAtEpochMs = now,
+                dayShapeCaptured = dayShapeCaptured,
+                mostlyHorizontal = mostlyHorizontal,
+                leftHouse = leftHouse,
+                majorTask = majorTask,
+                majorTaskType = majorTaskType,
+                pemPaybackToday = pemPaybackToday,
+                paybackPeakToday = paybackPeakToday,
+                paybackPeakConfidence = paybackPeakConfidence
             )
         )
     }
 
     suspend fun getDailyCheckIn(sourceDate: String): DailyCheckInEntity? =
         dao.getDailyCheckIn(sourceDate)
+
+    suspend fun updatePaybackPeakMarker(
+        sourceDate: String,
+        paybackPeakToday: Boolean,
+        paybackPeakConfidence: String
+    ) {
+        dao.updatePaybackPeakColumns(
+            sourceDate = sourceDate,
+            paybackPeakToday = paybackPeakToday,
+            paybackPeakConfidence = paybackPeakConfidence,
+            updatedAtEpochMs = System.currentTimeMillis()
+        )
+    }
 
     suspend fun getFoodDailySummary(sourceDate: String): FoodDailySummaryEntity? =
         dao.getFoodDailySummary(sourceDate)

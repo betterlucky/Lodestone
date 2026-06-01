@@ -234,6 +234,59 @@ fun SettingsScreen(
             }
         }
         item {
+            SectionCard(title = "Loop device", subtitle = "Scan, select, and hand off the Loop from Settings") {
+                DetailRow("Bluetooth", if (runtime.bluetoothPowered) "On" else "Off")
+                DetailRow("Connection", runtime.connectionPhase.replaceFirstChar { it.titlecase() })
+                DetailRow("Battery", runtime.batteryLevel?.let { "$it%" } ?: "Unknown")
+                DetailRow("Selected", viewModel.selectedDeviceId ?: "None")
+                DetailRow("Connected", runtime.connectedDevice?.name ?: "None")
+                DetailRow("Firmware", runtime.firmwareVersion ?: "Unknown")
+                runtime.lastError?.takeIf { it.isNotBlank() }?.let { error ->
+                    BannerNote(
+                        text = error,
+                        tint = MaterialTheme.colorScheme.errorContainer,
+                        textColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+                ButtonRow {
+                    Button(onClick = viewModel::scanDevices, enabled = !viewModel.isBusy) {
+                        Text("Scan")
+                    }
+                    Button(
+                        onClick = viewModel::connectSelectedDevice,
+                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
+                    ) {
+                        Text("Connect")
+                    }
+                    OutlinedButton(
+                        onClick = viewModel::disconnectSelectedDevice,
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Disconnect")
+                    }
+                }
+                SupportText("If Polar Flow is holding the Loop connection, use Prepare for Flow or close Flow before connecting here.")
+            }
+        }
+        if (runtime.scannedDevices.isEmpty()) {
+            item {
+                BannerNote(
+                    text = "No Loop devices listed yet. Tap Scan above, then choose your Loop here when it appears.",
+                    tint = MaterialTheme.colorScheme.secondaryContainer,
+                    textColor = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        } else {
+            item { SectionLabel("Discovered Loop devices") }
+            itemsIndexed(runtime.scannedDevices, key = { index, device -> "settings-${device.deviceId}-$index" }) { _, device ->
+                DeviceRow(
+                    device = device,
+                    selected = viewModel.selectedDeviceId == device.deviceId,
+                    onSelect = { viewModel.selectDevice(device.deviceId) }
+                )
+            }
+        }
+        item {
             SectionCard(title = "Morning repair", subtitle = "Non-standard tools for stubborn sleep reports") {
                 DetailRow("Today", today)
                 DetailRow("PPI received", if (ppiPresent) "Yes" else "Not yet")

@@ -1,6 +1,7 @@
 package com.daveharris.healthmonitor
 
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
+import com.daveharris.healthmonitor.data.WakeMarkerSources
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -27,7 +28,7 @@ fun resolveLodestoneDisplayDate(
         .lastOrNull()
 
     if (
-        latestMarker?.markerSource == "manual_going_to_bed" &&
+        latestMarker?.markerSource == WakeMarkerSources.GOING_TO_BED &&
         Duration.between(Instant.ofEpochMilli(latestMarker.markerEpochMs), now.toInstant()) <= ACTIVE_BEDTIME_MARKER_DURATION
     ) {
         return LodestoneDayResolution(
@@ -37,7 +38,7 @@ fun resolveLodestoneDisplayDate(
     }
 
     if (
-        latestMarker?.markerSource == "manual_im_awake" &&
+        latestMarker?.markerSource == WakeMarkerSources.IM_AWAKE &&
         Duration.between(Instant.ofEpochMilli(latestMarker.markerEpochMs), now.toInstant()) <= ACTIVE_WAKE_MARKER_DURATION
     ) {
         return LodestoneDayResolution(

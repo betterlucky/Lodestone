@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import java.time.Instant
 import java.time.LocalDate
@@ -70,6 +71,27 @@ private fun reviewFoodImportSummary(
         }
     }
     return "Synced: ${parts.joinToString("; ")}"
+}
+
+private fun majorTaskTypeLabel(value: String?): String? =
+    when (value) {
+        JournalMajorTaskTypes.WORK_FROM_HOME -> "Work from home"
+        JournalMajorTaskTypes.SITE_VISIT -> "Site visit"
+        JournalMajorTaskTypes.ADMIN_ASSESSMENT -> "Admin / assessment"
+        JournalMajorTaskTypes.OTHER_MAJOR_TASK -> "Other major task"
+        else -> null
+    }
+
+private fun reviewDayShapeSummary(checkIn: DailyCheckInEntity): String? {
+    if (checkIn.dayShapeCaptured != true) return null
+    val parts = buildList {
+        if (checkIn.mostlyHorizontal == true) add("Mostly horizontal")
+        if (checkIn.leftHouse == true) add("Left the house")
+        if (checkIn.majorTask == true) add(majorTaskTypeLabel(checkIn.majorTaskType) ?: "Work / major task")
+        if (checkIn.pemPaybackToday == true) add("PEM / payback")
+        if (checkIn.paybackPeakToday == true) add("Payback peak")
+    }
+    return if (parts.isEmpty()) "None marked" else parts.joinToString(" · ")
 }
 
 @Composable
@@ -172,6 +194,13 @@ fun ReviewHistoryItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
+            reviewDayShapeSummary(checkIn)?.let { summary ->
+                Text(
+                    "Day shape: $summary",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
             if (!checkIn.notes.isNullOrBlank()) {
                 Text(
                     checkIn.notes,
@@ -221,7 +250,7 @@ fun ReviewDatePickerField(
         else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f)
     }
     val status = listOf(
-        if (hasSavedReview) "saved review" else "no saved review",
+        if (hasSavedReview) "saved journal" else "no saved journal",
         if (hasFoodImport) "food synced" else "no food import"
     ).joinToString(" · ")
 
@@ -322,6 +351,123 @@ fun ReviewDatePickerField(
             DatePicker(state = datePickerState)
         }
     }
+}
+
+@Composable
+fun DayShapeChipSection(
+    mostlyHorizontal: Boolean,
+    leftHouse: Boolean,
+    majorTask: Boolean,
+    majorTaskType: String?,
+    pemPaybackToday: Boolean,
+    paybackPeakToday: Boolean,
+    onMostlyHorizontalChange: (Boolean) -> Unit,
+    onLeftHouseChange: (Boolean) -> Unit,
+    onMajorTaskChange: (Boolean) -> Unit,
+    onMajorTaskTypeChange: (String?) -> Unit,
+    onPemPaybackTodayChange: (Boolean) -> Unit,
+    onPaybackPeakTodayChange: (Boolean) -> Unit
+) {
+    SectionLabel("Today included. Optional.")
+    SupportText("Leave blank if you are not sure. These broad anchors help the model without turning Journal into homework.")
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        DayShapeFilterChip(
+            selected = mostlyHorizontal,
+            label = "Mostly horizontal",
+            onClick = { onMostlyHorizontalChange(!mostlyHorizontal) }
+        )
+        DayShapeFilterChip(
+            selected = leftHouse,
+            label = "Left the house",
+            onClick = { onLeftHouseChange(!leftHouse) }
+        )
+        DayShapeFilterChip(
+            selected = majorTask,
+            label = "Work / major task",
+            onClick = { onMajorTaskChange(!majorTask) }
+        )
+        DayShapeFilterChip(
+            selected = pemPaybackToday,
+            label = "PEM / payback today",
+            onClick = { onPemPaybackTodayChange(!pemPaybackToday) }
+        )
+        if (pemPaybackToday || paybackPeakToday) {
+            DayShapeFilterChip(
+                selected = paybackPeakToday,
+                label = "Peak of payback",
+                onClick = { onPaybackPeakTodayChange(!paybackPeakToday) }
+            )
+        }
+    }
+    if (majorTask) {
+        SectionLabel("Major task type. Optional.")
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                JournalMajorTaskTypes.WORK_FROM_HOME,
+                JournalMajorTaskTypes.SITE_VISIT,
+                JournalMajorTaskTypes.ADMIN_ASSESSMENT,
+                JournalMajorTaskTypes.OTHER_MAJOR_TASK
+            ).forEach { value ->
+                DayShapeFilterChip(
+                    selected = majorTaskType == value,
+                    label = majorTaskTypeLabel(value) ?: value,
+                    onClick = {
+                        onMajorTaskTypeChange(if (majorTaskType == value) null else value)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PaybackPeakPromptSection(
+    prompt: PaybackEpisodePeakPrompt,
+    onMarkPeak: (String) -> Unit,
+    onNotSure: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    SectionLabel("Payback peak?")
+    SupportText("Looks like a payback spell may have ended. Optional: mark the worst day in that spell.")
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        prompt.pemDates.forEach { sourceDate ->
+            FilterChip(
+                selected = false,
+                onClick = { onMarkPeak(sourceDate) },
+                label = { Text(sourceDate) }
+            )
+        }
+        FilterChip(
+            selected = false,
+            onClick = onNotSure,
+            label = { Text("Not sure") }
+        )
+        TextButton(onClick = onDismiss) {
+            Text("Dismiss")
+        }
+    }
+}
+
+@Composable
+private fun DayShapeFilterChip(
+    selected: Boolean,
+    label: String,
+    onClick: () -> Unit
+) {
+    FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label) }
+    )
 }
 
 @Composable

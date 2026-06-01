@@ -113,7 +113,7 @@ fun DataScreen(
             }
         }
         item {
-            SectionCard(title = "Check in", subtitle = "Loop readiness checklist") {
+            SectionCard(title = "Check in", subtitle = "Loop current-signal checklist") {
                 SupportText("Use Check in to sync and assess the current situation without marking wake time. Use the sleep/wake buttons only when you want to record those events.")
                 DetailRow("Status", nowState.currentState.label)
                 DetailRow("Robustness", nowState.signalRobustness.label)
@@ -133,7 +133,7 @@ fun DataScreen(
                         status = morningConnectionBadgeStatus(runtime, todayStatus)
                     )
                 }
-                DetailRow("Final Loop sleep report", todayStatus.sleepReport)
+                DetailRow("Final Loop sleep context", todayStatus.sleepReport)
                 DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
                 SupportText(todayStatus.message)
                 todayStatus.catchUpPrompt?.let { SupportText(it) }
@@ -176,13 +176,17 @@ fun DataScreen(
         item {
             CandidateReviewSection(
                 state = sleepEpisodeReviewState,
+                wakeMarkers = wakeMarkers,
+                activeAnalysisWindow = nowState.activeAnalysisWindow,
                 actionsEnabled = actionsEnabled && !viewModel.isBusy,
                 onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
                 onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
                 onMarkRest = viewModel::markSleepEpisodeAsRest,
                 onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
                 onClearDecision = viewModel::clearSleepEpisodeDecision,
+                onAddManualWindow = viewModel::addManualSleepWindow,
                 onEditWindow = viewModel::editSleepEpisodeWindow,
+                onEditMarker = viewModel::editWakeMarker,
                 onMarkNoMainSleep = viewModel::markNoMainSleep
             )
         }
@@ -193,6 +197,7 @@ fun DataScreen(
                     SupportText(todayStatus.hrvDetail)
                 } else {
                     DetailRow("Signal basis", morningReadBasisLabel(activeMorningRead, todayStatus))
+                    DetailRow("Window", nowState.activeAnalysisWindow.label)
                     DetailRow("Usable windows", goodEpochs.toString())
                     DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
                     if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {

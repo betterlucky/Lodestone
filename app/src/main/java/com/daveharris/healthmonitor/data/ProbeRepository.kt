@@ -200,6 +200,45 @@ class ProbeRepository(
         return true
     }
 
+    suspend fun addManualSleepWindow(
+        sourceDate: String,
+        startEpochMs: Long,
+        endEpochMs: Long
+    ): Long {
+        require(endEpochMs > startEpochMs) {
+            "Manual sleep window end must be after start"
+        }
+        val now = System.currentTimeMillis()
+        val evidenceJson = GsonProvider.gson.toJson(
+            mapOf(
+                "userDecision" to "manual_sleep_window",
+                "durationMinutes" to ((endEpochMs - startEpochMs) / 60_000L).coerceAtLeast(0L)
+            )
+        )
+        var rowId = 0L
+        database.withTransaction {
+            dao.clearPrimarySleepEpisodeForDate(sourceDate, now)
+            rowId = dao.insertSleepEpisode(
+                SleepEpisodeEntity(
+                    sourceDate = sourceDate,
+                    startEpochMs = startEpochMs,
+                    endEpochMs = endEpochMs,
+                    episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+                    source = SleepEpisodeSources.MANUAL,
+                    confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+                    isPrimaryForReadiness = true,
+                    deviceId = null,
+                    linkedSleepRawId = null,
+                    evidenceJson = evidenceJson,
+                    notes = "Added manual sleep window",
+                    createdAtEpochMs = now,
+                    updatedAtEpochMs = now
+                )
+            )
+        }
+        return rowId
+    }
+
     suspend fun markNoMainSleep(sourceDate: String): Long {
         val now = System.currentTimeMillis()
         val evidenceJson = GsonProvider.gson.toJson(
@@ -372,7 +411,7 @@ class ProbeRepository(
     suspend fun recordWakeMarker(
         sourceDate: String,
         markerEpochMs: Long = System.currentTimeMillis(),
-        markerSource: String = "manual_im_awake",
+        markerSource: String = WakeMarkerSources.IM_AWAKE,
         deviceId: String?,
         notes: String? = null,
         dedupeWindowMs: Long = 15 * 60 * 1000L
@@ -391,6 +430,9 @@ class ProbeRepository(
             )
         )
     }
+
+    suspend fun updateWakeMarkerTime(id: Long, sourceDate: String, markerEpochMs: Long): Boolean =
+        dao.updateWakeMarkerTime(id = id, sourceDate = sourceDate, markerEpochMs = markerEpochMs) > 0
 
     suspend fun refreshFtuStatus(deviceId: String): Result<Boolean> = runCatching {
         val isDone = polarManager.isFtuDone(deviceId)
@@ -2780,10 +2822,10 @@ class ProbeRepository(
             .filter { it.epochStartEpochMs >= bounds.startEpochMs && it.epochStartEpochMs <= bounds.endEpochMs }
             .sortedBy { it.epochStartEpochMs }
             .toList()
-        val bed = markers.lastOrNull { it.markerSource == "manual_going_to_bed" }
+        val bed = markers.lastOrNull { it.markerSource == WakeMarkerSources.GOING_TO_BED }
         val awakeMarker = markers
             .firstOrNull { marker ->
-                marker.markerSource == "manual_im_awake" &&
+                marker.markerSource == WakeMarkerSources.IM_AWAKE &&
                     (bed == null || marker.markerEpochMs > bed.markerEpochMs)
             }
         val latestAllowedWake = minOf(awakeMarker?.markerEpochMs ?: now, bounds.endEpochMs)

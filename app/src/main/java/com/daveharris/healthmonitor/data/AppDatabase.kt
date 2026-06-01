@@ -34,7 +34,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 22,
+    version = 23,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -367,27 +367,41 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_22_23 = object : Migration(22, 23) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN dayShapeCaptured INTEGER")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN mostlyHorizontal INTEGER")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN leftHouse INTEGER")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN majorTask INTEGER")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN majorTaskType TEXT")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN pemPaybackToday INTEGER")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN paybackPeakToday INTEGER")
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN paybackPeakConfidence TEXT")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
-            context,
-            AppDatabase::class.java,
-            "health-monitor-probe.db"
-        ).addMigrations(
-            MIGRATION_8_9,
-            MIGRATION_9_10,
-            MIGRATION_10_11,
-            MIGRATION_11_12,
-            MIGRATION_12_13,
-            MIGRATION_13_14,
-            MIGRATION_14_15,
-            MIGRATION_15_16,
-            MIGRATION_16_17,
-            MIGRATION_17_18,
-            MIGRATION_18_19,
-            MIGRATION_19_20,
-            MIGRATION_20_21,
-            MIGRATION_21_22
-        )
+                context,
+                AppDatabase::class.java,
+                "health-monitor-probe.db"
+            ).addMigrations(
+                MIGRATION_8_9,
+                MIGRATION_9_10,
+                MIGRATION_10_11,
+                MIGRATION_11_12,
+                MIGRATION_12_13,
+                MIGRATION_13_14,
+                MIGRATION_14_15,
+                MIGRATION_15_16,
+                MIGRATION_16_17,
+                MIGRATION_17_18,
+                MIGRATION_18_19,
+                MIGRATION_19_20,
+                MIGRATION_20_21,
+                MIGRATION_21_22,
+                MIGRATION_22_23
+            )
             .build()
     }
 }

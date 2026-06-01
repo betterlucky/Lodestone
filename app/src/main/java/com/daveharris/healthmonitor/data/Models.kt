@@ -104,5 +104,24 @@ object SleepEpisodeConfidences {
     const val LOW = "low"
 }
 
+object WakeMarkerSources {
+    const val GOING_TO_BED = "manual_going_to_bed"
+    const val IM_AWAKE = "manual_im_awake"
+}
+
+object JournalMajorTaskTypes {
+    const val WORK_FROM_HOME = "work_from_home"
+    const val SITE_VISIT = "site_visit"
+    const val ADMIN_ASSESSMENT = "admin_assessment"
+    const val OTHER_MAJOR_TASK = "other_major_task"
+}
+
+object PaybackPeakConfidence {
+    const val USER_SELECTED = "user_selected"
+    const val AUTO_SINGLE = "auto_single"
+    const val NOT_SURE = "not_sure"
+    const val DISMISSED = "dismissed"
+}
+
 const val PARSER_VERSION = 3
 const val APP_VERSION = BuildConfig.VERSION_NAME

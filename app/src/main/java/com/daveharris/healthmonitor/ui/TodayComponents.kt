@@ -44,6 +44,7 @@ import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
+import com.daveharris.healthmonitor.data.WakeMarkerSources
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -104,7 +105,7 @@ fun todayReadinessStatus(
                 it.notes?.contains("check-in", ignoreCase = true) == true
         }
         .maxByOrNull { it.startedAtEpochMs }
-    val isSleeping = latestRealMarker?.markerSource == "manual_going_to_bed"
+    val isSleeping = latestRealMarker?.markerSource == WakeMarkerSources.GOING_TO_BED
     val syncRunning = isBusy || latestReadinessSync?.status == "running"
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
     val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
@@ -156,11 +157,11 @@ fun todayReadinessStatus(
         )
         hasFinalSleep -> TodayReadinessStatus(
             stage = TodayReadinessStage.UPDATE_COMPLETE,
-            title = "Update complete",
+            title = "Final Loop context ready",
             sleepReport = "Final report present",
             ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = "The final sleep report and morning signal are ready.",
-            hrvDetail = "Raw PPI has been aligned to the resolved Loop sleep window.",
+            message = "The final sleep report is present, so this morning signal has vendor sleep context.",
+            hrvDetail = "Raw PPI has been aligned to the resolved Loop sleep window; use the signal as pacing context.",
             dataQuality = dataQuality,
             lastUsedLabel = lastUsedLabel,
             lastLoopSyncLabel = lastLoopSyncLabel
@@ -240,7 +241,7 @@ private fun catchUpPrompt(today: String, morningRead: MorningReadSnapshot?): Str
     val todayDate = runCatching { LocalDate.parse(today) }.getOrNull() ?: return null
     val missingDays = java.time.temporal.ChronoUnit.DAYS.between(latestReadDate, todayDate)
     return if (missingDays > 0) {
-        "Last readiness read was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
+        "Last morning signal was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
     } else {
         null
     }
@@ -343,6 +344,8 @@ fun TodayHeroCard(
                 ) {
                     HeroPill(nowState.currentState.qualifier)
                     HeroPill("Signal: ${nowState.signalRobustness.label}")
+                    HeroPill("Loop: ${nowState.deviceConnection.detail}")
+                    HeroPill("Source: ${nowState.activeAnalysisWindow.label}")
                     confidence?.let { HeroPill("$it confidence") }
                     if (nowState.stateStability.availability != NowDataAvailability.MISSING) {
                         HeroPill("Stability: ${nowState.stateStability.label}")
@@ -408,20 +411,22 @@ fun MorningSignalSection(
         border = BorderStroke(1.dp, tone.copy(alpha = 0.18f))
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Readiness signal", fontWeight = FontWeight.SemiBold)
+            Text("Current signal", fontWeight = FontWeight.SemiBold)
             if (morningRead == null) {
                 Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Current state", nowState.currentState.label)
+                    DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
                     DetailRow("Report state", todayStatus.sleepReport)
                     DetailRow("PPI", todayStatus.ppiReceipt)
                     DetailRow("Marker", nowState.markerStatus.detail)
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Readiness", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
                     DetailRow("Stability", nowState.stateStability.label)
                     DetailRow("Report state", morningReadReportStateLabel(morningRead))
+                    DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
                     DetailRow("Basis", nowState.signalRobustness.basisLabel)
                     DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
                 }
@@ -430,6 +435,7 @@ fun MorningSignalSection(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Date", morningRead.sourceDate ?: "unknown")
+                    DetailRow("Window reason", nowState.activeAnalysisWindow.reason)
                     DetailRow("Autonomic source", autonomicSourceDisplayLabel(morningRead.overnightAutonomicSource))
                     DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
                     DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
@@ -458,11 +464,11 @@ fun morningReadBasisLabel(
         morningRead?.overnightAutonomicSource == "raw_ppi_inferred_window_primary_with_sleep_report" ->
             "PPI-inferred sleep window, Loop report as context"
         morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
-            "PPI aligned to Loop sleep context"
+            "PPI aligned to final Loop sleep context"
         morningRead?.sleepDataReady == true ->
             "Loop sleep context only"
         morningRead?.isInterim == true ->
-            "Provisional readiness data"
+            "Provisional current signal"
         todayStatus.stage == TodayReadinessStage.SLEEP_TIME ->
             "Waiting for wake sync"
         else ->
@@ -487,7 +493,7 @@ private fun stabilityLabel(morningRead: MorningReadSnapshot?): String? {
 
 private fun morningReadReportStateLabel(morningRead: MorningReadSnapshot): String =
     when {
-        morningRead.sleepDataReady -> "Confirmed final Loop report"
+        morningRead.sleepDataReady -> "Final Loop report present"
         morningRead.isInterim -> "Provisional estimate"
         else -> "Pending"
     }

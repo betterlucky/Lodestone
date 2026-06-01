@@ -40,7 +40,7 @@ class SleepEpisodeReviewStateTest {
         val group = state.activeDateGroup!!
         val item = group.items.single()
         assertEquals(1, state.totalCandidateCount)
-        assertEquals("Review possible sleep/rest windows before using them for readiness.", state.surfaceMessage)
+        assertEquals("Review possible sleep/rest windows before using them for the current signal.", state.surfaceMessage)
         assertEquals("Possible sleep", item.title)
         assertEquals("22:30-06:00", item.timeRangeLabel)
         assertEquals("7h 30m", item.durationLabel)
@@ -115,7 +115,7 @@ class SleepEpisodeReviewStateTest {
         assertEquals("Review missing days from oldest to newest.", state.surfaceMessage)
         assertEquals(listOf("2026-05-26", "2026-05-27", "2026-05-28"), state.dateGroups.map { it.sourceDate })
         assertTrue(state.dateGroups[0].isEmpty)
-        assertEquals("Review saved", state.dateGroups[0].repairStatusLabel)
+        assertEquals("Journal saved", state.dateGroups[0].repairStatusLabel)
         assertFalse(state.dateGroups[0].needsAttention)
         assertEquals(listOf("Confirmed sleep", "No main sleep"), state.dateGroups[1].items.map { it.title })
         assertEquals("Confirmed", state.dateGroups[1].repairStatusLabel)

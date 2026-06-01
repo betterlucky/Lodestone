@@ -292,7 +292,15 @@ data class DailyCheckInEntity(
     val muscleWeaknessToday: Boolean,
     val notes: String?,
     val createdAtEpochMs: Long,
-    val updatedAtEpochMs: Long
+    val updatedAtEpochMs: Long,
+    val dayShapeCaptured: Boolean? = null,
+    val mostlyHorizontal: Boolean? = null,
+    val leftHouse: Boolean? = null,
+    val majorTask: Boolean? = null,
+    val majorTaskType: String? = null,
+    val pemPaybackToday: Boolean? = null,
+    val paybackPeakToday: Boolean? = null,
+    val paybackPeakConfidence: String? = null
 )
 
 @Entity(

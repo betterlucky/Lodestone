@@ -6,6 +6,7 @@ import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
+import com.daveharris.healthmonitor.data.WakeMarkerSources
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import java.time.Duration
@@ -50,6 +51,16 @@ enum class NowMarkerState {
     STALE_BEDTIME,
     RECENT_WAKE,
     STALE_WAKE
+}
+
+enum class NowAnalysisWindowSourceType {
+    MODEL_ESTIMATE,
+    USER_SELECTED,
+    MARKER_DERIVED,
+    LOOP_REPORT,
+    NO_MAIN_SLEEP,
+    PENDING,
+    UNKNOWN
 }
 
 data class NowDataPoint(
@@ -116,9 +127,23 @@ data class NowPrimaryActions(
     val waking: NowActionAvailability
 )
 
+data class NowAnalysisWindowProvenance(
+    val sourceDate: String,
+    val startEpochMs: Long?,
+    val endEpochMs: Long?,
+    val sourceType: NowAnalysisWindowSourceType,
+    val label: String,
+    val timeRangeLabel: String,
+    val durationLabel: String,
+    val confidenceLabel: String,
+    val selectedByUser: Boolean,
+    val reason: String
+)
+
 data class NowScreenState(
     val today: String,
     val activeMorningRead: MorningReadSnapshot?,
+    val activeAnalysisWindow: NowAnalysisWindowProvenance,
     val currentState: NowCurrentState,
     val signalRobustness: NowSignalRobustness,
     val stateStability: NowStateStability,
@@ -161,6 +186,13 @@ fun buildNowScreenState(
     val activeMorningRead = relevantMorningRead
         ?.takeUnless { markerStatus.state == NowMarkerState.ACTIVE_BEDTIME }
         ?.takeUnless { noMainSleep }
+    val activeAnalysisWindow = buildActiveAnalysisWindow(
+        today = today,
+        activeMorningRead = activeMorningRead,
+        sleepEpisodeReviewState = sleepEpisodeReviewState,
+        noMainSleep = noMainSleep,
+        markerStatus = markerStatus
+    )
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
     val hasPpi = relevantMorningRead.hasPpiSignal()
     val catchUpPrompt = catchUpPrompt(today, morningRead)
@@ -204,11 +236,13 @@ fun buildNowScreenState(
         hasFinalSleep = hasFinalSleep,
         hasPpi = hasPpi,
         syncRunning = syncRunning,
-        noMainSleep = noMainSleep
+        noMainSleep = noMainSleep,
+        analysisWindow = activeAnalysisWindow
     )
     return NowScreenState(
         today = today,
         activeMorningRead = activeMorningRead,
+        activeAnalysisWindow = activeAnalysisWindow,
         currentState = currentState,
         signalRobustness = signalRobustness,
         stateStability = stateStability,
@@ -257,9 +291,9 @@ private fun buildCurrentState(
             kind = NowCurrentStateKind.READY,
             availability = NowDataAvailability.PRESENT,
             status = morningRead?.status,
-            label = "Readiness: ${morningRead?.status.readinessLabel()}",
-            qualifier = "Final Loop report present",
-            message = "The current read has final sleep context and the morning signal is ready."
+            label = "Current signal: ${morningRead?.status.readinessLabel()}",
+            qualifier = "Final Loop sleep context",
+            message = "The current read includes final Loop sleep context. Use it as pacing context, not a verdict."
         )
         hasPpi -> NowCurrentState(
             kind = NowCurrentStateKind.PROVISIONAL_READ,
@@ -268,9 +302,9 @@ private fun buildCurrentState(
             label = "Provisional read: ${morningRead?.status.readinessLabel()}",
             qualifier = "PPI received",
             message = if (morningRead?.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window") {
-                "PPI is available, but Lodestone does not yet have a usable sleep window."
+                "PPI is available, but Lodestone does not yet have a usable sleep window for a current read."
             } else {
-                "PPI is available before the final Loop sleep report, so treat this read as provisional."
+                "PPI is available before the final Loop sleep report, so this current signal remains provisional."
             }
         )
         else -> NowCurrentState(
@@ -292,7 +326,7 @@ private fun buildSignalRobustness(
 ): NowSignalRobustness {
     val sleepReport = when {
         noMainSleep -> NowDataPoint("Sleep report", NowDataAvailability.NOT_APPLICABLE, "No main sleep saved")
-        hasFinalSleep -> NowDataPoint("Sleep report", NowDataAvailability.PRESENT, "Final Loop report present")
+        hasFinalSleep -> NowDataPoint("Sleep report", NowDataAvailability.PRESENT, "Final Loop sleep context present")
         syncRunning -> NowDataPoint("Sleep report", NowDataAvailability.PENDING, "Checking Loop")
         hasPpi -> NowDataPoint("Sleep report", NowDataAvailability.PENDING, "Awaiting final Loop report")
         else -> NowDataPoint("Sleep report", NowDataAvailability.MISSING, "Not synced yet")
@@ -434,10 +468,10 @@ private fun buildMarkerStatus(
     }
     val realMarkers = wakeMarkers.filterNot { it.notes == "manual awake command" }
     val latestBedtime = realMarkers
-        .filter { it.markerSource == "manual_going_to_bed" }
+        .filter { it.markerSource == WakeMarkerSources.GOING_TO_BED }
         .maxByOrNull { it.markerEpochMs }
     val latestWake = realMarkers
-        .filter { it.markerSource == "manual_im_awake" }
+        .filter { it.markerSource == WakeMarkerSources.IM_AWAKE }
         .maxByOrNull { it.markerEpochMs }
     val latestMarker = realMarkers.maxByOrNull { it.markerEpochMs }
     val bedtimePoint = latestBedtime.toMarkerPoint(
@@ -457,16 +491,16 @@ private fun buildMarkerStatus(
         NowDataPoint("Wake marker", NowDataAvailability.NOT_APPLICABLE, "Wake marker hidden in bedtime-only mode")
     }
     val state = when {
-        latestMarker?.markerSource == "manual_going_to_bed" && resolvingWindowAvailable ->
+        latestMarker?.markerSource == WakeMarkerSources.GOING_TO_BED && resolvingWindowAvailable ->
             NowMarkerState.RESOLVED_BEDTIME
-        latestMarker?.markerSource == "manual_going_to_bed" &&
+        latestMarker?.markerSource == WakeMarkerSources.GOING_TO_BED &&
             latestMarker.ageAt(nowEpochMs) <= ACTIVE_BEDTIME_MARKER_DURATION -> NowMarkerState.ACTIVE_BEDTIME
-        latestMarker?.markerSource == "manual_going_to_bed" -> NowMarkerState.STALE_BEDTIME
+        latestMarker?.markerSource == WakeMarkerSources.GOING_TO_BED -> NowMarkerState.STALE_BEDTIME
         markerMode == NowMarkerMode.BEDTIME_AND_WAKING &&
-            latestMarker?.markerSource == "manual_im_awake" &&
+            latestMarker?.markerSource == WakeMarkerSources.IM_AWAKE &&
             latestMarker.ageAt(nowEpochMs) <= ACTIVE_WAKE_MARKER_DURATION -> NowMarkerState.RECENT_WAKE
         markerMode == NowMarkerMode.BEDTIME_AND_WAKING &&
-            latestMarker?.markerSource == "manual_im_awake" -> NowMarkerState.STALE_WAKE
+            latestMarker?.markerSource == WakeMarkerSources.IM_AWAKE -> NowMarkerState.STALE_WAKE
         else -> NowMarkerState.NONE
     }
     val (availability, label, detail) = when (state) {
@@ -589,7 +623,8 @@ private fun buildTodayReadinessStatus(
     hasFinalSleep: Boolean,
     hasPpi: Boolean,
     syncRunning: Boolean,
-    noMainSleep: Boolean
+    noMainSleep: Boolean,
+    analysisWindow: NowAnalysisWindowProvenance
 ): TodayReadinessStatus {
     val stage = when {
         markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> TodayReadinessStage.SLEEP_TIME
@@ -619,7 +654,7 @@ private fun buildTodayReadinessStatus(
         sleepReport = signalRobustness.sleepReport.detail,
         ppiReceipt = signalRobustness.ppi.detail,
         message = currentState.message,
-        hrvDetail = hrvDetailForState(morningRead, noMainSleep),
+        hrvDetail = hrvDetailForState(morningRead, noMainSleep, analysisWindow),
         dataQuality = dataQuality,
         connectionPrompt = if (syncRunning) {
             "Keep the phone close to the Loop until PPI finishes."
@@ -637,16 +672,102 @@ private fun buildTodayReadinessStatus(
     )
 }
 
-private fun hrvDetailForState(morningRead: MorningReadSnapshot?, noMainSleep: Boolean): String =
+private fun hrvDetailForState(
+    morningRead: MorningReadSnapshot?,
+    noMainSleep: Boolean,
+    analysisWindow: NowAnalysisWindowProvenance
+): String =
     when {
         noMainSleep -> "No main sleep is saved, so overnight HRV alignment is not applicable for this date."
-        morningRead?.rawPpiGoodEpochCount != null -> "Raw PPI has enough usable windows for overnight detail."
+        morningRead?.rawPpiGoodEpochCount != null -> "Raw PPI is aligned to ${analysisWindow.label}; use the signal as pacing context."
+        analysisWindow.sourceType == NowAnalysisWindowSourceType.PENDING -> analysisWindow.reason
+        analysisWindow.sourceType == NowAnalysisWindowSourceType.UNKNOWN ->
+            "The active analysis source is unclassified; review provenance before relying on HRV detail."
+        analysisWindow.sourceType == NowAnalysisWindowSourceType.MARKER_DERIVED ->
+            "Marker-derived timing is selected; PPI detail will appear when enough aligned data is available."
         morningRead?.overnightAutonomicSource == "raw_ppi_pending_manual_sleep_window" ->
             "PPI is available, but Lodestone has no usable sleep window for alignment yet."
         morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true ->
-            "The interim morning signal is using available PPI while final sleep context is pending."
+            "The provisional morning signal is using ${analysisWindow.label} while final sleep context is pending."
         else -> "PPI detail will appear after Lodestone syncs enough current Loop data."
     }
+
+private fun buildActiveAnalysisWindow(
+    today: String,
+    activeMorningRead: MorningReadSnapshot?,
+    sleepEpisodeReviewState: SleepEpisodeReviewState,
+    noMainSleep: Boolean,
+    markerStatus: NowMarkerStatus
+): NowAnalysisWindowProvenance {
+    val group = sleepEpisodeReviewState.activeDateGroup
+    if (noMainSleep) {
+        return NowAnalysisWindowProvenance(
+            sourceDate = today,
+            startEpochMs = null,
+            endEpochMs = null,
+            sourceType = NowAnalysisWindowSourceType.NO_MAIN_SLEEP,
+            label = "No main sleep",
+            timeRangeLabel = "No timed window",
+            durationLabel = "Not applicable",
+            confidenceLabel = "User confirmed",
+            selectedByUser = true,
+            reason = "You marked this day as having no main sleep window."
+        )
+    }
+
+    val primaryItem = group
+        ?.items
+        ?.firstOrNull { it.isPrimaryForReadiness && it.startEpochMs != null && it.endEpochMs != null }
+    if (primaryItem != null) {
+        return NowAnalysisWindowProvenance(
+            sourceDate = primaryItem.sourceDate,
+            startEpochMs = primaryItem.startEpochMs,
+            endEpochMs = primaryItem.endEpochMs,
+            sourceType = NowAnalysisWindowSourceType.USER_SELECTED,
+            label = primaryItem.kindLabel.windowLabelForUserSelection(),
+            timeRangeLabel = primaryItem.timeRangeLabel,
+            durationLabel = primaryItem.durationLabel,
+            confidenceLabel = primaryItem.confidenceLabel,
+            selectedByUser = true,
+            reason = "User-selected current-signal window."
+        )
+    }
+
+    if (activeMorningRead == null) {
+        return NowAnalysisWindowProvenance(
+            sourceDate = today,
+            startEpochMs = null,
+            endEpochMs = null,
+            sourceType = NowAnalysisWindowSourceType.PENDING,
+            label = "Analysis window pending",
+            timeRangeLabel = "Timing not available yet",
+            durationLabel = "Duration unknown",
+            confidenceLabel = "Pending",
+            selectedByUser = false,
+            reason = if (markerStatus.state == NowMarkerState.ACTIVE_BEDTIME) {
+                "Bedtime is marked; a later window has not been established yet."
+            } else {
+                "Lodestone needs sleep/rest evidence before choosing an analysis window."
+            }
+        )
+    }
+
+    val source = activeMorningRead.overnightAutonomicSource
+    val sourceType = source.analysisWindowSourceType()
+    val label = source.analysisWindowLabel(activeMorningRead.sleepDataReady)
+    return NowAnalysisWindowProvenance(
+        sourceDate = activeMorningRead.sourceDate ?: today,
+        startEpochMs = null,
+        endEpochMs = null,
+        sourceType = sourceType,
+        label = label,
+        timeRangeLabel = "Timing not available yet",
+        durationLabel = activeMorningRead.sleepDurationMinutes?.let(::durationMinutesLabel) ?: "Duration unknown",
+        confidenceLabel = activeMorningRead.confidence.replace('_', ' ').replaceFirstChar { it.titlecase() },
+        selectedByUser = sourceType == NowAnalysisWindowSourceType.USER_SELECTED,
+        reason = source.analysisWindowReason(sourceType)
+    )
+}
 
 private fun SyncRunEntity.isReadinessSync(): Boolean =
     notes?.contains("morning", ignoreCase = true) == true ||
@@ -693,13 +814,86 @@ private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean):
         morningRead?.overnightAutonomicSource == "raw_ppi_inferred_window_primary_with_sleep_report" ->
             "PPI-inferred sleep window, Loop report as context"
         morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
-            "PPI aligned to Loop sleep context"
+            "PPI aligned to final Loop sleep context"
         morningRead?.sleepDataReady == true ->
             "Loop sleep context only"
         morningRead?.isInterim == true ->
-            "Provisional readiness data"
+            "Provisional current signal"
         else -> "Waiting for morning data"
     }
+
+private fun String.analysisWindowSourceType(): NowAnalysisWindowSourceType =
+    when (this) {
+        "user_confirmed_no_sleep" -> NowAnalysisWindowSourceType.NO_MAIN_SLEEP
+        "edited_sleep_episode_primary",
+        "mixed_sleep_episode_primary",
+        "manual_sleep_episode_primary",
+        "confirmed_sleep_episode_primary" -> NowAnalysisWindowSourceType.USER_SELECTED
+        "raw_ppi_manual_window_pending_sleep_report",
+        "raw_ppi_manual_window_primary_with_sleep_report" -> NowAnalysisWindowSourceType.MARKER_DERIVED
+        "raw_ppi_calibrated_window_pending_sleep_report",
+        "raw_ppi_calibrated_window_primary_with_sleep_report",
+        "raw_ppi_inferred_window_pending_sleep_report",
+        "raw_ppi_inferred_window_primary_with_sleep_report" -> NowAnalysisWindowSourceType.MODEL_ESTIMATE
+        "ppi247_sleep_window",
+        "nightly_recharge_summary",
+        "sleep_context_only" -> NowAnalysisWindowSourceType.LOOP_REPORT
+        "awaiting_sleep_data" -> NowAnalysisWindowSourceType.PENDING
+        else -> if (contains("pending", ignoreCase = true)) {
+            NowAnalysisWindowSourceType.PENDING
+        } else {
+            NowAnalysisWindowSourceType.UNKNOWN
+        }
+    }
+
+private fun String.analysisWindowLabel(sleepDataReady: Boolean): String =
+    when (this) {
+        "raw_ppi_calibrated_window_pending_sleep_report" -> "calibrated sleep window"
+        "raw_ppi_manual_window_pending_sleep_report" -> "manual marker-derived sleep window"
+        "raw_ppi_inferred_window_pending_sleep_report" -> "PPI-inferred sleep window"
+        "raw_ppi_calibrated_window_primary_with_sleep_report" -> "calibrated primary window"
+        "raw_ppi_manual_window_primary_with_sleep_report" -> "manual primary window"
+        "raw_ppi_inferred_window_primary_with_sleep_report" -> "PPI-inferred primary window"
+        "edited_sleep_episode_primary" -> "edited user window"
+        "mixed_sleep_episode_primary",
+        "manual_sleep_episode_primary",
+        "confirmed_sleep_episode_primary" -> "confirmed user window"
+        "ppi247_sleep_window" -> "Loop sleep report window"
+        "nightly_recharge_summary" -> "Nightly Recharge sleep context"
+        "sleep_context_only" -> "Loop sleep context"
+        "raw_ppi_pending_manual_sleep_window" -> "sleep window pending"
+        "raw_ppi_pending_sleep_window" -> "sleep window pending"
+        else -> if (sleepDataReady) "resolved sleep window" else "analysis window pending"
+    }
+
+private fun String.analysisWindowReason(sourceType: NowAnalysisWindowSourceType): String =
+    when (sourceType) {
+        NowAnalysisWindowSourceType.USER_SELECTED -> "Using your selected window for the current signal."
+        NowAnalysisWindowSourceType.MODEL_ESTIMATE -> "Using Lodestone's estimate. Review it if it looks wrong."
+        NowAnalysisWindowSourceType.MARKER_DERIVED -> "Using marker-derived timing for this current read."
+        NowAnalysisWindowSourceType.LOOP_REPORT -> "Using Loop sleep context for this current read."
+        NowAnalysisWindowSourceType.NO_MAIN_SLEEP -> "No main sleep window applies to this date."
+        NowAnalysisWindowSourceType.PENDING -> "Waiting for a usable sleep/rest window."
+        NowAnalysisWindowSourceType.UNKNOWN -> "Using an unclassified analysis source; review provenance if this persists."
+    }
+
+private fun String.windowLabelForUserSelection(): String =
+    when (this) {
+        "Main sleep" -> "confirmed sleep window"
+        "Nap" -> "selected nap window"
+        "Rest" -> "selected rest window"
+        else -> lowercase().replaceFirstChar { it.titlecase() }
+    }
+
+private fun durationMinutesLabel(minutes: Int): String {
+    val hours = minutes / 60
+    val remainder = minutes % 60
+    return when {
+        hours > 0 && remainder > 0 -> "${hours}h ${remainder}m"
+        hours > 0 -> "${hours}h"
+        else -> "${remainder}m"
+    }
+}
 
 private fun ppiReceiptLabelForState(morningRead: MorningReadSnapshot?): String = when {
     morningRead?.rawPpiGoodEpochCount != null -> {
@@ -720,7 +914,7 @@ private fun catchUpPrompt(today: String, morningRead: MorningReadSnapshot?): Str
     val todayDate = runCatching { java.time.LocalDate.parse(today) }.getOrNull() ?: return null
     val missingDays = java.time.temporal.ChronoUnit.DAYS.between(latestReadDate, todayDate)
     return if (missingDays > 0) {
-        "Last readiness read was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
+        "Last morning signal was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
     } else {
         null
     }

@@ -27,7 +27,7 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 
 @Composable
-fun FeedbackScreen(
+fun JournalScreen(
     padding: PaddingValues,
     morningRead: MorningReadSnapshot?,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -55,9 +55,9 @@ fun FeedbackScreen(
     ) {
         item {
             HeroCard(
-                title = "Day Review",
-                subtitle = "A low-friction evening check-in with the morning signal nearby for context.",
-                eyebrow = "Review",
+                title = "Journal",
+                subtitle = "A low-friction evening check-in with the current signal nearby only as context.",
+                eyebrow = "Journal",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
             )
@@ -75,21 +75,16 @@ fun FeedbackScreen(
         }
         item {
             val selectedMorningRead = morningRead?.takeIf { it.sourceDate == viewModel.checkInDate }
-            if (selectedMorningRead != null) {
-                MorningReadCard(selectedMorningRead)
-            } else {
-                BannerNote(
-                    text = "No morning read is available for ${viewModel.checkInDate}. You can still record how the day ended.",
-                    tint = MaterialTheme.colorScheme.secondaryContainer,
-                    textColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            }
+            JournalContextCard(
+                selectedDate = viewModel.checkInDate,
+                morningRead = selectedMorningRead
+            )
         }
         item {
             SectionCard(title = "Evening check-in", subtitle = null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("How did the day actually end?", fontWeight = FontWeight.SemiBold)
-                    Text("(required)", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    Text("(one tap is enough)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
                 StatusChipRow(
                     selected = viewModel.eveningOutcomeDraft,
@@ -109,6 +104,32 @@ fun FeedbackScreen(
                 }
                 if (viewModel.eveningOutcomeDraft != null) {
                     SupportText(feedbackCopyFor(viewModel.eveningOutcomeDraft))
+                }
+                DayShapeChipSection(
+                    mostlyHorizontal = viewModel.mostlyHorizontalDraft,
+                    leftHouse = viewModel.leftHouseDraft,
+                    majorTask = viewModel.majorTaskDraft,
+                    majorTaskType = viewModel.majorTaskTypeDraft,
+                    pemPaybackToday = viewModel.pemPaybackTodayDraft,
+                    paybackPeakToday = viewModel.paybackPeakTodayDraft,
+                    onMostlyHorizontalChange = viewModel::updateMostlyHorizontal,
+                    onLeftHouseChange = viewModel::updateLeftHouse,
+                    onMajorTaskChange = viewModel::updateMajorTask,
+                    onMajorTaskTypeChange = viewModel::updateMajorTaskType,
+                    onPemPaybackTodayChange = viewModel::updatePemPaybackToday,
+                    onPaybackPeakTodayChange = viewModel::updatePaybackPeakToday
+                )
+                pendingPaybackPeakPrompt(
+                    activeDate = viewModel.checkInDate,
+                    checkIns = dailyCheckIns,
+                    activePemMarked = viewModel.pemPaybackTodayDraft
+                )?.let { prompt ->
+                    PaybackPeakPromptSection(
+                        prompt = prompt,
+                        onMarkPeak = viewModel::markPaybackPeakDate,
+                        onNotSure = { viewModel.markPaybackPeakNotSure(prompt.episodeEndDate) },
+                        onDismiss = { viewModel.dismissPaybackPeakPrompt(prompt.episodeEndDate) }
+                    )
                 }
                 SectionLabel("How did you approach the day? Optional.")
                 StatusChipRow(
@@ -156,7 +177,7 @@ fun FeedbackScreen(
                 isBusy = viewModel.isBusy
             )
         }
-        item { SectionLabel("Recent reviews") }
+        item { SectionLabel("Recent journal entries") }
         items(
             items = dailyCheckIns,
             key = { item -> "check-in-${item.sourceDate}-${item.updatedAtEpochMs}" }
@@ -172,3 +193,30 @@ fun FeedbackScreen(
         }
     }
 }
+
+@Composable
+private fun JournalContextCard(
+    selectedDate: String,
+    morningRead: MorningReadSnapshot?
+) {
+    SectionCard(title = "Context", subtitle = "Optional signal context") {
+        if (morningRead == null) {
+            SupportText("No morning signal is available for $selectedDate. You can still record how the day ended.")
+            return@SectionCard
+        }
+        DetailRow("Morning signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+        DetailRow("Signal state", morningRead.provisionalFinalLabel())
+        DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
+        DetailRow("Source", morningRead.overnightAutonomicSource.replace('_', ' '))
+        morningRead.reasons.firstOrNull()?.let { reason ->
+            SupportText(reason)
+        }
+    }
+}
+
+private fun MorningReadSnapshot.provisionalFinalLabel(): String =
+    when {
+        sleepDataReady -> "Final Loop sleep context present"
+        isInterim -> "Provisional, awaiting final Loop sleep context"
+        else -> "Current, sleep context pending"
+    }
