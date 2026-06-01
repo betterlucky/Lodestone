@@ -644,7 +644,8 @@ class ProbeViewModel(
                     notes = "Edited window"
                 )
                 statusMessage = if (saved) {
-                    "Sleep/rest window edited."
+                    val candidateCount = refreshInferredSleepEpisodeCandidates(sleepEpisodeReviewDates.value)
+                    "Sleep/rest window edited.${candidateCount.sleepCandidateSuffix()}"
                 } else {
                     "Sleep/rest window was not found."
                 }
@@ -668,8 +669,9 @@ class ProbeViewModel(
                     startEpochMs = startEpochMs,
                     endEpochMs = endEpochMs
                 )
+                val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(sourceDate))
                 setSleepEpisodeReviewDates(sourceDate)
-                statusMessage = "Manual sleep window saved for the current signal."
+                statusMessage = "Manual sleep window saved for the current signal.${candidateCount.sleepCandidateSuffix()}"
             }
         }
     }
@@ -692,7 +694,8 @@ class ProbeViewModel(
                     markerEpochMs = markerEpochMs
                 )
                 statusMessage = if (saved) {
-                    "Marker time saved."
+                    val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(targetDate))
+                    "Marker time saved.${candidateCount.sleepCandidateSuffix()}"
                 } else {
                     "Marker was not found."
                 }
