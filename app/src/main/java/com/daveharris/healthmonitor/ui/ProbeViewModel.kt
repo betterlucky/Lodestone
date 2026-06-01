@@ -28,6 +28,7 @@ import com.daveharris.healthmonitor.data.SleepEpisodeSources
 import com.daveharris.healthmonitor.data.SyncRunProfile
 import com.daveharris.healthmonitor.data.SyncWindowConfig
 import com.daveharris.healthmonitor.data.TrafficLightStatus
+import com.daveharris.healthmonitor.data.WakeMarkerSources
 import com.daveharris.healthmonitor.health.HealthConnectAnalysisExporter
 import com.daveharris.healthmonitor.health.Sleep2ScreenshotImporter
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,6 +67,7 @@ class ProbeViewModel(
     val foodDailySummaries = dailyReviewRepository.foodDailySummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val morningPredictionSnapshots = repository.morningPredictionSnapshots.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val recentWakeMarkers = repository.recentWakeMarkers.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val sleepEpisodeReviewState = combine(
         repository.recentSleepEpisodes,
@@ -356,7 +358,7 @@ class ProbeViewModel(
     fun markAwakeAndSync(markerEpochMs: Long = System.currentTimeMillis()) {
         runMarkerCheckIn(
             intent = NowCheckInIntent.WAKING,
-            markerSource = "manual_im_awake",
+            markerSource = WakeMarkerSources.IM_AWAKE,
             markerNotes = "Waking & sync",
             workingMessage = "Recording wake time and checking in…",
             successMessage = "Wake marker saved. Check-in sync completed.",
@@ -368,7 +370,7 @@ class ProbeViewModel(
     fun markGoingToBed(markerEpochMs: Long = System.currentTimeMillis()) {
         runMarkerCheckIn(
             intent = NowCheckInIntent.BEDTIME,
-            markerSource = "manual_going_to_bed",
+            markerSource = WakeMarkerSources.GOING_TO_BED,
             markerNotes = "Bedtime & sync",
             workingMessage = "Recording bedtime marker and checking in…",
             successMessage = "Bedtime marker saved. Check-in sync completed.",
@@ -633,6 +635,54 @@ class ProbeViewModel(
         }
     }
 
+    fun addManualSleepWindow(sourceDate: String, startEpochMs: Long, endEpochMs: Long) {
+        if (runCatching { LocalDate.parse(sourceDate) }.isFailure) {
+            statusMessage = "Choose a valid date first."
+            return
+        }
+        if (endEpochMs <= startEpochMs) {
+            statusMessage = "Sleep/rest end must be after the start."
+            return
+        }
+        viewModelScope.launch {
+            runBusyAction("Saving manual sleep window…") {
+                repository.addManualSleepWindow(
+                    sourceDate = sourceDate,
+                    startEpochMs = startEpochMs,
+                    endEpochMs = endEpochMs
+                )
+                setSleepEpisodeReviewDates(sourceDate)
+                statusMessage = "Manual sleep window saved for readiness."
+            }
+        }
+    }
+
+    fun editWakeMarker(id: Long, sourceDate: String, markerEpochMs: Long, markerSource: String) {
+        val targetDate = when (markerSource) {
+            WakeMarkerSources.GOING_TO_BED -> sleepTargetDateForBedtime(markerEpochMs).toString()
+            WakeMarkerSources.IM_AWAKE -> resolveLodestoneDisplayDate(
+                nowEpochMs = markerEpochMs,
+                latestMorningReadSourceDate = sourceDate,
+                wakeMarkers = emptyList()
+            ).sourceDate
+            else -> sourceDate
+        }
+        viewModelScope.launch {
+            runBusyAction("Saving marker time…") {
+                val saved = repository.updateWakeMarkerTime(
+                    id = id,
+                    sourceDate = targetDate,
+                    markerEpochMs = markerEpochMs
+                )
+                statusMessage = if (saved) {
+                    "Marker time saved."
+                } else {
+                    "Marker was not found."
+                }
+            }
+        }
+    }
+
     fun markNoMainSleep(sourceDate: String) {
         if (runCatching { LocalDate.parse(sourceDate) }.isFailure) {
             statusMessage = "Choose a valid date first."
@@ -677,19 +727,19 @@ class ProbeViewModel(
                     dailyReviewRepository.clearFoodImportForDate(date)
                     currentFoodSummary = null
                     currentDailyWeight = null
-                    statusMessage = "Reset today's review and food import."
+                    statusMessage = "Reset today's journal and food import."
                 }
             } else {
                 val existing = dailyReviewRepository.getDailyCheckIn(date)
                 if (existing != null) {
                     hydrateDailyCheckIn(existing)
-                    statusMessage = "Reloaded saved review for $date."
+                    statusMessage = "Reloaded saved journal for $date."
                 } else {
                     eveningOutcomeDraft = null
                     approachToDayDraft = null
                     muscleWeaknessTodayDraft = false
                     notesDraft = ""
-                    statusMessage = "No saved review for $date."
+                    statusMessage = "No saved journal for $date."
                 }
                 refreshFoodImportForDate(date)
             }
@@ -796,7 +846,7 @@ class ProbeViewModel(
             else ->
                 " No dated food entries were imported."
         }
-        return "Saved review for $savedDate.$foodMessage Entry fields cleared."
+        return "Saved journal entry for $savedDate.$foodMessage Entry fields cleared."
     }
 
     fun importLatestFoodCsvFromDownloads() {

@@ -44,6 +44,7 @@ import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
+import com.daveharris.healthmonitor.data.WakeMarkerSources
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -104,7 +105,7 @@ fun todayReadinessStatus(
                 it.notes?.contains("check-in", ignoreCase = true) == true
         }
         .maxByOrNull { it.startedAtEpochMs }
-    val isSleeping = latestRealMarker?.markerSource == "manual_going_to_bed"
+    val isSleeping = latestRealMarker?.markerSource == WakeMarkerSources.GOING_TO_BED
     val syncRunning = isBusy || latestReadinessSync?.status == "running"
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
     val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
@@ -343,6 +344,8 @@ fun TodayHeroCard(
                 ) {
                     HeroPill(nowState.currentState.qualifier)
                     HeroPill("Signal: ${nowState.signalRobustness.label}")
+                    HeroPill("Loop: ${nowState.deviceConnection.detail}")
+                    HeroPill("Source: ${nowState.activeAnalysisWindow.label}")
                     confidence?.let { HeroPill("$it confidence") }
                     if (nowState.stateStability.availability != NowDataAvailability.MISSING) {
                         HeroPill("Stability: ${nowState.stateStability.label}")
@@ -413,6 +416,7 @@ fun MorningSignalSection(
                 Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Current state", nowState.currentState.label)
+                    DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
                     DetailRow("Report state", todayStatus.sleepReport)
                     DetailRow("PPI", todayStatus.ppiReceipt)
                     DetailRow("Marker", nowState.markerStatus.detail)
@@ -422,6 +426,7 @@ fun MorningSignalSection(
                     DetailRow("Readiness", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
                     DetailRow("Stability", nowState.stateStability.label)
                     DetailRow("Report state", morningReadReportStateLabel(morningRead))
+                    DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
                     DetailRow("Basis", nowState.signalRobustness.basisLabel)
                     DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
                 }
@@ -430,6 +435,7 @@ fun MorningSignalSection(
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Date", morningRead.sourceDate ?: "unknown")
+                    DetailRow("Window reason", nowState.activeAnalysisWindow.reason)
                     DetailRow("Autonomic source", autonomicSourceDisplayLabel(morningRead.overnightAutonomicSource))
                     DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
                     DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")

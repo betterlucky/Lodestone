@@ -110,6 +110,15 @@ interface ProbeDao {
 
     @Query(
         """
+        UPDATE wake_marker
+        SET sourceDate = :sourceDate, markerEpochMs = :markerEpochMs
+        WHERE id = :id
+        """
+    )
+    suspend fun updateWakeMarkerTime(id: Long, sourceDate: String, markerEpochMs: Long): Int
+
+    @Query(
+        """
         SELECT * FROM wake_marker
         WHERE sourceDate = :sourceDate AND markerSource = :markerSource
         ORDER BY markerEpochMs DESC

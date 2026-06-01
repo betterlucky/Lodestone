@@ -170,6 +170,77 @@ fun SleepWindowTimeEditorSheet(
 }
 
 @Composable
+fun ManualSleepWindowTimeEditorSheet(
+    sourceDate: String,
+    onSave: (Long, Long) -> Unit,
+    onDismiss: () -> Unit,
+    zoneId: ZoneId = ZoneId.systemDefault()
+) {
+    val parsedDate = remember(sourceDate) {
+        runCatching { LocalDate.parse(sourceDate) }.getOrDefault(LocalDate.now(zoneId))
+    }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var start by remember(sourceDate) {
+        mutableStateOf(TimeEditorValue(date = parsedDate.minusDays(1), hour = 23, minute = 0))
+    }
+    var end by remember(sourceDate) {
+        mutableStateOf(TimeEditorValue(date = parsedDate, hour = 7, minute = 0))
+    }
+    val validation = validateWindowEditor(start, end, zoneId)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 720.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            SheetTitle("Add sleep window", "Create a user-confirmed main sleep window.")
+            InstantEditorControls(
+                label = "Start",
+                value = start,
+                onValueChange = { start = it }
+            )
+            InstantEditorControls(
+                label = "End",
+                value = end,
+                onValueChange = { end = it }
+            )
+            DetailRow("Duration", windowDurationLabel(start, end, zoneId))
+            DetailRow("Preview", windowPreviewLabel(start, end, zoneId))
+            validation.message?.let { message ->
+                Text(
+                    text = message,
+                    color = if (validation.isWarning) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            ButtonRow {
+                Button(
+                    onClick = { onSave(start.toEpochMs(zoneId), end.toEpochMs(zoneId)) },
+                    enabled = validation.canSave
+                ) {
+                    Text("Save sleep window")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SheetTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(

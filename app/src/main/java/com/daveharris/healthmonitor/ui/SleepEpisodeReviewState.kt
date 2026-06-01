@@ -74,7 +74,7 @@ data class SleepEpisodeDateGroup(
             hasPrimaryReadinessWindow || hasNoSleepDecision -> "Confirmed"
             candidateCount > 0 -> "Needs review"
             confirmedCount > 0 -> "Context saved"
-            hasSavedReview -> "Review saved"
+            hasSavedReview -> "Journal saved"
             else -> "No candidates"
         }
 
@@ -83,7 +83,7 @@ data class SleepEpisodeDateGroup(
 
     val emptyStateMessage: String
         get() = if (hasSavedReview) {
-            "No sleep/rest candidates found. The evening review is already saved."
+            "No sleep/rest candidates found. The journal entry is already saved."
         } else {
             "No sleep/rest candidates found yet."
         }

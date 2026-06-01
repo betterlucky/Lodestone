@@ -27,7 +27,7 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 
 @Composable
-fun FeedbackScreen(
+fun JournalScreen(
     padding: PaddingValues,
     morningRead: MorningReadSnapshot?,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -55,9 +55,9 @@ fun FeedbackScreen(
     ) {
         item {
             HeroCard(
-                title = "Day Review",
-                subtitle = "A low-friction evening check-in with the morning signal nearby for context.",
-                eyebrow = "Review",
+                title = "Journal",
+                subtitle = "A low-friction evening check-in with the current signal nearby only as context.",
+                eyebrow = "Journal",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
             )
@@ -75,15 +75,10 @@ fun FeedbackScreen(
         }
         item {
             val selectedMorningRead = morningRead?.takeIf { it.sourceDate == viewModel.checkInDate }
-            if (selectedMorningRead != null) {
-                MorningReadCard(selectedMorningRead)
-            } else {
-                BannerNote(
-                    text = "No morning read is available for ${viewModel.checkInDate}. You can still record how the day ended.",
-                    tint = MaterialTheme.colorScheme.secondaryContainer,
-                    textColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            }
+            JournalContextCard(
+                selectedDate = viewModel.checkInDate,
+                morningRead = selectedMorningRead
+            )
         }
         item {
             SectionCard(title = "Evening check-in", subtitle = null) {
@@ -156,7 +151,7 @@ fun FeedbackScreen(
                 isBusy = viewModel.isBusy
             )
         }
-        item { SectionLabel("Recent reviews") }
+        item { SectionLabel("Recent journal entries") }
         items(
             items = dailyCheckIns,
             key = { item -> "check-in-${item.sourceDate}-${item.updatedAtEpochMs}" }
@@ -169,6 +164,25 @@ fun FeedbackScreen(
                 weight = weight,
                 onTap = { viewModel.loadDailyCheckIn(checkIn.sourceDate) }
             )
+        }
+    }
+}
+
+@Composable
+private fun JournalContextCard(
+    selectedDate: String,
+    morningRead: MorningReadSnapshot?
+) {
+    SectionCard(title = "Context", subtitle = "Optional signal context") {
+        if (morningRead == null) {
+            SupportText("No morning signal is available for $selectedDate. You can still record how the day ended.")
+            return@SectionCard
+        }
+        DetailRow("Morning state", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+        DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
+        DetailRow("Source", morningRead.overnightAutonomicSource.replace('_', ' '))
+        morningRead.reasons.firstOrNull()?.let { reason ->
+            SupportText(reason)
         }
     }
 }

@@ -176,13 +176,17 @@ fun DataScreen(
         item {
             CandidateReviewSection(
                 state = sleepEpisodeReviewState,
+                wakeMarkers = wakeMarkers,
+                activeAnalysisWindow = nowState.activeAnalysisWindow,
                 actionsEnabled = actionsEnabled && !viewModel.isBusy,
                 onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
                 onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
                 onMarkRest = viewModel::markSleepEpisodeAsRest,
                 onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
                 onClearDecision = viewModel::clearSleepEpisodeDecision,
+                onAddManualWindow = viewModel::addManualSleepWindow,
                 onEditWindow = viewModel::editSleepEpisodeWindow,
+                onEditMarker = viewModel::editWakeMarker,
                 onMarkNoMainSleep = viewModel::markNoMainSleep
             )
         }
@@ -193,6 +197,7 @@ fun DataScreen(
                     SupportText(todayStatus.hrvDetail)
                 } else {
                     DetailRow("Signal basis", morningReadBasisLabel(activeMorningRead, todayStatus))
+                    DetailRow("Window", nowState.activeAnalysisWindow.label)
                     DetailRow("Usable windows", goodEpochs.toString())
                     DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
                     if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {

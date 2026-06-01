@@ -32,26 +32,42 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.daveharris.healthmonitor.data.WakeMarkerEntity
+import com.daveharris.healthmonitor.data.WakeMarkerSources
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 @Composable
 fun CandidateReviewSection(
     state: SleepEpisodeReviewState,
+    wakeMarkers: List<WakeMarkerEntity>,
+    activeAnalysisWindow: NowAnalysisWindowProvenance?,
     actionsEnabled: Boolean,
     onAcceptMainSleep: (Long) -> Unit,
     onAcceptNap: (Long) -> Unit,
     onMarkRest: (Long) -> Unit,
     onRejectCandidate: (Long) -> Unit,
     onClearDecision: (Long) -> Unit,
+    onAddManualWindow: (String, Long, Long) -> Unit,
     onEditWindow: (Long, Long, Long) -> Unit,
+    onEditMarker: (Long, String, Long, String) -> Unit,
     onMarkNoMainSleep: (String) -> Unit
 ) {
     var showDialog by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<SleepEpisodeDisplayItem?>(null) }
+    var addingWindowDate by remember { mutableStateOf<String?>(null) }
+    var editingMarker by remember { mutableStateOf<MarkerEvidenceItem?>(null) }
     SectionCard(
-        title = "Sleep/rest review",
-        subtitle = if (state.hasCatchUpDates) "Review missing days from oldest to newest" else "Candidate state for today"
+        title = "Sleep/window evidence",
+        subtitle = if (state.hasCatchUpDates) "Repair missing days from oldest to newest" else "Evidence and overrides for this read"
     ) {
         DetailRow("Active date", state.activeDate)
+        activeAnalysisWindow?.let { window ->
+            DetailRow("Active window", window.label)
+            DetailRow("Window reason", window.reason)
+        }
         DetailRow("Suggested", state.totalCandidateCount.toString())
         DetailRow("Confirmed", state.totalConfirmedCount.toString())
         if (state.hasCatchUpDates) {
@@ -60,14 +76,14 @@ fun CandidateReviewSection(
         }
         SupportText(state.surfaceMessage)
         if (!state.hasAnyRows) {
-            SupportText("Check in again after the Loop has more data, keep the day as TBC, or wait for the final Loop report.")
+            SupportText("Check in again after the Loop has more data, add your own window, keep the day as TBC, or wait for the final Loop report.")
         }
         ButtonRow {
             OutlinedButton(
                 onClick = { showDialog = true },
                 enabled = state.dateGroups.isNotEmpty()
             ) {
-                Text(if (state.hasAnyRows) "Review windows" else "Review date")
+                Text("Open evidence")
             }
         }
     }
@@ -75,18 +91,39 @@ fun CandidateReviewSection(
     if (showDialog) {
         CandidateReviewDialog(
             state = state,
+            wakeMarkers = wakeMarkers,
+            activeAnalysisWindow = activeAnalysisWindow,
             actionsEnabled = actionsEnabled,
             onAcceptMainSleep = onAcceptMainSleep,
             onAcceptNap = onAcceptNap,
             onMarkRest = onMarkRest,
             onRejectCandidate = onRejectCandidate,
             onClearDecision = onClearDecision,
+            onAddWindowRequested = {
+                addingWindowDate = it
+                showDialog = false
+            },
             onEditRequested = {
                 editingItem = it
                 showDialog = false
             },
+            onEditMarkerRequested = {
+                editingMarker = it
+                showDialog = false
+            },
             onMarkNoMainSleep = onMarkNoMainSleep,
             onDismiss = { showDialog = false }
+        )
+    }
+
+    addingWindowDate?.let { sourceDate ->
+        ManualSleepWindowTimeEditorSheet(
+            sourceDate = sourceDate,
+            onSave = { start, end ->
+                onAddManualWindow(sourceDate, start, end)
+                addingWindowDate = null
+            },
+            onDismiss = { addingWindowDate = null }
         )
     }
 
@@ -100,24 +137,40 @@ fun CandidateReviewSection(
             onDismiss = { editingItem = null }
         )
     }
+
+    editingMarker?.let { marker ->
+        MarkerTimeEditorSheet(
+            kind = marker.editorKind,
+            initialEpochMs = marker.markerEpochMs,
+            onSave = { markerEpochMs ->
+                onEditMarker(marker.id, marker.sourceDate, markerEpochMs, marker.markerSource)
+                editingMarker = null
+            },
+            onDismiss = { editingMarker = null }
+        )
+    }
 }
 
 @Composable
 private fun CandidateReviewDialog(
     state: SleepEpisodeReviewState,
+    wakeMarkers: List<WakeMarkerEntity>,
+    activeAnalysisWindow: NowAnalysisWindowProvenance?,
     actionsEnabled: Boolean,
     onAcceptMainSleep: (Long) -> Unit,
     onAcceptNap: (Long) -> Unit,
     onMarkRest: (Long) -> Unit,
     onRejectCandidate: (Long) -> Unit,
     onClearDecision: (Long) -> Unit,
+    onAddWindowRequested: (String) -> Unit,
     onEditRequested: (SleepEpisodeDisplayItem) -> Unit,
+    onEditMarkerRequested: (MarkerEvidenceItem) -> Unit,
     onMarkNoMainSleep: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Sleep/rest review") },
+        title = { Text("Sleep/window evidence") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -127,13 +180,17 @@ private fun CandidateReviewDialog(
                 state.dateGroups.forEach { group ->
                     CandidateReviewDateGroup(
                         group = group,
+                        markers = wakeMarkers.markerEvidenceFor(group.sourceDate),
+                        activeAnalysisWindow = activeAnalysisWindow?.takeIf { it.sourceDate == group.sourceDate },
                         actionsEnabled = actionsEnabled,
                         onAcceptMainSleep = onAcceptMainSleep,
                         onAcceptNap = onAcceptNap,
                         onMarkRest = onMarkRest,
                         onRejectCandidate = onRejectCandidate,
                         onClearDecision = onClearDecision,
+                        onAddWindowRequested = onAddWindowRequested,
                         onEditRequested = onEditRequested,
+                        onEditMarkerRequested = onEditMarkerRequested,
                         onMarkNoMainSleep = onMarkNoMainSleep
                     )
                 }
@@ -150,13 +207,17 @@ private fun CandidateReviewDialog(
 @Composable
 private fun CandidateReviewDateGroup(
     group: SleepEpisodeDateGroup,
+    markers: List<MarkerEvidenceItem>,
+    activeAnalysisWindow: NowAnalysisWindowProvenance?,
     actionsEnabled: Boolean,
     onAcceptMainSleep: (Long) -> Unit,
     onAcceptNap: (Long) -> Unit,
     onMarkRest: (Long) -> Unit,
     onRejectCandidate: (Long) -> Unit,
     onClearDecision: (Long) -> Unit,
+    onAddWindowRequested: (String) -> Unit,
     onEditRequested: (SleepEpisodeDisplayItem) -> Unit,
+    onEditMarkerRequested: (MarkerEvidenceItem) -> Unit,
     onMarkNoMainSleep: (String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -168,7 +229,7 @@ private fun CandidateReviewDateGroup(
         ButtonRow {
             LabelChip(group.repairStatusLabel)
             if (group.hasSavedReview) {
-                LabelChip("Evening review saved")
+                LabelChip("Journal saved")
             }
         }
         SupportText(group.summaryLabel())
@@ -188,12 +249,101 @@ private fun CandidateReviewDateGroup(
                 )
             }
         }
+        if (activeAnalysisWindow != null) {
+            EvidenceSummaryCard(
+                title = "Active analysis window",
+                primary = activeAnalysisWindow.label,
+                secondary = activeAnalysisWindow.reason,
+                chips = listOf(
+                    activeAnalysisWindow.sourceType.name.replace('_', ' ').replaceFirstChar { it.titlecase(Locale.UK) },
+                    activeAnalysisWindow.timeRangeLabel,
+                    activeAnalysisWindow.durationLabel
+                )
+            )
+        }
+        if (markers.isNotEmpty()) {
+            Text("Manual markers", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            markers.forEach { marker ->
+                MarkerEvidenceCard(
+                    marker = marker,
+                    actionsEnabled = actionsEnabled,
+                    onEditMarkerRequested = onEditMarkerRequested
+                )
+            }
+        }
         ButtonRow {
+            TextButton(
+                onClick = { onAddWindowRequested(group.sourceDate) },
+                enabled = actionsEnabled
+            ) {
+                Text("Add window")
+            }
             TextButton(
                 onClick = { onMarkNoMainSleep(group.sourceDate) },
                 enabled = actionsEnabled
             ) {
                 Text("No main sleep")
+            }
+        }
+    }
+}
+
+@Composable
+private fun EvidenceSummaryCard(
+    title: String,
+    primary: String,
+    secondary: String,
+    chips: List<String>
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(primary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ButtonRow {
+                chips.filter { it.isNotBlank() }.forEach { LabelChip(it) }
+            }
+            SupportText(secondary)
+        }
+    }
+}
+
+@Composable
+private fun MarkerEvidenceCard(
+    marker: MarkerEvidenceItem,
+    actionsEnabled: Boolean,
+    onEditMarkerRequested: (MarkerEvidenceItem) -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.48f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(marker.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                LabelChip(marker.timeLabel)
+            }
+            ButtonRow {
+                LabelChip(marker.sourceLabel)
+                marker.notes?.takeIf { it.isNotBlank() }?.let { LabelChip(it) }
+            }
+            TextButton(
+                onClick = { onEditMarkerRequested(marker) },
+                enabled = actionsEnabled
+            ) {
+                Text("Edit marker")
             }
         }
     }
@@ -319,7 +469,50 @@ private fun SleepEpisodeDateGroup.summaryLabel(): String =
             append(" suggested, ")
             append(confirmedCount)
             append(" confirmed")
-            if (hasSavedReview) append(", review saved")
+            if (hasSavedReview) append(", journal saved")
             if (hasPrimaryReadinessWindow) append(", readiness window selected")
         }
     }
+
+data class MarkerEvidenceItem(
+    val id: Long,
+    val sourceDate: String,
+    val markerEpochMs: Long,
+    val markerSource: String,
+    val title: String,
+    val timeLabel: String,
+    val sourceLabel: String,
+    val notes: String?,
+    val editorKind: MarkerTimeEditorKind
+)
+
+private fun List<WakeMarkerEntity>.markerEvidenceFor(
+    sourceDate: String,
+    zoneId: ZoneId = ZoneId.systemDefault()
+): List<MarkerEvidenceItem> =
+    filter { marker ->
+        marker.sourceDate == sourceDate &&
+            marker.notes != "manual awake command" &&
+            marker.markerSource in setOf(WakeMarkerSources.GOING_TO_BED, WakeMarkerSources.IM_AWAKE)
+    }
+        .sortedBy { it.markerEpochMs }
+        .map { marker ->
+            val isBedtime = marker.markerSource == WakeMarkerSources.GOING_TO_BED
+            MarkerEvidenceItem(
+                id = marker.id,
+                sourceDate = marker.sourceDate,
+                markerEpochMs = marker.markerEpochMs,
+                markerSource = marker.markerSource,
+                title = if (isBedtime) "Bedtime marker" else "Wake marker",
+                timeLabel = marker.markerEpochMs.timeLabel(zoneId),
+                sourceLabel = if (isBedtime) "Manual bedtime" else "Manual wake",
+                notes = marker.notes,
+                editorKind = if (isBedtime) MarkerTimeEditorKind.BEDTIME else MarkerTimeEditorKind.WAKING
+            )
+        }
+
+private fun Long.timeLabel(zoneId: ZoneId): String =
+    Instant.ofEpochMilli(this).atZone(zoneId).format(markerTimeFormatter)
+
+private val markerTimeFormatter: DateTimeFormatter =
+    DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.UK)

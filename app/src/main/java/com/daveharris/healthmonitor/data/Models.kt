@@ -104,5 +104,10 @@ object SleepEpisodeConfidences {
     const val LOW = "low"
 }
 
+object WakeMarkerSources {
+    const val GOING_TO_BED = "manual_going_to_bed"
+    const val IM_AWAKE = "manual_im_awake"
+}
+
 const val PARSER_VERSION = 3
 const val APP_VERSION = BuildConfig.VERSION_NAME

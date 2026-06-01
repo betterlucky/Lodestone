@@ -50,6 +50,9 @@ class NowScreenStateTest {
         assertEquals(NowDataAvailability.PARTIAL, state.currentState.availability)
         assertEquals(NowDataAvailability.PENDING, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.ppi.availability)
+        assertEquals(NowAnalysisWindowSourceType.MODEL_ESTIMATE, state.activeAnalysisWindow.sourceType)
+        assertEquals("calibrated sleep window", state.activeAnalysisWindow.label)
+        assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
     }
 
     @Test
@@ -68,6 +71,37 @@ class NowScreenStateTest {
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
         assertEquals("Stable", state.stateStability.label)
+        assertEquals(NowAnalysisWindowSourceType.LOOP_REPORT, state.activeAnalysisWindow.sourceType)
+        assertEquals("Loop sleep report window", state.activeAnalysisWindow.label)
+    }
+
+    @Test
+    fun userSelectedPrimaryWindowBecomesExplicitActiveProvenance() {
+        val start = epoch("2026-05-30T23:15:00")
+        val end = epoch("2026-05-31T06:45:00")
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "raw_ppi_manual_window_primary_with_sleep_report",
+                rawPpiGoodEpochCount = 54,
+                rawPpiCoverageHours = 6.5
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(primarySleepEpisode(start, end)),
+                zoneId = zone
+            )
+        )
+
+        assertEquals(NowAnalysisWindowSourceType.USER_SELECTED, state.activeAnalysisWindow.sourceType)
+        assertEquals(start, state.activeAnalysisWindow.startEpochMs)
+        assertEquals(end, state.activeAnalysisWindow.endEpochMs)
+        assertEquals("confirmed sleep window", state.activeAnalysisWindow.label)
+        assertEquals("23:15-06:45", state.activeAnalysisWindow.timeRangeLabel)
+        assertEquals("7h 30m", state.activeAnalysisWindow.durationLabel)
+        assertTrue(state.activeAnalysisWindow.selectedByUser)
+        assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
     }
 
     @Test
@@ -79,6 +113,9 @@ class NowScreenStateTest {
 
         assertEquals(NowMarkerState.ACTIVE_BEDTIME, state.markerStatus.state)
         assertEquals(NowCurrentStateKind.SLEEP_MARKED, state.currentState.kind)
+        assertEquals(NowAnalysisWindowSourceType.PENDING, state.activeAnalysisWindow.sourceType)
+        assertEquals("Analysis window pending", state.activeAnalysisWindow.label)
+        assertTrue(state.activeAnalysisWindow.reason.contains("Bedtime is marked"))
         assertNull(state.activeMorningRead)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
@@ -118,6 +155,41 @@ class NowScreenStateTest {
         assertEquals(NowCurrentStateKind.PROVISIONAL_READ, state.currentState.kind)
         assertTrue(state.activeMorningRead != null)
         assertTrue(state.primaryActions.checkIn.enabled)
+    }
+
+    @Test
+    fun markerDerivedWindowKeepsDistinctProvenance() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_manual_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 40,
+                rawPpiCoverageHours = 5.0
+            )
+        )
+
+        assertEquals(NowAnalysisWindowSourceType.MARKER_DERIVED, state.activeAnalysisWindow.sourceType)
+        assertEquals("manual marker-derived sleep window", state.activeAnalysisWindow.label)
+        assertFalse(state.activeAnalysisWindow.selectedByUser)
+        assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
+    }
+
+    @Test
+    fun unknownAnalysisSourceDoesNotMasqueradeAsLoopReport() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "external_sync_unknown",
+                rawPpiGoodEpochCount = null,
+                rawPpiCoverageHours = null
+            )
+        )
+
+        assertEquals(NowAnalysisWindowSourceType.UNKNOWN, state.activeAnalysisWindow.sourceType)
+        assertEquals("resolved sleep window", state.activeAnalysisWindow.label)
+        assertTrue(state.activeAnalysisWindow.reason.contains("unclassified"))
+        assertTrue(state.readinessStatus.hrvDetail.contains("unclassified"))
     }
 
     @Test
@@ -186,6 +258,9 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.NO_MAIN_SLEEP, state.currentState.kind)
+        assertEquals(NowAnalysisWindowSourceType.NO_MAIN_SLEEP, state.activeAnalysisWindow.sourceType)
+        assertEquals("No main sleep", state.activeAnalysisWindow.label)
+        assertTrue(state.activeAnalysisWindow.selectedByUser)
         assertEquals(NowDataAvailability.NOT_APPLICABLE, state.signalRobustness.sleepReport.availability)
         assertEquals("No main sleep decision", state.signalRobustness.basisLabel)
         assertEquals(NowDataAvailability.NOT_APPLICABLE, state.stateStability.availability)
@@ -272,6 +347,27 @@ class NowScreenStateTest {
             linkedSleepRawId = null,
             evidenceJson = null,
             notes = "No main sleep",
+            createdAtEpochMs = 0L,
+            updatedAtEpochMs = 0L
+        )
+
+    private fun primarySleepEpisode(
+        startEpochMs: Long,
+        endEpochMs: Long
+    ): SleepEpisodeEntity =
+        SleepEpisodeEntity(
+            id = 2,
+            sourceDate = "2026-05-31",
+            startEpochMs = startEpochMs,
+            endEpochMs = endEpochMs,
+            episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+            source = SleepEpisodeSources.MIXED,
+            confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+            isPrimaryForReadiness = true,
+            deviceId = null,
+            linkedSleepRawId = null,
+            evidenceJson = null,
+            notes = "Accepted as main sleep",
             createdAtEpochMs = 0L,
             updatedAtEpochMs = 0L
         )

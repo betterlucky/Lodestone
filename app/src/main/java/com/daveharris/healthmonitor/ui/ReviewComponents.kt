@@ -221,7 +221,7 @@ fun ReviewDatePickerField(
         else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f)
     }
     val status = listOf(
-        if (hasSavedReview) "saved review" else "no saved review",
+        if (hasSavedReview) "saved journal" else "no saved journal",
         if (hasFoodImport) "food synced" else "no food import"
     ).joinToString(" · ")
 

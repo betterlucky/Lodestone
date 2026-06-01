@@ -11,8 +11,8 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Bluetooth
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.RateReview
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -45,9 +45,9 @@ import kotlin.math.absoluteValue
 import kotlinx.coroutines.launch
 
 private enum class ProbeTab(val title: String) {
-    DEVICE("Device"),
-    DATA("Today"),
-    FEEDBACK("Review")
+    NOW("Now"),
+    JOURNAL("Journal"),
+    HISTORY("History")
 }
 
 @Composable
@@ -70,6 +70,7 @@ fun ProbeApp(
     val foodDailySummaries by viewModel.foodDailySummaries.collectAsState()
     val dailyWeights by viewModel.dailyWeights.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
+    val morningPredictionSnapshots by viewModel.morningPredictionSnapshots.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
     val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
     val sleepEpisodeReviewState by viewModel.sleepEpisodeReviewState.collectAsState()
@@ -128,28 +129,29 @@ fun ProbeApp(
                 containerColor = Color.Transparent,
                 snackbarHost = { SnackbarHost(snackbarHostState) },
                 bottomBar = {
-                    NavigationBar(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                        tonalElevation = 10.dp
-                    ) {
-                        ProbeTab.entries.forEachIndexed { index, tab ->
-                            NavigationBarItem(
-                                selected = selectedTab == index,
-                                onClick = {
-                                    showSettings = false
-                                    pagerScope.launch {
-                                        pagerState.animateScrollToPage(index)
-                                    }
-                                },
-                                icon = {
-                                    when (tab) {
-                                        ProbeTab.DEVICE -> Icon(Icons.Outlined.Bluetooth, contentDescription = null)
-                                        ProbeTab.DATA -> Icon(Icons.Outlined.FavoriteBorder, contentDescription = null)
-                                        ProbeTab.FEEDBACK -> Icon(Icons.Outlined.RateReview, contentDescription = null)
-                                    }
-                                },
-                                label = { Text(tab.title) }
-                            )
+                    if (!showSettings && permissionsGranted) {
+                        NavigationBar(
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                            tonalElevation = 10.dp
+                        ) {
+                            ProbeTab.entries.forEachIndexed { index, tab ->
+                                NavigationBarItem(
+                                    selected = selectedTab == index,
+                                    onClick = {
+                                        pagerScope.launch {
+                                            pagerState.animateScrollToPage(index)
+                                        }
+                                    },
+                                    icon = {
+                                        when (tab) {
+                                            ProbeTab.NOW -> Icon(Icons.Outlined.FavoriteBorder, contentDescription = null)
+                                            ProbeTab.JOURNAL -> Icon(Icons.Outlined.RateReview, contentDescription = null)
+                                            ProbeTab.HISTORY -> Icon(Icons.Outlined.History, contentDescription = null)
+                                        }
+                                    },
+                                    label = { Text(tab.title) }
+                                )
+                            }
                         }
                     }
                 }
@@ -187,14 +189,7 @@ fun ProbeApp(
                                     .coerceIn(-1f, 1f)
                                 ElasticPagerPage(pageOffset = pageOffset) {
                                     when (ProbeTab.entries[page]) {
-                                        ProbeTab.DEVICE -> DeviceScreen(
-                                            padding = padding,
-                                            runtime = runtime,
-                                            viewModel = viewModel,
-                                            actionsEnabled = !blockPostSwipeTaps,
-                                            onOpenSettings = { showSettings = true }
-                                        )
-                                        ProbeTab.DATA -> DataScreen(
+                                        ProbeTab.NOW -> DataScreen(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,
@@ -206,7 +201,7 @@ fun ProbeApp(
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }
                                         )
-                                        ProbeTab.FEEDBACK -> FeedbackScreen(
+                                        ProbeTab.JOURNAL -> JournalScreen(
                                             padding = padding,
                                             morningRead = morningRead,
                                             dailyCheckIns = dailyCheckIns,
@@ -215,6 +210,18 @@ fun ProbeApp(
                                             viewModel = viewModel,
                                             onImportFoodCsv = onImportFoodCsv,
                                             actionsEnabled = !blockPostSwipeTaps,
+                                            onOpenSettings = { showSettings = true }
+                                        )
+                                        ProbeTab.HISTORY -> HistoryScreen(
+                                            padding = padding,
+                                            morningRead = morningRead,
+                                            morningPredictionSnapshots = morningPredictionSnapshots,
+                                            dailyCheckIns = dailyCheckIns,
+                                            foodDailySummaries = foodDailySummaries,
+                                            dailyWeights = dailyWeights,
+                                            wakeMarkers = recentWakeMarkers,
+                                            sleepEpisodeReviewState = sleepEpisodeReviewState,
+                                            viewModel = viewModel,
                                             onOpenSettings = { showSettings = true }
                                         )
                                     }
