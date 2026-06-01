@@ -1,9 +1,11 @@
+@file:OptIn(ExperimentalLayoutApi::class)
+
 package com.daveharris.healthmonitor.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,7 +20,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -53,6 +59,7 @@ fun HistoryScreen(
             weights = dailyWeights
         )
     }
+    var selectedReportDate by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -93,10 +100,22 @@ fun HistoryScreen(
                 items = reports,
                 key = { report -> "history-report-${report.sourceDate}" }
             ) { report ->
-                HistoryDayReportCard(
-                    report = report,
-                    onOpenJournal = { viewModel.loadDailyCheckIn(report.sourceDate) }
-                )
+                val selected = selectedReportDate == report.sourceDate
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    HistoryDayReportCard(
+                        report = report,
+                        selected = selected,
+                        onOpenDetail = { selectedReportDate = report.sourceDate },
+                        onOpenJournal = { viewModel.loadDailyCheckIn(report.sourceDate) }
+                    )
+                    if (selected) {
+                        HistoryDayDetailCard(
+                            report = report,
+                            onOpenJournal = { viewModel.loadDailyCheckIn(report.sourceDate) },
+                            onClose = { selectedReportDate = null }
+                        )
+                    }
+                }
             }
         }
         item {
@@ -146,15 +165,20 @@ fun HistoryScreen(
 @Composable
 private fun HistoryDayReportCard(
     report: HistoryDayReport,
+    selected: Boolean,
+    onOpenDetail: () -> Unit,
     onOpenJournal: () -> Unit
 ) {
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpenJournal),
+            .fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.88f)
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.88f)
+            }
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
     ) {
@@ -185,8 +209,41 @@ private fun HistoryDayReportCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            ButtonRow {
+                TextButton(onClick = onOpenDetail) {
+                    Text("Details")
+                }
+                TextButton(onClick = onOpenJournal) {
+                    Text("Open Journal")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryDayDetailCard(
+    report: HistoryDayReport,
+    onOpenJournal: () -> Unit,
+    onClose: () -> Unit
+) {
+    SectionCard(title = report.sourceDate, subtitle = report.predictionOutcomeLabel) {
+        DetailRow("Morning signal", report.predictionLabel)
+        DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
+        DetailRow("Analysis window", report.windowProvenanceLabel)
+        DetailRow("Robustness", report.robustnessLabel)
+        DetailRow("Sleep bucket", report.sleepBucketLabel)
+        DetailRow("Completeness", report.dataCompletenessLabel)
+        DetailRow("Food", report.foodSummaryLabel)
+        DetailRow("Weight", report.weightLabel)
+        DetailRow("Transition", report.stabilityTransitionLabel)
+        DetailRow("Notes", report.notes?.takeIf { it.isNotBlank() } ?: "No notes")
+        ButtonRow {
             TextButton(onClick = onOpenJournal) {
-                Text("Open in Journal")
+                Text("Open Journal")
+            }
+            TextButton(onClick = onClose) {
+                Text("Close")
             }
         }
     }
@@ -204,6 +261,8 @@ data class HistoryDayReport(
     val windowProvenanceLabel: String,
     val sleepBucketLabel: String,
     val stabilityTransitionLabel: String,
+    val foodSummaryLabel: String,
+    val weightLabel: String,
     val notes: String?
 )
 
@@ -221,12 +280,16 @@ fun buildHistoryDayReports(
     val weightsByDate = weights.associateBy { it.sourceDate }
     val dates = (latestPredictionByDate.keys + checkInsByDate.keys + foodByDate.keys + weightsByDate.keys)
         .sortedDescending()
+    val previousPredictionStatusByDate = mutableMapOf<String, String?>()
+    var latestOlderPredictionStatus: String? = null
+    for (date in dates.asReversed()) {
+        previousPredictionStatusByDate[date] = latestOlderPredictionStatus
+        latestPredictionByDate[date]?.status?.let { latestOlderPredictionStatus = it }
+    }
 
-    return dates.mapIndexed { index, date ->
+    return dates.map { date ->
         val prediction = latestPredictionByDate[date]
-        val previousPrediction = dates.drop(index + 1).firstNotNullOfOrNull { olderDate ->
-            latestPredictionByDate[olderDate]?.status
-        }
+        val previousPrediction = previousPredictionStatusByDate[date]
         val checkIn = checkInsByDate[date]
         val predictionStatus = prediction?.status?.toTrafficLightStatusOrNull()
         val outcomeStatus = checkIn?.eveningOutcome?.toTrafficLightStatusOrNull()
@@ -244,6 +307,8 @@ fun buildHistoryDayReports(
             windowProvenanceLabel = historyWindowSourceLabel(prediction),
             sleepBucketLabel = sleepBucketLabel(prediction?.sleepDurationMinutes),
             stabilityTransitionLabel = stabilityTransitionLabel(previousPrediction, prediction?.status),
+            foodSummaryLabel = historyFoodLabel(food),
+            weightLabel = historyWeightLabel(weight),
             notes = checkIn?.notes
         )
     }
@@ -299,6 +364,23 @@ private fun dataCompletenessLabel(
     }
     return if (present.isEmpty()) "No tracked data yet" else present.joinToString(", ")
 }
+
+private fun historyFoodLabel(food: FoodDailySummaryEntity?): String {
+    if (food == null) return "No food import"
+    val parts = buildList {
+        food.totalCaloriesKcal?.let { add("$it kcal") }
+        food.eventCount?.let { add("$it items") }
+        food.teaCount?.let { add("$it tea") }
+        food.eatingWindowHours?.let { add(String.format(java.util.Locale.UK, "%.1fh window", it)) }
+    }
+    return parts.joinToString(", ").ifBlank { "Food import present" }
+}
+
+private fun historyWeightLabel(weight: DailyWeightEntity?): String =
+    weight?.let {
+        val measured = it.measuredTime?.let { time -> " at $time" }.orEmpty()
+        String.format(java.util.Locale.UK, "%.1f kg%s", it.weightKg, measured)
+    } ?: "No weight row"
 
 private fun sleepBucketLabel(minutes: Int?): String =
     when {

@@ -5,6 +5,7 @@ import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -34,6 +35,8 @@ class HistoryScreenTest {
         assertTrue(latest.dataCompletenessLabel.contains("food"))
         assertTrue(latest.dataCompletenessLabel.contains("weight"))
         assertEquals("Good -> Unsteady", latest.stabilityTransitionLabel)
+        assertEquals("1800 kcal, 4 items, 1 tea, 11.0h window", latest.foodSummaryLabel)
+        assertEquals("70.0 kg at 08:00", latest.weightLabel)
     }
 
     @Test
@@ -76,6 +79,64 @@ class HistoryScreenTest {
         )
     }
 
+    @Test
+    fun reportsFormatPartialFoodAndWeightRows() {
+        val reports = buildHistoryDayReports(
+            predictions = emptyList(),
+            checkIns = emptyList(),
+            foodSummaries = listOf(
+                food(
+                    sourceDate = "2026-05-31",
+                    totalCaloriesKcal = null,
+                    eventCount = 4,
+                    teaCount = null,
+                    eatingWindowHours = null
+                ),
+                food(
+                    sourceDate = "2026-05-30",
+                    totalCaloriesKcal = null,
+                    eventCount = null,
+                    teaCount = null,
+                    eatingWindowHours = null
+                )
+            ),
+            weights = listOf(weight(sourceDate = "2026-05-31", measuredTime = null))
+        )
+
+        assertEquals("4 items", reports.first { it.sourceDate == "2026-05-31" }.foodSummaryLabel)
+        assertEquals("70.0 kg", reports.first { it.sourceDate == "2026-05-31" }.weightLabel)
+        assertEquals("Food import present", reports.first { it.sourceDate == "2026-05-30" }.foodSummaryLabel)
+    }
+
+    @Test
+    fun reportBuilderHandlesLargerLocalHistoryWithoutDroppingRows() {
+        val start = LocalDate.parse("2020-01-01")
+        val dates = (0 until 2_000).map { start.plusDays(it.toLong()).toString() }
+        val predictions = dates.mapIndexed { index, date ->
+            prediction(
+                sourceDate = date,
+                issuedAt = index.toLong(),
+                status = if (index % 3 == 0) TrafficLightStatus.GOOD.name else TrafficLightStatus.OK.name
+            )
+        }
+        val checkIns = dates.filterIndexed { index, _ -> index % 2 == 0 }
+            .map { date -> checkIn(date, TrafficLightStatus.OK.name) }
+        val foods = dates.filterIndexed { index, _ -> index % 5 == 0 }.map(::food)
+        val weights = dates.filterIndexed { index, _ -> index % 7 == 0 }.map(::weight)
+
+        val reports = buildHistoryDayReports(
+            predictions = predictions,
+            checkIns = checkIns,
+            foodSummaries = foods,
+            weights = weights
+        )
+
+        assertEquals(2_000, reports.size)
+        assertEquals(dates.last(), reports.first().sourceDate)
+        assertEquals(dates.first(), reports.last().sourceDate)
+        assertEquals("First recorded status", reports.last().stabilityTransitionLabel)
+    }
+
     private fun prediction(
         sourceDate: String,
         issuedAt: Long,
@@ -115,24 +176,30 @@ class HistoryScreenTest {
             updatedAtEpochMs = 2
         )
 
-    private fun food(sourceDate: String): FoodDailySummaryEntity =
+    private fun food(
+        sourceDate: String,
+        totalCaloriesKcal: Int? = 1800,
+        eventCount: Int? = 4,
+        teaCount: Int? = 1,
+        eatingWindowHours: Double? = 11.0
+    ): FoodDailySummaryEntity =
         FoodDailySummaryEntity(
             sourceDate = sourceDate,
-            totalCaloriesKcal = 1800,
-            eventCount = 4,
-            teaCount = 1,
+            totalCaloriesKcal = totalCaloriesKcal,
+            eventCount = eventCount,
+            teaCount = teaCount,
             firstIntakeTime = "08:00",
             lastIntakeTime = "19:00",
-            eatingWindowHours = 11.0,
+            eatingWindowHours = eatingWindowHours,
             rawItemsJson = "[]",
             importSource = "test",
             importedAtEpochMs = 1
         )
 
-    private fun weight(sourceDate: String): DailyWeightEntity =
+    private fun weight(sourceDate: String, measuredTime: String? = "08:00"): DailyWeightEntity =
         DailyWeightEntity(
             sourceDate = sourceDate,
-            measuredTime = "08:00",
+            measuredTime = measuredTime,
             weightKg = 70.0,
             notes = null,
             importSource = "test",
