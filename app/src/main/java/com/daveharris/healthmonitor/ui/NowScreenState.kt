@@ -100,7 +100,7 @@ data class NowStateStability(
 data class NowFreshness(
     val lastUsed: NowDataPoint,
     val loopSync: NowDataPoint,
-    val dailyReview: NowDataPoint,
+    val journalEntry: NowDataPoint,
     val catchUpPrompt: String?
 )
 
@@ -439,8 +439,8 @@ private fun buildFreshness(
             nowEpochMs = nowEpochMs,
             missingDetail = "Not synced yet"
         ),
-        dailyReview = latestReviewEpochMs.toFreshnessPoint(
-            label = "Daily review",
+        journalEntry = latestReviewEpochMs.toFreshnessPoint(
+            label = "Journal",
             nowEpochMs = nowEpochMs,
             missingDetail = "No journal entry yet"
         ),
