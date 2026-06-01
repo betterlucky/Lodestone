@@ -24,6 +24,24 @@ interface ProbeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDailyCheckIn(entity: DailyCheckInEntity)
 
+    @Query(
+        """
+        UPDATE daily_check_in
+        SET dayShapeCaptured = 1,
+            pemPaybackToday = CASE WHEN pemPaybackToday IS NULL THEN 1 ELSE pemPaybackToday END,
+            paybackPeakToday = :paybackPeakToday,
+            paybackPeakConfidence = :paybackPeakConfidence,
+            updatedAtEpochMs = :updatedAtEpochMs
+        WHERE sourceDate = :sourceDate
+        """
+    )
+    suspend fun updatePaybackPeakColumns(
+        sourceDate: String,
+        paybackPeakToday: Boolean,
+        paybackPeakConfidence: String,
+        updatedAtEpochMs: Long
+    )
+
     @Insert
     suspend fun insertMorningPredictionSnapshot(entity: MorningPredictionSnapshotEntity): Long
 

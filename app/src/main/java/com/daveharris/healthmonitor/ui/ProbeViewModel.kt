@@ -679,8 +679,8 @@ class ProbeViewModel(
             WakeMarkerSources.GOING_TO_BED -> sleepTargetDateForBedtime(markerEpochMs).toString()
             WakeMarkerSources.IM_AWAKE -> resolveLodestoneDisplayDate(
                 nowEpochMs = markerEpochMs,
-                latestMorningReadSourceDate = sourceDate,
-                wakeMarkers = emptyList()
+                latestMorningReadSourceDate = morningRead.value?.sourceDate,
+                wakeMarkers = recentWakeMarkers.value.filterNot { it.id == id }
             ).sourceDate
             else -> sourceDate
         }

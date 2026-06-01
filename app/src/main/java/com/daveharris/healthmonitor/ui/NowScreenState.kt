@@ -838,6 +838,7 @@ private fun String.analysisWindowSourceType(): NowAnalysisWindowSourceType =
         "ppi247_sleep_window",
         "nightly_recharge_summary",
         "sleep_context_only" -> NowAnalysisWindowSourceType.LOOP_REPORT
+        "awaiting_sleep_data" -> NowAnalysisWindowSourceType.PENDING
         else -> if (contains("pending", ignoreCase = true)) {
             NowAnalysisWindowSourceType.PENDING
         } else {

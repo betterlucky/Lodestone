@@ -205,6 +205,9 @@ class ProbeRepository(
         startEpochMs: Long,
         endEpochMs: Long
     ): Long {
+        require(endEpochMs > startEpochMs) {
+            "Manual sleep window end must be after start"
+        }
         val now = System.currentTimeMillis()
         val evidenceJson = GsonProvider.gson.toJson(
             mapOf(

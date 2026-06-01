@@ -17,6 +17,14 @@ OUTCOME_ORDER = STATUS_ORDER
 MIN_BASELINE_DAYS = 5
 MIN_DIRECTIONAL_PAIRED_DAYS = 14
 MIN_CAREFUL_TUNING_DAYS = 45
+SOURCE_DATE_TABLES = (
+    "ppi247_epoch",
+    "sleep_night_raw",
+    "nightly_recharge_raw",
+    "sleep_episode",
+    "morning_prediction_snapshot",
+    "daily_check_in",
+)
 
 
 @dataclass(frozen=True)
@@ -143,14 +151,7 @@ def known_dates(conn: sqlite3.Connection, start_date: str | None, end_date: str)
         return date_range(start_date, end_date)
 
     dates: set[str] = set()
-    for table in (
-        "ppi247_epoch",
-        "sleep_night_raw",
-        "nightly_recharge_raw",
-        "sleep_episode",
-        "morning_prediction_snapshot",
-        "daily_check_in",
-    ):
+    for table in SOURCE_DATE_TABLES:
         for row in conn.execute(
             f"select distinct sourceDate as source_date from {table} where sourceDate <= ?",
             (end_date,),
@@ -219,6 +220,8 @@ def ppi_summary_for_window(conn: sqlite3.Connection, source_date: str, start_ms:
 
 
 def count_for_date(conn: sqlite3.Connection, table: str, source_date: str) -> int:
+    if table not in SOURCE_DATE_TABLES:
+        raise ValueError(f"Unsupported source-date table: {table}")
     row = one(conn, f"select count(*) as n from {table} where sourceDate = ?", (source_date,))
     return int(row["n"]) if row else 0
 
@@ -252,7 +255,10 @@ def daily_review(conn: sqlite3.Connection, source_date: str) -> sqlite3.Row | No
 
 
 def selected_episode(episodes: list[sqlite3.Row]) -> sqlite3.Row | None:
-    primary = [row for row in episodes if row["isPrimaryForReadiness"]]
+    primary = [
+        row for row in episodes
+        if row["isPrimaryForReadiness"] and row["startEpochMs"] is not None and row["endEpochMs"] is not None
+    ]
     if primary:
         return primary[-1]
     confirmed_timed = [

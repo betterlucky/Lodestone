@@ -18,8 +18,15 @@ fun findEndedPaybackEpisodeBefore(
     if (activePemMarked) return null
     val currentDate = runCatching { LocalDate.parse(activeDate) }.getOrNull() ?: return null
     val byDate = checkIns.associateBy { it.sourceDate }
+    val cursorStart = checkIns
+        .asSequence()
+        .filter { it.pemPaybackToday == true }
+        .mapNotNull { runCatching { LocalDate.parse(it.sourceDate) }.getOrNull() }
+        .filter { it.isBefore(currentDate) }
+        .maxOrNull()
+        ?: return null
     val dates = mutableListOf<String>()
-    var cursor = currentDate.minusDays(1)
+    var cursor = cursorStart
     while (true) {
         val row = byDate[cursor.toString()] ?: break
         if (row.pemPaybackToday != true) break

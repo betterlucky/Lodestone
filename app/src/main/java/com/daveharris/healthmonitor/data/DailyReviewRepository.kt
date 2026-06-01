@@ -63,15 +63,11 @@ class DailyReviewRepository(
         paybackPeakToday: Boolean,
         paybackPeakConfidence: String
     ) {
-        val existing = dao.getDailyCheckIn(sourceDate) ?: return
-        dao.upsertDailyCheckIn(
-            existing.copy(
-                dayShapeCaptured = true,
-                pemPaybackToday = existing.pemPaybackToday ?: true,
-                paybackPeakToday = paybackPeakToday,
-                paybackPeakConfidence = paybackPeakConfidence,
-                updatedAtEpochMs = System.currentTimeMillis()
-            )
+        dao.updatePaybackPeakColumns(
+            sourceDate = sourceDate,
+            paybackPeakToday = paybackPeakToday,
+            paybackPeakConfidence = paybackPeakConfidence,
+            updatedAtEpochMs = System.currentTimeMillis()
         )
     }
 

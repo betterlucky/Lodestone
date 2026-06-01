@@ -26,6 +26,22 @@ class PaybackEpisodePromptTest {
     }
 
     @Test
+    fun multiDayPemRunStillPromptsAfterSkippedRecoveryDay() {
+        val checkIns = listOf(
+            checkIn("2026-05-11", pem = true),
+            checkIn("2026-05-10", pem = true)
+        )
+
+        val prompt = pendingPaybackPeakPrompt(
+            activeDate = "2026-05-13",
+            checkIns = checkIns,
+            activePemMarked = false
+        )
+
+        assertEquals(listOf("2026-05-10", "2026-05-11"), prompt?.pemDates)
+    }
+
+    @Test
     fun activePemDayDoesNotPromptForPeakYet() {
         val checkIns = listOf(
             checkIn("2026-05-11", pem = true),
@@ -78,6 +94,19 @@ class PaybackEpisodePromptTest {
 
         assertEquals(listOf("2026-05-11"), episode?.pemDates)
         assertNull(prompt)
+    }
+
+    @Test
+    fun singleDayPemRunIsStillDetectableAfterSkippedRecoveryDay() {
+        val checkIns = listOf(checkIn("2026-05-11", pem = true))
+
+        val episode = findEndedPaybackEpisodeBefore(
+            activeDate = "2026-05-13",
+            checkIns = checkIns,
+            activePemMarked = false
+        )
+
+        assertEquals(listOf("2026-05-11"), episode?.pemDates)
     }
 
     private fun checkIn(

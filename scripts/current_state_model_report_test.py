@@ -186,6 +186,37 @@ class CurrentStateModelReportTest(unittest.TestCase):
         self.assertEqual(day.ppi_epoch_count, 2)
         self.assertEqual(day.mean_rmssd_ms, 61.0)
 
+    def test_selected_episode_ignores_primary_without_timestamps(self) -> None:
+        self.add_ppi_day("2026-04-30")
+        self.insert_ppi("2026-05-02", 4_500, rmssd_ms=60.0)
+        self.insert_ppi("2026-05-02", 4_800, rmssd_ms=62.0)
+        self.conn.execute(
+            """
+            insert into sleep_episode (
+                sourceDate, startEpochMs, endEpochMs, episodeKind, source,
+                confidence, isPrimaryForReadiness
+            ) values ('2026-05-02', null, null, 'main_sleep', 'manual', 'user_confirmed', 1)
+            """
+        )
+        self.conn.execute(
+            """
+            insert into sleep_episode (
+                sourceDate, startEpochMs, endEpochMs, episodeKind, source,
+                confidence, isPrimaryForReadiness
+            ) values ('2026-05-02', 4000, 6000, 'main_sleep', 'mixed', 'user_confirmed', 0)
+            """
+        )
+        self.conn.commit()
+
+        day = report_module.build_day(self.conn, "2026-05-02", baseline_days=14)
+
+        self.assertEqual(day.evidence_basis, "episode_window_ppi")
+        self.assertEqual(day.ppi_epoch_count, 2)
+
+    def test_count_for_date_rejects_unknown_table_names(self) -> None:
+        with self.assertRaises(ValueError):
+            report_module.count_for_date(self.conn, "daily_check_in; drop table daily_check_in", "2026-05-02")
+
     def test_report_compares_current_state_with_old_readiness(self) -> None:
         self.add_ppi_day("2026-05-01")
         self.add_ppi_day("2026-05-02")

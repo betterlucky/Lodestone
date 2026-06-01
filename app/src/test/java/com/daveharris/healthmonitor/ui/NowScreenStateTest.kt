@@ -181,6 +181,23 @@ class NowScreenStateTest {
     }
 
     @Test
+    fun awaitingSleepDataSourceStaysPending() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "awaiting_sleep_data",
+                rawPpiGoodEpochCount = null,
+                rawPpiCoverageHours = null
+            )
+        )
+
+        assertEquals(NowAnalysisWindowSourceType.PENDING, state.activeAnalysisWindow.sourceType)
+        assertEquals("analysis window pending", state.activeAnalysisWindow.label)
+        assertTrue(state.activeAnalysisWindow.reason.contains("Waiting"))
+    }
+
+    @Test
     fun unknownAnalysisSourceDoesNotMasqueradeAsLoopReport() {
         val state = nowState(
             morningRead = morningRead(

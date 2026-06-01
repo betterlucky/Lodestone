@@ -120,7 +120,7 @@ fun CandidateReviewSection(
         ManualSleepWindowTimeEditorSheet(
             sourceDate = sourceDate,
             onSave = { start, end ->
-                onAddManualWindow(sourceDate, start, end)
+                onAddManualWindow(sourceDateForEpoch(end), start, end)
                 addingWindowDate = null
             },
             onDismiss = { addingWindowDate = null }
@@ -143,7 +143,7 @@ fun CandidateReviewSection(
             kind = marker.editorKind,
             initialEpochMs = marker.markerEpochMs,
             onSave = { markerEpochMs ->
-                onEditMarker(marker.id, marker.sourceDate, markerEpochMs, marker.markerSource)
+                onEditMarker(marker.id, sourceDateForEpoch(markerEpochMs), markerEpochMs, marker.markerSource)
                 editingMarker = null
             },
             onDismiss = { editingMarker = null }
@@ -513,6 +513,9 @@ private fun List<WakeMarkerEntity>.markerEvidenceFor(
 
 private fun Long.timeLabel(zoneId: ZoneId): String =
     Instant.ofEpochMilli(this).atZone(zoneId).format(markerTimeFormatter)
+
+private fun sourceDateForEpoch(epochMs: Long, zoneId: ZoneId = ZoneId.systemDefault()): String =
+    Instant.ofEpochMilli(epochMs).atZone(zoneId).toLocalDate().toString()
 
 private val markerTimeFormatter: DateTimeFormatter =
     DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.UK)
