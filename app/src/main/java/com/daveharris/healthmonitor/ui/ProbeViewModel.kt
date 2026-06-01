@@ -21,7 +21,9 @@ import com.daveharris.healthmonitor.data.DeviceProfileEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.PaybackPeakConfidence
 import com.daveharris.healthmonitor.data.ProbeRepository
 import com.daveharris.healthmonitor.data.SleepEpisodeKinds
 import com.daveharris.healthmonitor.data.SleepEpisodeSources
@@ -110,6 +112,21 @@ class ProbeViewModel(
         private set
     var notesDraft by mutableStateOf("")
         private set
+    var dayShapeCapturedDraft by mutableStateOf(false)
+        private set
+    var mostlyHorizontalDraft by mutableStateOf(false)
+        private set
+    var leftHouseDraft by mutableStateOf(false)
+        private set
+    var majorTaskDraft by mutableStateOf(false)
+        private set
+    var majorTaskTypeDraft by mutableStateOf<String?>(null)
+        private set
+    var pemPaybackTodayDraft by mutableStateOf(false)
+        private set
+    var paybackPeakTodayDraft by mutableStateOf(false)
+        private set
+    private var paybackPeakConfidenceDraft by mutableStateOf<String?>(null)
     var currentFoodSummary by mutableStateOf<FoodDailySummaryEntity?>(null)
         private set
     var currentDailyWeight by mutableStateOf<DailyWeightEntity?>(null)
@@ -720,10 +737,7 @@ class ProbeViewModel(
         viewModelScope.launch {
             if (date == currentLodestoneDate()) {
                 runBusyAction("Resetting today…") {
-                    eveningOutcomeDraft = null
-                    approachToDayDraft = null
-                    muscleWeaknessTodayDraft = false
-                    notesDraft = ""
+                    clearDailyCheckInDraft()
                     dailyReviewRepository.clearFoodImportForDate(date)
                     currentFoodSummary = null
                     currentDailyWeight = null
@@ -735,10 +749,7 @@ class ProbeViewModel(
                     hydrateDailyCheckIn(existing)
                     statusMessage = "Reloaded saved journal for $date."
                 } else {
-                    eveningOutcomeDraft = null
-                    approachToDayDraft = null
-                    muscleWeaknessTodayDraft = false
-                    notesDraft = ""
+                    clearDailyCheckInDraft()
                     statusMessage = "No saved journal for $date."
                 }
                 refreshFoodImportForDate(date)
@@ -763,6 +774,91 @@ class ProbeViewModel(
 
     fun updateMuscleWeaknessToday(value: Boolean) {
         muscleWeaknessTodayDraft = value
+    }
+
+    fun updateMostlyHorizontal(value: Boolean) {
+        markDayShapeCaptured()
+        mostlyHorizontalDraft = value
+    }
+
+    fun updateLeftHouse(value: Boolean) {
+        markDayShapeCaptured()
+        leftHouseDraft = value
+    }
+
+    fun updateMajorTask(value: Boolean) {
+        markDayShapeCaptured()
+        majorTaskDraft = value
+        if (!value) {
+            majorTaskTypeDraft = null
+        }
+    }
+
+    fun updateMajorTaskType(value: String?) {
+        markDayShapeCaptured()
+        majorTaskTypeDraft = value?.takeIf { it in majorTaskTypes }
+        majorTaskDraft = majorTaskTypeDraft != null || majorTaskDraft
+    }
+
+    fun updatePemPaybackToday(value: Boolean) {
+        markDayShapeCaptured()
+        pemPaybackTodayDraft = value
+        if (!value) {
+            paybackPeakTodayDraft = false
+            if (paybackPeakConfidenceDraft in peakOnlyConfidences) {
+                paybackPeakConfidenceDraft = null
+            }
+        }
+    }
+
+    fun updatePaybackPeakToday(value: Boolean) {
+        markDayShapeCaptured()
+        paybackPeakTodayDraft = value
+        if (value) {
+            pemPaybackTodayDraft = true
+            paybackPeakConfidenceDraft = PaybackPeakConfidence.USER_SELECTED
+        } else if (paybackPeakConfidenceDraft in peakOnlyConfidences) {
+            paybackPeakConfidenceDraft = null
+        }
+    }
+
+    fun markPaybackPeakDate(sourceDate: String) {
+        viewModelScope.launch {
+            dailyReviewRepository.updatePaybackPeakMarker(
+                sourceDate = sourceDate,
+                paybackPeakToday = true,
+                paybackPeakConfidence = PaybackPeakConfidence.USER_SELECTED
+            )
+            if (sourceDate == checkInDate) {
+                dayShapeCapturedDraft = true
+                pemPaybackTodayDraft = true
+                paybackPeakTodayDraft = true
+                paybackPeakConfidenceDraft = PaybackPeakConfidence.USER_SELECTED
+            }
+            statusMessage = "Marked $sourceDate as the payback peak."
+        }
+    }
+
+    fun markPaybackPeakNotSure(episodeEndDate: String) {
+        viewModelScope.launch {
+            dailyReviewRepository.updatePaybackPeakMarker(
+                sourceDate = episodeEndDate,
+                paybackPeakToday = false,
+                paybackPeakConfidence = PaybackPeakConfidence.NOT_SURE
+            )
+            statusMessage = "Payback peak left unknown for that spell."
+        }
+    }
+
+    fun dismissPaybackPeakPrompt(episodeEndDate: String) {
+        viewModelScope.launch {
+            dailyReviewRepository.updatePaybackPeakMarker(
+                sourceDate = episodeEndDate,
+                paybackPeakToday = false,
+                paybackPeakConfidence = PaybackPeakConfidence.DISMISSED
+            )
+            statusMessage = "Payback peak prompt dismissed."
+        }
     }
 
     fun loadDailyCheckIn(date: String = checkInDate) {
@@ -805,12 +901,20 @@ class ProbeViewModel(
                     eveningOutcome = outcome.name,
                     approachToDay = approachToDayDraft?.name,
                     muscleWeaknessToday = muscleWeaknessTodayDraft,
-                    notes = notesDraft
+                    notes = notesDraft,
+                    dayShapeCaptured = dayShapeCapturedDraft,
+                    mostlyHorizontal = if (dayShapeCapturedDraft) mostlyHorizontalDraft else null,
+                    leftHouse = if (dayShapeCapturedDraft) leftHouseDraft else null,
+                    majorTask = if (dayShapeCapturedDraft) majorTaskDraft else null,
+                    majorTaskType = if (dayShapeCapturedDraft && majorTaskDraft) majorTaskTypeDraft else null,
+                    pemPaybackToday = if (dayShapeCapturedDraft) pemPaybackTodayDraft else null,
+                    paybackPeakToday = if (dayShapeCapturedDraft) paybackPeakTodayDraft else null,
+                    paybackPeakConfidence = paybackPeakConfidenceForSave()
                 )
-                eveningOutcomeDraft = null
-                approachToDayDraft = null
-                muscleWeaknessTodayDraft = false
-                notesDraft = ""
+                if (!pemPaybackTodayDraft) {
+                    autoMarkSingleDayPaybackPeakIfNeeded(savedDate)
+                }
+                clearDailyCheckInDraft()
                 saveSuccessFlash = true
                 statusMessage = buildSaveStatusMessage(savedDate, foodImportResult)
             }
@@ -988,6 +1092,14 @@ class ProbeViewModel(
         }
         muscleWeaknessTodayDraft = entity.muscleWeaknessToday
         notesDraft = entity.notes.orEmpty()
+        dayShapeCapturedDraft = entity.dayShapeCaptured == true
+        mostlyHorizontalDraft = dayShapeCapturedDraft && entity.mostlyHorizontal == true
+        leftHouseDraft = dayShapeCapturedDraft && entity.leftHouse == true
+        majorTaskDraft = dayShapeCapturedDraft && entity.majorTask == true
+        majorTaskTypeDraft = entity.majorTaskType?.takeIf { it in majorTaskTypes && majorTaskDraft }
+        pemPaybackTodayDraft = dayShapeCapturedDraft && entity.pemPaybackToday == true
+        paybackPeakTodayDraft = dayShapeCapturedDraft && entity.paybackPeakToday == true
+        paybackPeakConfidenceDraft = entity.paybackPeakConfidence
     }
 
     private fun selectCheckInDate(date: String) {
@@ -1002,12 +1114,57 @@ class ProbeViewModel(
             if (existing != null) {
                 hydrateDailyCheckIn(existing)
             } else {
-                eveningOutcomeDraft = null
-                approachToDayDraft = null
-                muscleWeaknessTodayDraft = false
-                notesDraft = ""
+                clearDailyCheckInDraft()
             }
             refreshFoodImportForDate(date)
+        }
+    }
+
+    private fun markDayShapeCaptured() {
+        dayShapeCapturedDraft = true
+    }
+
+    private fun clearDailyCheckInDraft() {
+        eveningOutcomeDraft = null
+        approachToDayDraft = null
+        muscleWeaknessTodayDraft = false
+        notesDraft = ""
+        clearDayShapeDraft()
+    }
+
+    private fun clearDayShapeDraft() {
+        dayShapeCapturedDraft = false
+        mostlyHorizontalDraft = false
+        leftHouseDraft = false
+        majorTaskDraft = false
+        majorTaskTypeDraft = null
+        pemPaybackTodayDraft = false
+        paybackPeakTodayDraft = false
+        paybackPeakConfidenceDraft = null
+    }
+
+    private fun paybackPeakConfidenceForSave(): String? {
+        if (!dayShapeCapturedDraft) return null
+        if (paybackPeakTodayDraft) {
+            return paybackPeakConfidenceDraft ?: PaybackPeakConfidence.USER_SELECTED
+        }
+        return paybackPeakConfidenceDraft?.takeIf {
+            it == PaybackPeakConfidence.NOT_SURE || it == PaybackPeakConfidence.DISMISSED
+        }
+    }
+
+    private suspend fun autoMarkSingleDayPaybackPeakIfNeeded(nonPemDate: String) {
+        val episode = findEndedPaybackEpisodeBefore(
+            activeDate = nonPemDate,
+            checkIns = dailyCheckIns.value,
+            activePemMarked = false
+        )
+        if (episode?.pemDates?.size == 1) {
+            dailyReviewRepository.updatePaybackPeakMarker(
+                sourceDate = episode.pemDates.single(),
+                paybackPeakToday = true,
+                paybackPeakConfidence = PaybackPeakConfidence.AUTO_SINGLE
+            )
         }
     }
 
@@ -1057,6 +1214,16 @@ class ProbeViewModel(
         private const val SLEEP_REPORT_RETRY_COOLDOWN_UNTIL = "sleep_report_retry_cooldown_until"
         private const val SLEEP_REPORT_RETRY_COOLDOWN_MS = 30 * 60 * 1000L
         private const val CHECK_IN_INTENT_RESET_MS = 90_000L
+        private val majorTaskTypes = setOf(
+            JournalMajorTaskTypes.WORK_FROM_HOME,
+            JournalMajorTaskTypes.SITE_VISIT,
+            JournalMajorTaskTypes.ADMIN_ASSESSMENT,
+            JournalMajorTaskTypes.OTHER_MAJOR_TASK
+        )
+        private val peakOnlyConfidences = setOf(
+            PaybackPeakConfidence.USER_SELECTED,
+            PaybackPeakConfidence.AUTO_SINGLE
+        )
         private fun loadSleepReportRetryCooldown(context: Context): Long =
             context
                 .getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)

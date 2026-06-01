@@ -84,7 +84,7 @@ fun JournalScreen(
             SectionCard(title = "Evening check-in", subtitle = null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("How did the day actually end?", fontWeight = FontWeight.SemiBold)
-                    Text("(required)", color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
+                    Text("(one tap is enough)", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
                 StatusChipRow(
                     selected = viewModel.eveningOutcomeDraft,
@@ -104,6 +104,32 @@ fun JournalScreen(
                 }
                 if (viewModel.eveningOutcomeDraft != null) {
                     SupportText(feedbackCopyFor(viewModel.eveningOutcomeDraft))
+                }
+                DayShapeChipSection(
+                    mostlyHorizontal = viewModel.mostlyHorizontalDraft,
+                    leftHouse = viewModel.leftHouseDraft,
+                    majorTask = viewModel.majorTaskDraft,
+                    majorTaskType = viewModel.majorTaskTypeDraft,
+                    pemPaybackToday = viewModel.pemPaybackTodayDraft,
+                    paybackPeakToday = viewModel.paybackPeakTodayDraft,
+                    onMostlyHorizontalChange = viewModel::updateMostlyHorizontal,
+                    onLeftHouseChange = viewModel::updateLeftHouse,
+                    onMajorTaskChange = viewModel::updateMajorTask,
+                    onMajorTaskTypeChange = viewModel::updateMajorTaskType,
+                    onPemPaybackTodayChange = viewModel::updatePemPaybackToday,
+                    onPaybackPeakTodayChange = viewModel::updatePaybackPeakToday
+                )
+                pendingPaybackPeakPrompt(
+                    activeDate = viewModel.checkInDate,
+                    checkIns = dailyCheckIns,
+                    activePemMarked = viewModel.pemPaybackTodayDraft
+                )?.let { prompt ->
+                    PaybackPeakPromptSection(
+                        prompt = prompt,
+                        onMarkPeak = viewModel::markPaybackPeakDate,
+                        onNotSure = { viewModel.markPaybackPeakNotSure(prompt.episodeEndDate) },
+                        onDismiss = { viewModel.dismissPaybackPeakPrompt(prompt.episodeEndDate) }
+                    )
                 }
                 SectionLabel("How did you approach the day? Optional.")
                 StatusChipRow(
