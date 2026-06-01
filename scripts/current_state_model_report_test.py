@@ -280,6 +280,82 @@ class CurrentStateModelReportTest(unittest.TestCase):
         self.assertTrue(day.payback_peak_today)
         self.assertEqual(day.payback_peak_confidence, "user_selected")
 
+    def test_pem_lag_episode_reports_peak_tail_and_missing_dates(self) -> None:
+        self.insert_review(
+            "2026-05-01",
+            "OK",
+            day_shape_captured=True,
+            major_task=True,
+            major_task_type="site_visit",
+        )
+        self.insert_review("2026-05-02", "OK")
+        self.insert_review(
+            "2026-05-03",
+            "UNSTEADY",
+            day_shape_captured=True,
+            pem_payback_today=True,
+        )
+        self.insert_review(
+            "2026-05-04",
+            "CRASH",
+            day_shape_captured=True,
+            mostly_horizontal=True,
+            pem_payback_today=True,
+            payback_peak_today=True,
+            payback_peak_confidence="user_selected",
+        )
+        self.insert_review("2026-05-06", "OK")
+        self.conn.commit()
+
+        report = report_module.build_report(
+            self.conn,
+            start_date="2026-05-01",
+            end_date="2026-05-06",
+            baseline_days=14,
+        )
+
+        episode = report["pem_lag_episodes"][0]
+        self.assertEqual(report["pem_lag_episode_count"], 1)
+        self.assertEqual(episode["trigger_date"], "2026-05-01")
+        self.assertEqual(episode["trigger_type"], "site_visit")
+        self.assertEqual(episode["affected_dates"], ("2026-05-03", "2026-05-04"))
+        self.assertEqual(episode["missing_dates"], ("2026-05-05",))
+        self.assertEqual(episode["pem_dates"], ("2026-05-03", "2026-05-04"))
+        self.assertEqual(episode["mostly_horizontal_dates"], ("2026-05-04",))
+        self.assertEqual(episode["peak_date"], "2026-05-04")
+        self.assertEqual(episode["peak_lag_days"], 3)
+        self.assertEqual(episode["recovery_tail_days"], 2)
+        self.assertEqual(episode["outcome_movement"], "OK -> CRASH (worse)")
+
+    def test_pem_lag_episode_handles_no_peak_marker(self) -> None:
+        self.insert_review(
+            "2026-05-01",
+            "OK",
+            day_shape_captured=True,
+            major_task=True,
+        )
+        self.insert_review(
+            "2026-05-02",
+            "UNSTEADY",
+            day_shape_captured=True,
+            pem_payback_today=True,
+        )
+        self.insert_review("2026-05-03", "OK")
+        self.conn.commit()
+
+        episodes = report_module.build_pem_lag_episodes(
+            self.conn,
+            start_date="2026-05-01",
+            end_date="2026-05-03",
+        )
+
+        self.assertEqual(len(episodes), 1)
+        self.assertEqual(episodes[0].trigger_type, "major_task")
+        self.assertEqual(episodes[0].affected_dates, ("2026-05-02",))
+        self.assertIsNone(episodes[0].peak_date)
+        self.assertIsNone(episodes[0].peak_lag_days)
+        self.assertIsNone(episodes[0].recovery_tail_days)
+
 
 if __name__ == "__main__":
     unittest.main()
