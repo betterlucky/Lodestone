@@ -37,6 +37,7 @@ class HistoryScreenTest {
         assertEquals("Good -> Unsteady", latest.stabilityTransitionLabel)
         assertEquals("1800 kcal, 4 items, 1 tea, 11.0h window", latest.foodSummaryLabel)
         assertEquals("70.0 kg at 08:00", latest.weightLabel)
+        assertEquals("28.5 kg", latest.gripStrengthLabel)
     }
 
     @Test
@@ -173,7 +174,8 @@ class HistoryScreenTest {
             muscleWeaknessToday = false,
             notes = "notes",
             createdAtEpochMs = 1,
-            updatedAtEpochMs = 2
+            updatedAtEpochMs = 2,
+            manualGripStrengthKg = 28.5
         )
 
     private fun food(

@@ -236,6 +236,7 @@ private fun HistoryDayDetailCard(
         DetailRow("Completeness", report.dataCompletenessLabel)
         DetailRow("Food", report.foodSummaryLabel)
         DetailRow("Weight", report.weightLabel)
+        DetailRow("Grip strength", report.gripStrengthLabel)
         DetailRow("Transition", report.stabilityTransitionLabel)
         DetailRow("Notes", report.notes?.takeIf { it.isNotBlank() } ?: "No notes")
         ButtonRow {
@@ -263,6 +264,7 @@ data class HistoryDayReport(
     val stabilityTransitionLabel: String,
     val foodSummaryLabel: String,
     val weightLabel: String,
+    val gripStrengthLabel: String,
     val notes: String?
 )
 
@@ -309,6 +311,7 @@ fun buildHistoryDayReports(
             stabilityTransitionLabel = stabilityTransitionLabel(previousPrediction, prediction?.status),
             foodSummaryLabel = historyFoodLabel(food),
             weightLabel = historyWeightLabel(weight),
+            gripStrengthLabel = historyGripStrengthLabel(checkIn),
             notes = checkIn?.notes
         )
     }
@@ -381,6 +384,9 @@ private fun historyWeightLabel(weight: DailyWeightEntity?): String =
         val measured = it.measuredTime?.let { time -> " at $time" }.orEmpty()
         String.format(java.util.Locale.UK, "%.1f kg%s", it.weightKg, measured)
     } ?: "No weight row"
+
+private fun historyGripStrengthLabel(checkIn: DailyCheckInEntity?): String =
+    checkIn?.manualGripStrengthKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) } ?: "No grip reading"
 
 private fun sleepBucketLabel(minutes: Int?): String =
     when {

@@ -110,6 +110,8 @@ class ProbeViewModel(
         private set
     var muscleWeaknessTodayDraft by mutableStateOf(false)
         private set
+    var manualGripStrengthKgDraft by mutableStateOf("")
+        private set
     var notesDraft by mutableStateOf("")
         private set
     var dayShapeCapturedDraft by mutableStateOf(false)
@@ -779,6 +781,10 @@ class ProbeViewModel(
         muscleWeaknessTodayDraft = value
     }
 
+    fun updateManualGripStrengthKg(value: String) {
+        manualGripStrengthKgDraft = sanitizeGripStrengthInput(value)
+    }
+
     fun updateMostlyHorizontal(value: Boolean) {
         markDayShapeCaptured()
         mostlyHorizontalDraft = value
@@ -912,7 +918,8 @@ class ProbeViewModel(
                     majorTaskType = if (dayShapeCapturedDraft && majorTaskDraft) majorTaskTypeDraft else null,
                     pemPaybackToday = if (dayShapeCapturedDraft) pemPaybackTodayDraft else null,
                     paybackPeakToday = if (dayShapeCapturedDraft) paybackPeakTodayDraft else null,
-                    paybackPeakConfidence = paybackPeakConfidenceForSave()
+                    paybackPeakConfidence = paybackPeakConfidenceForSave(),
+                    manualGripStrengthKg = gripStrengthKgOrNull(manualGripStrengthKgDraft)
                 )
                 if (!pemPaybackTodayDraft) {
                     autoMarkSingleDayPaybackPeakIfNeeded(savedDate)
@@ -1094,6 +1101,7 @@ class ProbeViewModel(
             runCatching { TrafficLightStatus.valueOf(value) }.getOrNull()
         }
         muscleWeaknessTodayDraft = entity.muscleWeaknessToday
+        manualGripStrengthKgDraft = entity.manualGripStrengthKg?.toString().orEmpty()
         notesDraft = entity.notes.orEmpty()
         dayShapeCapturedDraft = entity.dayShapeCaptured == true
         mostlyHorizontalDraft = dayShapeCapturedDraft && entity.mostlyHorizontal == true
@@ -1131,6 +1139,7 @@ class ProbeViewModel(
         eveningOutcomeDraft = null
         approachToDayDraft = null
         muscleWeaknessTodayDraft = false
+        manualGripStrengthKgDraft = ""
         notesDraft = ""
         clearDayShapeDraft()
     }
@@ -1253,6 +1262,26 @@ class ProbeViewModel(
         }
     }
 }
+
+internal fun sanitizeGripStrengthInput(value: String): String {
+    var decimalSeen = false
+    return buildString {
+        value.forEach { rawChar ->
+            val char = if (rawChar == ',') '.' else rawChar
+            when {
+                char.isDigit() -> append(char)
+                char == '.' && !decimalSeen -> {
+                    decimalSeen = true
+                    append(char)
+                }
+            }
+        }
+    }.take(6)
+}
+
+internal fun gripStrengthKgOrNull(value: String): Double? =
+    value.toDoubleOrNull()
+        ?.takeIf { it in 0.1..150.0 }
 
 private fun String?.toNowMarkerMode(): NowMarkerMode =
     runCatching { NowMarkerMode.valueOf(this ?: "") }.getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING)
