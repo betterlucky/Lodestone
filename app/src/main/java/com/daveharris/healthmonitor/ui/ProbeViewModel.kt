@@ -539,7 +539,7 @@ class ProbeViewModel(
                     notes = "Accepted as main sleep"
                 )
                 statusMessage = if (saved) {
-                    "Sleep window confirmed for readiness."
+                    "Sleep window confirmed for the current signal."
                 } else {
                     "Sleep window was not found."
                 }
@@ -652,7 +652,7 @@ class ProbeViewModel(
                     endEpochMs = endEpochMs
                 )
                 setSleepEpisodeReviewDates(sourceDate)
-                statusMessage = "Manual sleep window saved for readiness."
+                statusMessage = "Manual sleep window saved for the current signal."
             }
         }
     }

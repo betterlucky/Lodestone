@@ -470,7 +470,7 @@ private fun SleepEpisodeDateGroup.summaryLabel(): String =
             append(confirmedCount)
             append(" confirmed")
             if (hasSavedReview) append(", journal saved")
-            if (hasPrimaryReadinessWindow) append(", readiness window selected")
+            if (hasPrimaryReadinessWindow) append(", current-signal window selected")
         }
     }
 

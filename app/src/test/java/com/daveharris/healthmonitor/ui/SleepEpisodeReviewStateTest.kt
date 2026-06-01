@@ -40,7 +40,7 @@ class SleepEpisodeReviewStateTest {
         val group = state.activeDateGroup!!
         val item = group.items.single()
         assertEquals(1, state.totalCandidateCount)
-        assertEquals("Review possible sleep/rest windows before using them for readiness.", state.surfaceMessage)
+        assertEquals("Review possible sleep/rest windows before using them for the current signal.", state.surfaceMessage)
         assertEquals("Possible sleep", item.title)
         assertEquals("22:30-06:00", item.timeRangeLabel)
         assertEquals("7h 30m", item.durationLabel)

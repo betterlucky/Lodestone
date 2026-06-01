@@ -113,7 +113,7 @@ fun DataScreen(
             }
         }
         item {
-            SectionCard(title = "Check in", subtitle = "Loop readiness checklist") {
+            SectionCard(title = "Check in", subtitle = "Loop current-signal checklist") {
                 SupportText("Use Check in to sync and assess the current situation without marking wake time. Use the sleep/wake buttons only when you want to record those events.")
                 DetailRow("Status", nowState.currentState.label)
                 DetailRow("Robustness", nowState.signalRobustness.label)
@@ -133,7 +133,7 @@ fun DataScreen(
                         status = morningConnectionBadgeStatus(runtime, todayStatus)
                     )
                 }
-                DetailRow("Final Loop sleep report", todayStatus.sleepReport)
+                DetailRow("Final Loop sleep context", todayStatus.sleepReport)
                 DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
                 SupportText(todayStatus.message)
                 todayStatus.catchUpPrompt?.let { SupportText(it) }

@@ -27,7 +27,7 @@ class HistoryScreenTest {
         assertEquals("2026-05-31", latest.sourceDate)
         assertEquals(TrafficLightStatus.UNSTEADY, latest.predictionStatus)
         assertEquals(TrafficLightStatus.CRASH, latest.outcomeStatus)
-        assertEquals("Prediction and outcome differed", latest.predictionOutcomeLabel)
+        assertEquals("Morning signal and outcome differed", latest.predictionOutcomeLabel)
         assertEquals("Short/irregular sleep", latest.sleepBucketLabel)
         assertTrue(latest.dataCompletenessLabel.contains("prediction"))
         assertTrue(latest.dataCompletenessLabel.contains("journal"))
@@ -46,18 +46,42 @@ class HistoryScreenTest {
         )
 
         val report = reports.single()
-        assertEquals("No morning prediction", report.predictionLabel)
-        assertEquals("Outcome saved without a morning prediction", report.predictionOutcomeLabel)
-        assertEquals("No prediction evidence", report.robustnessLabel)
+        assertEquals("No morning signal", report.predictionLabel)
+        assertEquals("Outcome saved without a morning signal", report.predictionOutcomeLabel)
+        assertEquals("No morning signal evidence", report.robustnessLabel)
         assertEquals("journal", report.dataCompletenessLabel)
         assertEquals("No active window recorded", report.windowProvenanceLabel)
+    }
+
+    @Test
+    fun reportsWhetherWindowSourceWasProvisionalOrFinal() {
+        val reports = buildHistoryDayReports(
+            predictions = listOf(
+                prediction(
+                    "2026-05-31",
+                    issuedAt = 1,
+                    status = TrafficLightStatus.OK.name,
+                    sleepMinutes = null,
+                    isInterim = true
+                )
+            ),
+            checkIns = emptyList(),
+            foodSummaries = emptyList(),
+            weights = emptyList()
+        )
+
+        assertEquals(
+            "raw ppi manual window pending sleep report (provisional)",
+            reports.single().windowProvenanceLabel
+        )
     }
 
     private fun prediction(
         sourceDate: String,
         issuedAt: Long,
         status: String,
-        sleepMinutes: Int? = 480
+        sleepMinutes: Int? = 480,
+        isInterim: Boolean = false
     ): MorningPredictionSnapshotEntity =
         MorningPredictionSnapshotEntity(
             sourceDate = sourceDate,
@@ -66,7 +90,7 @@ class HistoryScreenTest {
             modelVersion = "test",
             status = status,
             confidence = "medium",
-            isInterim = false,
+            isInterim = isInterim,
             sleepDataReady = sleepMinutes != null,
             overnightAutonomicSource = "raw_ppi_manual_window_pending_sleep_report",
             sleepDurationMinutes = sleepMinutes,

@@ -35,7 +35,7 @@ data class SleepEpisodeReviewState(
     val surfaceMessage: String
         get() = when {
             hasCatchUpDates && attentionDateCount > 0 -> "Review missing days from oldest to newest."
-            totalCandidateCount > 0 -> "Review possible sleep/rest windows before using them for readiness."
+            totalCandidateCount > 0 -> "Review possible sleep/rest windows before using them for the current signal."
             totalConfirmedCount > 0 -> "This day has your confirmed sleep/rest decision."
             else -> "No sleep/rest candidates found yet."
         }
@@ -157,7 +157,7 @@ fun SleepEpisodeEntity.toSleepEpisodeDisplayItem(
         kindLabel = kindLabel(episodeKind),
         sourceLabel = sourceLabel(source),
         confidenceLabel = confidenceLabel(confidence),
-        primaryLabel = if (isPrimaryForReadiness) "Readiness window" else null,
+        primaryLabel = if (isPrimaryForReadiness) "Current-signal window" else null,
         evidenceSummary = evidenceSummary(evidenceJson, episodeKind, source, isCandidate, isNoSleep),
         isCandidate = isCandidate,
         isConfirmed = isConfirmed,
@@ -259,11 +259,11 @@ private fun evidenceSummary(
     val wakeMarker = evidence["hasExplicitWakeMarker"]?.toBooleanStrictOrNull()
     return when {
         isCandidate && episodeKind == SleepEpisodeKinds.MAIN_SLEEP ->
-            "Lodestone found a quiet low-movement window. Confirm or edit it before it drives readiness."
+            "Lodestone found a quiet low-movement window. Confirm or edit it before it drives the current signal."
         isCandidate && episodeKind == SleepEpisodeKinds.REST_CANDIDATE ->
             "The signal looks restful, but Lodestone should not call it sleep without your review."
         source == SleepEpisodeSources.POLAR_SLEEP ->
-            "Vendor sleep is supporting context; user-confirmed local episodes decide the primary readiness window."
+            "Vendor sleep is supporting context; user-confirmed local episodes decide the primary current-signal window."
         label != null && durationMinutes != null ->
             "$label, about ${durationLabelFromMinutes(durationMinutes)}${wakeMarkerSuffix(wakeMarker)}."
         label != null -> label

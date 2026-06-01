@@ -63,7 +63,7 @@ fun HistoryScreen(
         item {
             HeroCard(
                 title = "History",
-                subtitle = "Prediction/outcome pairs, evidence coverage, and repair state without pulling a database.",
+                subtitle = "Morning-signal/outcome pairs, evidence coverage, and repair state without pulling a database.",
                 eyebrow = "History",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
@@ -72,8 +72,8 @@ fun HistoryScreen(
         item {
             SectionCard(title = "Reporting snapshot", subtitle = "Descriptive, not proof of model accuracy") {
                 DetailRow("Latest read date", morningRead?.sourceDate ?: "None yet")
-                DetailRow("Latest readiness", morningRead?.status?.name?.replaceFirstChar { it.titlecase() } ?: "TBC")
-                DetailRow("Prediction snapshots", morningPredictionSnapshots.size.toString())
+                DetailRow("Latest morning signal", morningRead?.status?.name?.replaceFirstChar { it.titlecase() } ?: "TBC")
+                DetailRow("Morning snapshots", morningPredictionSnapshots.size.toString())
                 DetailRow("Saved journal entries", dailyCheckIns.size.toString())
                 DetailRow("Needs evidence attention", sleepEpisodeReviewState.attentionDateCount.toString())
                 SupportText("These rows show what Lodestone recorded and how complete each day looks. They do not claim a calibrated load budget.")
@@ -170,7 +170,7 @@ private fun HistoryDayReportCard(
                 }
                 StatusBadge(report.outcomeLabel ?: report.predictionLabel, report.outcomeStatus ?: report.predictionStatus)
             }
-            DetailRow("Prediction", report.predictionLabel)
+            DetailRow("Morning signal", report.predictionLabel)
             DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
             DetailRow("Robustness", report.robustnessLabel)
             DetailRow("Data completeness", report.dataCompletenessLabel)
@@ -235,13 +235,13 @@ fun buildHistoryDayReports(
         HistoryDayReport(
             sourceDate = date,
             predictionStatus = predictionStatus,
-            predictionLabel = predictionStatus?.let { labelForStatus(it.name) } ?: "No morning prediction",
+            predictionLabel = predictionStatus?.let { labelForStatus(it.name) } ?: "No morning signal",
             outcomeStatus = outcomeStatus,
             outcomeLabel = outcomeStatus?.let { labelForStatus(it.name) },
             predictionOutcomeLabel = predictionOutcomeLabel(predictionStatus, outcomeStatus),
             robustnessLabel = robustnessLabel(prediction),
             dataCompletenessLabel = dataCompletenessLabel(prediction, checkIn, food, weight),
-            windowProvenanceLabel = prediction?.overnightAutonomicSource?.replace('_', ' ') ?: "No active window recorded",
+            windowProvenanceLabel = historyWindowSourceLabel(prediction),
             sleepBucketLabel = sleepBucketLabel(prediction?.sleepDurationMinutes),
             stabilityTransitionLabel = stabilityTransitionLabel(previousPrediction, prediction?.status),
             notes = checkIn?.notes
@@ -254,15 +254,15 @@ private fun predictionOutcomeLabel(
     outcome: TrafficLightStatus?
 ): String =
     when {
-        prediction == null && outcome == null -> "No paired prediction/outcome yet"
-        prediction == null -> "Outcome saved without a morning prediction"
-        outcome == null -> "Prediction waiting for journal outcome"
-        prediction == outcome -> "Prediction and outcome matched"
-        else -> "Prediction and outcome differed"
+        prediction == null && outcome == null -> "No paired morning signal/outcome yet"
+        prediction == null -> "Outcome saved without a morning signal"
+        outcome == null -> "Morning signal waiting for journal outcome"
+        prediction == outcome -> "Morning signal and outcome matched"
+        else -> "Morning signal and outcome differed"
     }
 
 private fun robustnessLabel(prediction: MorningPredictionSnapshotEntity?): String {
-    if (prediction == null) return "No prediction evidence"
+    if (prediction == null) return "No morning signal evidence"
     val parts = buildList {
         add(if (prediction.sleepDataReady) "sleep report" else "sleep pending")
         add(if ((prediction.rawPpiGoodEpochCount ?: 0) > 0) "PPI ${prediction.rawPpiGoodEpochCount}" else "no PPI")
@@ -270,6 +270,17 @@ private fun robustnessLabel(prediction: MorningPredictionSnapshotEntity?): Strin
         add(prediction.confidence.replaceFirstChar { it.titlecase() })
     }
     return parts.joinToString(" · ")
+}
+
+private fun historyWindowSourceLabel(prediction: MorningPredictionSnapshotEntity?): String {
+    if (prediction == null) return "No active window recorded"
+    val source = prediction.overnightAutonomicSource.replace('_', ' ')
+    val state = when {
+        prediction.sleepDataReady -> "final Loop context present"
+        prediction.isInterim -> "provisional"
+        else -> "sleep context pending"
+    }
+    return "$source ($state)"
 }
 
 private fun dataCompletenessLabel(

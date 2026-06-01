@@ -47,6 +47,8 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.PROVISIONAL_READ, state.currentState.kind)
+        assertTrue(state.currentState.label.startsWith("Provisional read:"))
+        assertTrue(state.currentState.message.contains("remains provisional"))
         assertEquals(NowDataAvailability.PARTIAL, state.currentState.availability)
         assertEquals(NowDataAvailability.PENDING, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.ppi.availability)
@@ -68,6 +70,9 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
+        assertTrue(state.currentState.label.startsWith("Current signal:"))
+        assertEquals("Final Loop sleep context", state.currentState.qualifier)
+        assertTrue(state.currentState.message.contains("pacing context"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
         assertEquals("Stable", state.stateStability.label)

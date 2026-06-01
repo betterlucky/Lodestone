@@ -178,7 +178,8 @@ private fun JournalContextCard(
             SupportText("No morning signal is available for $selectedDate. You can still record how the day ended.")
             return@SectionCard
         }
-        DetailRow("Morning state", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+        DetailRow("Morning signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+        DetailRow("Signal state", morningRead.provisionalFinalLabel())
         DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
         DetailRow("Source", morningRead.overnightAutonomicSource.replace('_', ' '))
         morningRead.reasons.firstOrNull()?.let { reason ->
@@ -186,3 +187,10 @@ private fun JournalContextCard(
         }
     }
 }
+
+private fun MorningReadSnapshot.provisionalFinalLabel(): String =
+    when {
+        sleepDataReady -> "Final Loop sleep context present"
+        isInterim -> "Provisional, awaiting final Loop sleep context"
+        else -> "Current, sleep context pending"
+    }
