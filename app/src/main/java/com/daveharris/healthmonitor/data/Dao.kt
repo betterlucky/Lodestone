@@ -57,6 +57,9 @@ interface ProbeDao {
     @Query("DELETE FROM sleep_episode WHERE id = :id")
     suspend fun deleteSleepEpisode(id: Long)
 
+    @Query("DELETE FROM sleep_episode WHERE sourceDate = :sourceDate AND episodeKind = :episodeKind")
+    suspend fun deleteSleepEpisodesForDateAndKind(sourceDate: String, episodeKind: String): Int
+
     @Query("SELECT * FROM sleep_episode WHERE id = :id LIMIT 1")
     suspend fun getSleepEpisodeById(id: Long): SleepEpisodeEntity?
 

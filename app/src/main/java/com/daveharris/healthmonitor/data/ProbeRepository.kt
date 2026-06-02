@@ -218,6 +218,10 @@ class ProbeRepository(
         var rowId = 0L
         database.withTransaction {
             dao.clearPrimarySleepEpisodeForDate(sourceDate, now)
+            dao.deleteSleepEpisodesForDateAndKind(
+                sourceDate = sourceDate,
+                episodeKind = SleepEpisodeKinds.NO_SLEEP
+            )
             dao.deleteUnconfirmedSleepEpisodeCandidatesForDateAndKind(
                 sourceDate = sourceDate,
                 source = SleepEpisodeSources.PPI_INFERRED,

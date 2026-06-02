@@ -1276,9 +1276,12 @@ internal fun sanitizeGripStrengthInput(value: String): String {
                 }
             }
         }
+        // Six characters covers the accepted 0.1-150.0 kg range while keeping the field low-friction.
     }.take(6)
 }
 
+// Nullable because grip capture is optional; 0.1-150.0 kg accepts normal dynamometer readings
+// while filtering slips such as "0" or extra digits pasted into the field.
 internal fun gripStrengthKgOrNull(value: String): Double? =
     value.toDoubleOrNull()
         ?.takeIf { it in 0.1..150.0 }

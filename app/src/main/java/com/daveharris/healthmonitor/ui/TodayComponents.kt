@@ -504,6 +504,11 @@ private fun morningReadReportStateLabel(morningRead: MorningReadSnapshot): Strin
 
 private fun autonomicSourceDisplayLabel(source: String): String =
     when (MorningReadSource.fromKey(source)) {
+        MorningReadSource.USER_CONFIRMED_NO_SLEEP -> "User confirmed no main sleep"
+        MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY -> "Edited sleep episode (primary)"
+        MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY -> "Mixed sleep episode (primary)"
+        MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY -> "Manual sleep episode (primary)"
+        MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "Confirmed sleep episode (primary)"
         MorningReadSource.PPI247_SLEEP_WINDOW -> "24/7 PPI aligned to sleep"
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, calibrated provisional window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, manual provisional window"

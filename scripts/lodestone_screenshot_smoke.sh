@@ -98,7 +98,12 @@ for node in root.iter("node"):
 PY
 )"
   if [[ -n "$bounds" ]]; then
-    "${ADB_CMD[@]}" shell input tap $bounds
+    read -r tap_x tap_y <<<"$bounds"
+    if [[ "$tap_x" =~ ^[0-9]+$ && "$tap_y" =~ ^[0-9]+$ ]]; then
+      "${ADB_CMD[@]}" shell input tap "$tap_x" "$tap_y"
+    else
+      "${ADB_CMD[@]}" shell input tap "$fallback_x" "$fallback_y"
+    fi
   else
     "${ADB_CMD[@]}" shell input tap "$fallback_x" "$fallback_y"
   fi

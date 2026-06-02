@@ -6,11 +6,26 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import java.time.LocalDate
+import java.util.Locale
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class HistoryScreenTest {
+    private val defaultLocale = Locale.getDefault()
+
+    @BeforeTest
+    fun pinLocale() {
+        Locale.setDefault(Locale.US)
+    }
+
+    @AfterTest
+    fun restoreLocale() {
+        Locale.setDefault(defaultLocale)
+    }
+
     @Test
     fun reportsPairLatestPredictionWithJournalOutcomeAndCompleteness() {
         val reports = buildHistoryDayReports(

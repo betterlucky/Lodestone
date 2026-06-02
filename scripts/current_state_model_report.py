@@ -360,11 +360,12 @@ def build_pem_lag_episodes(
         trigger_type = major_task_trigger_type(trigger)
         if trigger_type is None:
             continue
-        window_dates = [
-            (date.fromisoformat(trigger_date) + timedelta(days=offset)).isoformat()
-            for offset in range(1, lag_days + 1)
-            if (date.fromisoformat(trigger_date) + timedelta(days=offset)).isoformat() <= end_date
-        ]
+        trigger_day = date.fromisoformat(trigger_date)
+        window_dates = []
+        for offset in range(1, lag_days + 1):
+            window_date = (trigger_day + timedelta(days=offset)).isoformat()
+            if window_date <= end_date:
+                window_dates.append(window_date)
         if not window_dates:
             continue
         placeholders = ",".join("?" for _ in window_dates)
