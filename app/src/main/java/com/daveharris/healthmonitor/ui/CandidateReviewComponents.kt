@@ -69,15 +69,16 @@ fun CandidateReviewSection(
         activeAnalysisWindow?.let { window ->
             SleepWindowActiveSummary(window = window, onOpenEvidence = { showDialog = true })
         }
-        DetailRow("Candidates", state.compactCountLabel())
-        activeGroup?.items?.take(4)?.forEach { item ->
+        val compactItems = activeGroup?.items.orEmpty().filter { it.isCandidate }
+        DetailRow("Candidates", activeGroup.compactCountLabel())
+        compactItems.take(4).forEach { item ->
             CompactCandidateRow(
                 item = item,
                 isActive = activeAnalysisWindow?.matches(item) == true,
                 onOpenEvidence = { showDialog = true }
             )
         }
-        val hiddenWindowCount = (activeGroup?.items?.size ?: 0) - 4
+        val hiddenWindowCount = compactItems.size - 4
         if (hiddenWindowCount > 0) {
             SupportText("$hiddenWindowCount more windows in evidence.")
         }
@@ -244,14 +245,14 @@ private fun CompactCandidateRow(
     }
 }
 
-private fun SleepEpisodeReviewState.compactCountLabel(): String =
+private fun SleepEpisodeDateGroup?.compactCountLabel(): String =
     buildString {
-        append(totalCandidateCount)
+        append(this@compactCountLabel?.candidateCount ?: 0)
         append(" suggested")
         append(" · ")
-        append(totalConfirmedCount)
+        append(this@compactCountLabel?.confirmedCount ?: 0)
         append(" saved")
-        activeDateGroup?.items?.count { it.isLoopReport }?.takeIf { it > 0 }?.let {
+        this@compactCountLabel?.items?.count { it.isLoopReport }?.takeIf { it > 0 }?.let {
             append(" · ")
             append(it)
             append(" Loop")

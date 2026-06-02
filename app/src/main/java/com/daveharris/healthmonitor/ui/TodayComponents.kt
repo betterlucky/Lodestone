@@ -132,7 +132,8 @@ fun todayReadinessStatus(
         morningRead = relevantMorningRead,
         hasFinalSleep = hasFinalSleep,
         hasPpi = hasPpi,
-        hasUsableWindow = hasUsableWindow
+        hasUsableWindow = hasUsableWindow,
+        hasReadyLocalSignal = hasReadyLocalSignal
     )
 
     return when {
@@ -275,11 +276,15 @@ fun todayDataQualitySummary(
     hasFinalSleep: Boolean = morningRead?.sleepDataReady == true,
     hasPpi: Boolean = morningRead?.rawPpiGoodEpochCount != null ||
         morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true,
-    hasUsableWindow: Boolean = morningRead.hasEstablishedSleepWindow()
+    hasUsableWindow: Boolean = morningRead.hasEstablishedSleepWindow(),
+    hasReadyLocalSignal: Boolean = hasPpi && hasUsableWindow && morningRead.hasSufficientReadyPpiCoverage()
 ): TodayDataQualitySummary {
     val coreMissing = buildList {
         if (!hasUsableWindow) add("Sleep/rest window")
         if (!hasPpi) add("24/7 PPI epochs")
+        if (hasPpi && hasUsableWindow && !hasFinalSleep && !hasReadyLocalSignal) {
+            add("Ready local PPI coverage")
+        }
     }
     val supportingGaps = buildList {
         if (morningRead == null) {
@@ -420,6 +425,7 @@ private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
         "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
     }
     morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "Received, missing bedtime marker"
+    morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "Received, missing sleep/rest window"
     morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, Loop report pending"
     else -> "Not received yet"
 }
@@ -511,7 +517,7 @@ fun morningReadBasisLabel(
             "Waiting for morning data"
     }
 
-private fun MorningReadSnapshot.analysisWindowLabel(): String =
+internal fun MorningReadSnapshot.analysisWindowLabel(): String =
     when (morningReadSource()) {
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"

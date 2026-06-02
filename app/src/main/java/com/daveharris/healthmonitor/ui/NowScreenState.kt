@@ -870,7 +870,7 @@ private fun hrvDetailForState(
 ): String =
     when {
         noMainSleep -> "No main sleep is saved, so overnight HRV alignment is not applicable for this date."
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW ->
+        morningRead.hasPpiSignal() && !morningRead.hasEstablishedSleepWindow() ->
             "PPI is available, but Lodestone has no usable sleep/rest window for alignment yet."
         morningRead?.rawPpiGoodEpochCount != null -> {
             val reportContext = if (morningRead.sleepDataReady) {

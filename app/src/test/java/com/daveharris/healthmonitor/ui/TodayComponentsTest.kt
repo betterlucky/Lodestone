@@ -55,6 +55,23 @@ class TodayComponentsTest {
     }
 
     @Test
+    fun dataQualityStaysPartialWhenPpiCoverageIsThin() {
+        val summary = todayDataQualitySummary(
+            stage = TodayReadinessStage.INITIAL_PPI,
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_calibrated_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 8,
+                rawPpiCoverageHours = 2.5
+            )
+        )
+
+        assertEquals(TodayDataQualityState.PARTIAL, summary.state)
+        assertEquals(listOf("Ready local PPI coverage"), summary.missingInputs)
+    }
+
+    @Test
     fun dataQualityReadyWhenCoreInputsArePresent() {
         val summary = todayDataQualitySummary(
             stage = TodayReadinessStage.UPDATE_COMPLETE,

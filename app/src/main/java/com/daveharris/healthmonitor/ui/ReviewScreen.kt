@@ -225,5 +225,5 @@ private fun MorningReadSnapshot.signalContextLabel(): String =
             "Current signal ready; Loop report pending for comparison"
         hasEstablishedSleepWindow() -> "Current signal limited; thin PPI coverage"
         isInterim -> "Current signal limited; sleep window pending"
-        else -> "Current, sleep context pending"
+        else -> "Current signal pending; sleep context pending"
     }

@@ -171,7 +171,7 @@ fun DataScreen(
                     SupportText(todayStatus.hrvDetail)
                 } else {
                     DetailRow("Signal basis", morningReadBasisLabel(activeMorningRead, todayStatus))
-                    DetailRow("Window", nowState.activeAnalysisWindow.label)
+                    DetailRow("Window", activeMorningRead.analysisWindowLabel())
                     DetailRow("Usable windows", goodEpochs.toString())
                     DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
                     if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {
