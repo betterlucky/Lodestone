@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.TrafficLightStatus
@@ -196,6 +197,7 @@ private fun HistoryDayReportCard(
             }
             DetailRow("Morning signal", report.predictionLabel)
             DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
+            DetailRow("Functional context", report.functionalContextLabel)
             DetailRow("Robustness", report.robustnessLabel)
             DetailRow("Data completeness", report.dataCompletenessLabel)
             DetailRow("Window source", report.windowProvenanceLabel)
@@ -230,6 +232,7 @@ private fun HistoryDayDetailCard(
     SectionCard(title = report.sourceDate, subtitle = report.predictionOutcomeLabel) {
         DetailRow("Morning signal", report.predictionLabel)
         DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
+        DetailRow("Functional context", report.functionalContextLabel)
         DetailRow("Analysis window", report.windowProvenanceLabel)
         DetailRow("Robustness", report.robustnessLabel)
         DetailRow("Sleep bucket", report.sleepBucketLabel)
@@ -257,6 +260,7 @@ data class HistoryDayReport(
     val outcomeStatus: TrafficLightStatus?,
     val outcomeLabel: String?,
     val predictionOutcomeLabel: String,
+    val functionalContextLabel: String,
     val robustnessLabel: String,
     val dataCompletenessLabel: String,
     val windowProvenanceLabel: String,
@@ -304,6 +308,7 @@ fun buildHistoryDayReports(
             outcomeStatus = outcomeStatus,
             outcomeLabel = outcomeStatus?.let { labelForStatus(it.name) },
             predictionOutcomeLabel = predictionOutcomeLabel(predictionStatus, outcomeStatus),
+            functionalContextLabel = functionalContextLabel(checkIn),
             robustnessLabel = robustnessLabel(prediction),
             dataCompletenessLabel = dataCompletenessLabel(prediction, checkIn, food, weight),
             windowProvenanceLabel = historyWindowSourceLabel(prediction),
@@ -322,12 +327,32 @@ private fun predictionOutcomeLabel(
     outcome: TrafficLightStatus?
 ): String =
     when {
-        prediction == null && outcome == null -> "No paired morning signal/outcome yet"
-        prediction == null -> "Outcome saved without a morning signal"
-        outcome == null -> "Morning signal waiting for journal outcome"
-        prediction == outcome -> "Morning signal and outcome matched"
-        else -> "Morning signal and outcome differed"
+        prediction == null && outcome == null -> "No paired autonomic/functional evidence yet"
+        prediction == null -> "Functional outcome saved without an autonomic signal"
+        outcome == null -> "Autonomic signal waiting for functional outcome"
+        prediction == outcome -> "Autonomic signal and functional outcome aligned"
+        outcome.severityRank() > prediction.severityRank() -> "Autonomic signal looked steadier than functional outcome"
+        prediction.severityRank() > outcome.severityRank() -> "Autonomic signal looked more cautious than functional outcome"
+        else -> "Autonomic and functional lanes differed"
     }
+
+private fun functionalContextLabel(checkIn: DailyCheckInEntity?): String {
+    if (checkIn == null) return "No functional outcome"
+    val outcome = checkIn.eveningOutcome.toTrafficLightStatusOrNull()
+    val parts = buildList {
+        add("Outcome: ${outcome?.let { labelForStatus(it.name) } ?: checkIn.eveningOutcome}")
+        if (checkIn.dayShapeCaptured == true) {
+            val anchors = checkIn.functionalAnchors()
+            add(if (anchors.isEmpty()) "no day-shape anchors selected" else anchors.joinToString(", "))
+        } else {
+            add("day shape unknown")
+        }
+        checkIn.manualGripStrengthKg?.let { grip ->
+            add(String.format(java.util.Locale.UK, "grip %.1f kg", grip))
+        }
+    }
+    return parts.joinToString(" · ")
+}
 
 private fun robustnessLabel(prediction: MorningPredictionSnapshotEntity?): String {
     if (prediction == null) return "No morning signal evidence"
@@ -362,6 +387,7 @@ private fun dataCompletenessLabel(
         if (prediction?.sleepDataReady == true) add("sleep")
         if ((prediction?.rawPpiGoodEpochCount ?: 0) > 0) add("PPI")
         if (checkIn != null) add("journal")
+        if (checkIn?.dayShapeCaptured == true) add("day shape")
         if (food != null) add("food")
         if (weight != null) add("weight")
     }
@@ -406,3 +432,30 @@ private fun stabilityTransitionLabel(previousStatus: String?, currentStatus: Str
 
 private fun String.toTrafficLightStatusOrNull(): TrafficLightStatus? =
     runCatching { TrafficLightStatus.valueOf(this) }.getOrNull()
+
+private fun DailyCheckInEntity.functionalAnchors(): List<String> =
+    buildList {
+        if (mostlyHorizontal == true) add("Mostly horizontal")
+        if (leftHouse == true) add("Left the house")
+        if (majorTask == true) add(majorTaskType.historyMajorTaskTypeLabel() ?: "Work / major task")
+        if (pemPaybackToday == true) add("PEM / payback")
+        if (paybackPeakToday == true) add("Payback peak")
+        if (muscleWeaknessToday) add("Muscle weakness")
+    }
+
+private fun String?.historyMajorTaskTypeLabel(): String? =
+    when (this) {
+        JournalMajorTaskTypes.WORK_FROM_HOME -> "Work from home"
+        JournalMajorTaskTypes.SITE_VISIT -> "Site visit"
+        JournalMajorTaskTypes.ADMIN_ASSESSMENT -> "Admin / assessment"
+        JournalMajorTaskTypes.OTHER_MAJOR_TASK -> "Other major task"
+        else -> null
+    }
+
+private fun TrafficLightStatus.severityRank(): Int =
+    when (this) {
+        TrafficLightStatus.GOOD -> 0
+        TrafficLightStatus.OK -> 1
+        TrafficLightStatus.UNSTEADY -> 2
+        TrafficLightStatus.CRASH -> 3
+    }

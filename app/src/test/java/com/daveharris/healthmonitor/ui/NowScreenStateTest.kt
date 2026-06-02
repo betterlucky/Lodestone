@@ -47,7 +47,7 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.PROVISIONAL_READ, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Provisional read:"))
+        assertTrue(state.currentState.label.startsWith("Provisional planning state:"))
         assertTrue(state.currentState.message.contains("remains provisional"))
         assertEquals(NowDataAvailability.PARTIAL, state.currentState.availability)
         assertEquals(NowDataAvailability.PENDING, state.signalRobustness.sleepReport.availability)
@@ -70,7 +70,7 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Current signal:"))
+        assertTrue(state.currentState.label.startsWith("Planning state:"))
         assertEquals("Final Loop sleep context", state.currentState.qualifier)
         assertTrue(state.currentState.message.contains("pacing context"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
@@ -78,6 +78,37 @@ class NowScreenStateTest {
         assertEquals("Stable", state.stateStability.label)
         assertEquals(NowAnalysisWindowSourceType.LOOP_REPORT, state.activeAnalysisWindow.sourceType)
         assertEquals("Loop sleep report window", state.activeAnalysisWindow.label)
+    }
+
+    @Test
+    fun recentLowerFunctionJournalContextMakesPlanningStateMoreCautiousThanAutonomicSignal() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 64.0,
+                status = TrafficLightStatus.GOOD
+            ),
+            dailyCheckIns = listOf(
+                checkIn(
+                    sourceDate = "2026-05-30",
+                    outcome = TrafficLightStatus.UNSTEADY,
+                    mostlyHorizontal = true,
+                    pemPaybackToday = true
+                )
+            )
+        )
+
+        assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
+        assertEquals(TrafficLightStatus.UNSTEADY, state.functionalContext.status)
+        assertEquals(TrafficLightStatus.UNSTEADY, state.currentState.status)
+        assertEquals("Mixed autonomic/function evidence", state.currentState.qualifier)
+        assertTrue(state.currentState.message.contains("Autonomic signal looks steady"))
+        assertTrue(state.currentState.message.contains("not proof you are recovered"))
+        assertTrue(state.functionalContext.detail.contains("lower-function spell"))
+        assertTrue(state.readinessStatus.message.contains("lower-function spell"))
     }
 
     @Test
@@ -322,11 +353,12 @@ class NowScreenStateTest {
         rawPpiGoodEpochCount: Int?,
         rawPpiCoverageHours: Double?,
         isInterim: Boolean = false,
-        nightlyRmssd: Double? = null
+        nightlyRmssd: Double? = null,
+        status: TrafficLightStatus = TrafficLightStatus.OK
     ): MorningReadSnapshot =
         MorningReadSnapshot(
             sourceDate = "2026-05-31",
-            status = TrafficLightStatus.OK,
+            status = status,
             confidence = "medium",
             overnightAutonomicSource = source,
             sleepDurationMinutes = if (sleepDataReady) 420 else null,
@@ -340,6 +372,31 @@ class NowScreenStateTest {
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,
             rawPpiPoorEpochCount = 0,
             rawPpiCoverageHours = rawPpiCoverageHours
+        )
+
+    private fun checkIn(
+        sourceDate: String,
+        outcome: TrafficLightStatus,
+        mostlyHorizontal: Boolean = false,
+        pemPaybackToday: Boolean = false
+    ): DailyCheckInEntity =
+        DailyCheckInEntity(
+            sourceDate = sourceDate,
+            eveningOutcome = outcome.name,
+            approachToDay = null,
+            muscleWeaknessToday = false,
+            notes = null,
+            createdAtEpochMs = 1L,
+            updatedAtEpochMs = 2L,
+            dayShapeCaptured = true,
+            mostlyHorizontal = mostlyHorizontal,
+            leftHouse = false,
+            majorTask = false,
+            majorTaskType = null,
+            pemPaybackToday = pemPaybackToday,
+            paybackPeakToday = false,
+            paybackPeakConfidence = null,
+            manualGripStrengthKg = null
         )
 
     private fun marker(

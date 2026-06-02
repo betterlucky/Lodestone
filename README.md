@@ -127,7 +127,8 @@ Install on a connected device:
 ```
 
 The repository currently includes the Polar BLE SDK AAR used by the app in
-`app/libs/`.
+`app/libs/`. That SDK is owned and licensed separately by Polar Electro Oy; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Project Status
 
@@ -167,10 +168,12 @@ decision support for reflection and pacing rather than clinical advice.
 
 ## License
 
-Lodestone is source available under the
-[PolyForm Noncommercial License 1.0.0](LICENSE.md). You may use, modify, and
-redistribute it for noncommercial purposes; commercial use requires separate
-permission.
+Lodestone's own source code, documentation, and scripts are licensed under
+[GPL-3.0-or-later with an additional Polar BLE SDK linking exception](LICENSE.md).
+
+The linking exception permits Lodestone to be combined with the Polar BLE SDK,
+which has its own separate license. It does not relicense Polar's SDK or remove
+the need to comply with Polar's terms and notices.
 
 ## Repository Map
 

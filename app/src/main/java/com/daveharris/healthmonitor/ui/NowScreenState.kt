@@ -12,7 +12,9 @@ import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
+import java.time.temporal.ChronoUnit
 
 enum class NowDataAvailability(val label: String) {
     PRESENT("Present"),
@@ -77,6 +79,13 @@ data class NowCurrentState(
     val label: String,
     val qualifier: String,
     val message: String
+)
+
+data class NowFunctionalContext(
+    val availability: NowDataAvailability,
+    val status: TrafficLightStatus?,
+    val label: String,
+    val detail: String
 )
 
 data class NowSignalRobustness(
@@ -146,6 +155,7 @@ data class NowScreenState(
     val activeMorningRead: MorningReadSnapshot?,
     val activeAnalysisWindow: NowAnalysisWindowProvenance,
     val currentState: NowCurrentState,
+    val functionalContext: NowFunctionalContext,
     val signalRobustness: NowSignalRobustness,
     val stateStability: NowStateStability,
     val freshness: NowFreshness,
@@ -211,6 +221,10 @@ fun buildNowScreenState(
         noMainSleep = noMainSleep,
         syncRunning = syncRunning
     )
+    val functionalContext = buildFunctionalContext(
+        today = today,
+        dailyCheckIns = dailyCheckIns
+    )
     val stateStability = buildStateStability(relevantMorningRead, noMainSleep)
     val currentState = buildCurrentState(
         morningRead = relevantMorningRead,
@@ -218,7 +232,8 @@ fun buildNowScreenState(
         syncRunning = syncRunning,
         markerStatus = markerStatus,
         hasFinalSleep = hasFinalSleep,
-        hasPpi = hasPpi
+        hasPpi = hasPpi,
+        functionalContext = functionalContext
     )
     val primaryActions = buildPrimaryActions(
         markerMode = markerMode,
@@ -245,6 +260,7 @@ fun buildNowScreenState(
         activeMorningRead = activeMorningRead,
         activeAnalysisWindow = activeAnalysisWindow,
         currentState = currentState,
+        functionalContext = functionalContext,
         signalRobustness = signalRobustness,
         stateStability = stateStability,
         freshness = freshness,
@@ -261,7 +277,8 @@ private fun buildCurrentState(
     syncRunning: Boolean,
     markerStatus: NowMarkerStatus,
     hasFinalSleep: Boolean,
-    hasPpi: Boolean
+    hasPpi: Boolean,
+    functionalContext: NowFunctionalContext
 ): NowCurrentState =
     when {
         noMainSleep -> NowCurrentState(
@@ -288,26 +305,8 @@ private fun buildCurrentState(
             qualifier = "Sync in progress",
             message = "Lodestone is connecting and pulling the current core data."
         )
-        hasFinalSleep -> NowCurrentState(
-            kind = NowCurrentStateKind.READY,
-            availability = NowDataAvailability.PRESENT,
-            status = morningRead?.status,
-            label = "Current signal: ${morningRead?.status.readinessLabel()}",
-            qualifier = "Final Loop sleep context",
-            message = "The current read includes final Loop sleep context. Use it as pacing context, not a verdict."
-        )
-        hasPpi -> NowCurrentState(
-            kind = NowCurrentStateKind.PROVISIONAL_READ,
-            availability = NowDataAvailability.PARTIAL,
-            status = morningRead?.status,
-            label = "Provisional read: ${morningRead?.status.readinessLabel()}",
-            qualifier = "PPI received",
-            message = if (morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW) {
-                "PPI is available, but Lodestone does not yet have a usable sleep window for a current read."
-            } else {
-                "PPI is available before the final Loop sleep report, so this current signal remains provisional."
-            }
-        )
+        hasFinalSleep -> readyCurrentState(morningRead, functionalContext)
+        hasPpi -> provisionalCurrentState(morningRead, functionalContext)
         else -> NowCurrentState(
             kind = NowCurrentStateKind.WAITING_FOR_DATA,
             availability = NowDataAvailability.MISSING,
@@ -317,6 +316,164 @@ private fun buildCurrentState(
             message = "Tap Check in to sync current data. Missing or stale markers do not block this."
         )
     }
+
+private fun readyCurrentState(
+    morningRead: MorningReadSnapshot?,
+    functionalContext: NowFunctionalContext
+): NowCurrentState {
+    val planningStatus = planningStatus(morningRead?.status, functionalContext.status)
+    return NowCurrentState(
+        kind = NowCurrentStateKind.READY,
+        availability = NowDataAvailability.PRESENT,
+        status = planningStatus,
+        label = "Planning state: ${planningStatus.readinessLabel()}",
+        qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
+            "Mixed autonomic/function evidence"
+        } else {
+            "Final Loop sleep context"
+        },
+        message = currentStateMessage(
+            autonomicStatus = morningRead?.status,
+            functionalContext = functionalContext,
+            defaultMessage = "The current read includes final Loop sleep context. Use it as pacing context, not a verdict."
+        )
+    )
+}
+
+private fun provisionalCurrentState(
+    morningRead: MorningReadSnapshot?,
+    functionalContext: NowFunctionalContext
+): NowCurrentState {
+    val planningStatus = planningStatus(morningRead?.status, functionalContext.status)
+    val source = morningRead?.morningReadSource()
+    val defaultMessage = if (source == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW) {
+        "PPI is available, but Lodestone does not yet have a usable sleep window for a current read."
+    } else {
+        "PPI is available before the final Loop sleep report, so this current signal remains provisional."
+    }
+    return NowCurrentState(
+        kind = NowCurrentStateKind.PROVISIONAL_READ,
+        availability = NowDataAvailability.PARTIAL,
+        status = planningStatus,
+        label = "Provisional planning state: ${planningStatus.readinessLabel()}",
+        qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
+            "Mixed autonomic/function evidence"
+        } else {
+            "PPI received"
+        },
+        message = currentStateMessage(
+            autonomicStatus = morningRead?.status,
+            functionalContext = functionalContext,
+            defaultMessage = defaultMessage
+        )
+    )
+}
+
+private fun currentStateMessage(
+    autonomicStatus: TrafficLightStatus?,
+    functionalContext: NowFunctionalContext,
+    defaultMessage: String
+): String =
+    if (functionalContext.disagreesWithAutonomic(autonomicStatus)) {
+        "Autonomic signal looks steady, but recent outcomes suggest a lower-function spell. Use this as pacing context, not proof you are recovered."
+    } else {
+        defaultMessage
+    }
+
+private fun buildFunctionalContext(
+    today: String,
+    dailyCheckIns: List<DailyCheckInEntity>
+): NowFunctionalContext {
+    val todayDate = runCatching { LocalDate.parse(today) }.getOrNull()
+        ?: return noFunctionalContext("Cannot compare Journal rows with this date.")
+    val datedRows = dailyCheckIns.mapNotNull { row ->
+        runCatching { LocalDate.parse(row.sourceDate) }.getOrNull()?.let { date -> date to row }
+    }
+        .filter { (date, _) -> !date.isAfter(todayDate) }
+        .sortedByDescending { (date, _) -> date }
+    if (datedRows.isEmpty()) {
+        return noFunctionalContext("No Journal outcome has been saved yet.")
+    }
+
+    val recentRows = datedRows.filter { (date, _) -> ChronoUnit.DAYS.between(date, todayDate) <= 5 }
+    if (recentRows.isEmpty()) {
+        val latestDate = datedRows.first().first
+        val ageDays = ChronoUnit.DAYS.between(latestDate, todayDate)
+        return NowFunctionalContext(
+            availability = NowDataAvailability.STALE,
+            status = null,
+            label = "No recent Journal context",
+            detail = "Latest Journal outcome is ${ageDays}d old."
+        )
+    }
+
+    val statuses = recentRows.mapNotNull { (_, row) -> row.functionalStatus() }
+    val status = statuses.maxByOrNull { it.severityRank() }
+    val latest = recentRows.first().second
+    val lowerFunction = status != null && status.severityRank() >= TrafficLightStatus.UNSTEADY.severityRank()
+    val anchors = recentRows.flatMap { (_, row) -> row.functionalAnchors() }.distinct()
+    val rowCount = recentRows.size
+    val detailParts = buildList {
+        add("$rowCount Journal outcome${if (rowCount == 1) "" else "s"} in the last 5 days")
+        latest.functionalStatus()?.let { add("latest ${labelForStatus(it.name)} on ${latest.sourceDate}") }
+        if (anchors.isNotEmpty()) add(anchors.joinToString(", "))
+        if (recentRows.any { (_, row) -> row.dayShapeCaptured != true }) add("some day-shape unknown")
+    }
+    return NowFunctionalContext(
+        availability = NowDataAvailability.PRESENT,
+        status = status,
+        label = if (status == null) {
+            "Recent function unknown"
+        } else {
+            "Recent function: ${labelForStatus(status.name)}"
+        },
+        detail = if (lowerFunction) {
+            "Recent outcomes suggest a lower-function spell: ${detailParts.joinToString("; ")}."
+        } else {
+            "Recent functional context: ${detailParts.joinToString("; ")}."
+        }
+    )
+}
+
+private fun noFunctionalContext(detail: String): NowFunctionalContext =
+    NowFunctionalContext(
+        availability = NowDataAvailability.MISSING,
+        status = null,
+        label = "Functional context unknown",
+        detail = detail
+    )
+
+private fun DailyCheckInEntity.functionalStatus(): TrafficLightStatus? {
+    val outcomeStatus = runCatching { TrafficLightStatus.valueOf(eveningOutcome) }.getOrNull()
+    val anchorStatus = if (dayShapeCaptured == true && (
+        mostlyHorizontal == true ||
+            pemPaybackToday == true ||
+            paybackPeakToday == true ||
+            muscleWeaknessToday
+        )
+    ) {
+        TrafficLightStatus.UNSTEADY
+    } else {
+        null
+    }
+    return planningStatus(outcomeStatus, anchorStatus)
+}
+
+private fun DailyCheckInEntity.functionalAnchors(): List<String> {
+    if (dayShapeCaptured != true) return emptyList()
+    return buildList {
+        if (mostlyHorizontal == true) add("mostly horizontal")
+        if (pemPaybackToday == true) add("PEM/payback")
+        if (paybackPeakToday == true) add("payback peak")
+        if (muscleWeaknessToday) add("muscle weakness")
+    }
+}
+
+private fun NowFunctionalContext.disagreesWithAutonomic(autonomicStatus: TrafficLightStatus?): Boolean =
+    autonomicStatus != null &&
+        status != null &&
+        autonomicStatus.severityRank() <= TrafficLightStatus.OK.severityRank() &&
+        status.severityRank() >= TrafficLightStatus.UNSTEADY.severityRank()
 
 private fun buildSignalRobustness(
     morningRead: MorningReadSnapshot?,
@@ -787,6 +944,20 @@ private fun MorningReadSnapshot?.hasEstablishedSleepWindow(): Boolean =
 
 private fun TrafficLightStatus?.readinessLabel(): String =
     this?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "TBC"
+
+private fun planningStatus(
+    autonomicStatus: TrafficLightStatus?,
+    functionalStatus: TrafficLightStatus?
+): TrafficLightStatus? =
+    listOfNotNull(autonomicStatus, functionalStatus).maxByOrNull { it.severityRank() }
+
+private fun TrafficLightStatus.severityRank(): Int =
+    when (this) {
+        TrafficLightStatus.GOOD -> 0
+        TrafficLightStatus.OK -> 1
+        TrafficLightStatus.UNSTEADY -> 2
+        TrafficLightStatus.CRASH -> 3
+    }
 
 private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean): String =
     when {
