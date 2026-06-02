@@ -101,7 +101,7 @@ class HistoryScreenTest {
     }
 
     @Test
-    fun reportsWhetherWindowSourceWasProvisionalOrFinal() {
+    fun reportsWhetherWindowSourceHasLoopReportContext() {
         val reports = buildHistoryDayReports(
             predictions = listOf(
                 prediction(
@@ -118,7 +118,7 @@ class HistoryScreenTest {
         )
 
         assertEquals(
-            "raw ppi manual window pending sleep report (provisional)",
+            "raw ppi manual window pending sleep report (Loop report pending for comparison)",
             reports.single().windowProvenanceLabel
         )
     }

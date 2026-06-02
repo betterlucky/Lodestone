@@ -209,7 +209,7 @@ private fun JournalContextCard(
             return@SectionCard
         }
         DetailRow("Morning signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
-        DetailRow("Signal state", morningRead.provisionalFinalLabel())
+        DetailRow("Signal state", morningRead.signalContextLabel())
         DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
         DetailRow("Source", morningRead.overnightAutonomicSource.replace('_', ' '))
         morningRead.reasons.firstOrNull()?.let { reason ->
@@ -218,9 +218,12 @@ private fun JournalContextCard(
     }
 }
 
-private fun MorningReadSnapshot.provisionalFinalLabel(): String =
+private fun MorningReadSnapshot.signalContextLabel(): String =
     when {
-        sleepDataReady -> "Final Loop sleep context present"
-        isInterim -> "Provisional, awaiting final Loop sleep context"
-        else -> "Current, sleep context pending"
+        sleepDataReady -> "Loop sleep report attached"
+        hasEstablishedSleepWindow() && hasSufficientReadyPpiCoverage() ->
+            "Current signal ready; Loop report pending for comparison"
+        hasEstablishedSleepWindow() -> "Current signal limited; thin PPI coverage"
+        isInterim -> "Current signal limited; sleep window pending"
+        else -> "Current signal pending; sleep context pending"
     }

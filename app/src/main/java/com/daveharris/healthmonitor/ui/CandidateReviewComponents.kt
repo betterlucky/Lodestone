@@ -5,6 +5,7 @@ package com.daveharris.healthmonitor.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.data.WakeMarkerSources
@@ -63,19 +65,29 @@ fun CandidateReviewSection(
         title = "Sleep/window evidence",
         subtitle = if (state.hasCatchUpDates) "Repair missing days from oldest to newest" else "Evidence and overrides for this read"
     ) {
-        DetailRow("Active date", state.activeDate)
+        val activeGroup = state.activeDateGroup
         activeAnalysisWindow?.let { window ->
-            DetailRow("Active window", window.label)
-            DetailRow("Window reason", window.reason)
+            SleepWindowActiveSummary(window = window, onOpenEvidence = { showDialog = true })
         }
-        DetailRow("Suggested", state.totalCandidateCount.toString())
-        DetailRow("Confirmed", state.totalConfirmedCount.toString())
+        val compactItems = activeGroup?.items.orEmpty().filter { it.isCandidate }
+        DetailRow("Candidates", activeGroup.compactCountLabel())
+        compactItems.take(4).forEach { item ->
+            CompactCandidateRow(
+                item = item,
+                isActive = activeAnalysisWindow?.matches(item) == true,
+                onOpenEvidence = { showDialog = true }
+            )
+        }
+        val hiddenWindowCount = compactItems.size - 4
+        if (hiddenWindowCount > 0) {
+            SupportText("$hiddenWindowCount more windows in evidence.")
+        }
         if (state.hasCatchUpDates) {
             DetailRow("Review dates", state.dateGroups.size.toString())
             DetailRow("Needs attention", state.attentionDateCount.toString())
         }
-        SupportText(state.surfaceMessage)
-        if (!state.hasAnyRows) {
+        if (activeGroup?.isEmpty != false) {
+            SupportText(state.surfaceMessage)
             SupportText("Check in again after the Loop has more data, add your own window, keep the day as TBC, or wait for the final Loop report.")
         }
         ButtonRow {
@@ -150,6 +162,107 @@ fun CandidateReviewSection(
         )
     }
 }
+
+@Composable
+private fun SleepWindowActiveSummary(
+    window: NowAnalysisWindowProvenance,
+    onOpenEvidence: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), RoundedCornerShape(18.dp))
+            .clickable(onClick = onOpenEvidence)
+            .padding(12.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Text("Active window", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                LabelChip(if (window.selectedByUser) "Selected" else "Current signal")
+            }
+            Text(
+                window.label,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            ButtonRow {
+                LabelChip(window.timeRangeLabel)
+                LabelChip(window.durationLabel)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompactCandidateRow(
+    item: SleepEpisodeDisplayItem,
+    isActive: Boolean,
+    onOpenEvidence: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = if (isActive) 0.72f else 0.42f))
+            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.16f), RoundedCornerShape(14.dp))
+            .clickable(onClick = onOpenEvidence)
+            .padding(12.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                LabelChip(if (isActive) "Active" else item.rowStateLabel)
+            }
+            Text(
+                "${item.timeRangeLabel} · ${item.durationLabel}",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            ButtonRow {
+                LabelChip(item.sourceLabel)
+                LabelChip(item.kindLabel)
+            }
+        }
+    }
+}
+
+private fun SleepEpisodeDateGroup?.compactCountLabel(): String =
+    buildString {
+        append(this@compactCountLabel?.candidateCount ?: 0)
+        append(" suggested")
+        append(" · ")
+        append(this@compactCountLabel?.confirmedCount ?: 0)
+        append(" saved")
+        this@compactCountLabel?.items?.count { it.isLoopReport }?.takeIf { it > 0 }?.let {
+            append(" · ")
+            append(it)
+            append(" Loop")
+        }
+    }
+
+private fun NowAnalysisWindowProvenance.matches(item: SleepEpisodeDisplayItem): Boolean =
+    sourceDate == item.sourceDate &&
+        startEpochMs == item.startEpochMs &&
+        endEpochMs == item.endEpochMs
 
 @Composable
 private fun CandidateReviewDialog(

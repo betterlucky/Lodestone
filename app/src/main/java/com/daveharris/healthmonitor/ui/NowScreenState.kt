@@ -29,7 +29,8 @@ enum class NowCurrentStateKind {
     WAITING_FOR_DATA,
     SYNCING,
     SLEEP_MARKED,
-    PROVISIONAL_READ,
+    NEEDS_WINDOW,
+    LOW_CONFIDENCE_READ,
     READY,
     NO_MAIN_SLEEP
 }
@@ -305,8 +306,10 @@ private fun buildCurrentState(
             qualifier = "Sync in progress",
             message = "Lodestone is connecting and pulling the current core data."
         )
-        hasFinalSleep -> readyCurrentState(morningRead, functionalContext)
-        hasPpi -> provisionalCurrentState(morningRead, functionalContext)
+        hasFinalSleep -> readyCurrentState(morningRead, functionalContext, hasFinalSleep = true)
+        hasPpi && !morningRead.hasEstablishedSleepWindow() -> needsWindowCurrentState(morningRead, functionalContext)
+        hasPpi && !morningRead.hasSufficientReadyPpiCoverage() -> lowConfidenceCurrentState(morningRead, functionalContext)
+        hasPpi -> readyCurrentState(morningRead, functionalContext, hasFinalSleep = false)
         else -> NowCurrentState(
             kind = NowCurrentStateKind.WAITING_FOR_DATA,
             availability = NowDataAvailability.MISSING,
@@ -319,9 +322,15 @@ private fun buildCurrentState(
 
 private fun readyCurrentState(
     morningRead: MorningReadSnapshot?,
-    functionalContext: NowFunctionalContext
+    functionalContext: NowFunctionalContext,
+    hasFinalSleep: Boolean
 ): NowCurrentState {
     val planningStatus = planningStatus(morningRead?.status, functionalContext.status)
+    val finalSleepMessage = if (morningRead.hasPpiSignal()) {
+        "PPI is aligned to the resolved Loop sleep context. Use it as pacing context, not a verdict."
+    } else {
+        "Loop sleep context is attached. Use it as pacing context, not a verdict."
+    }
     return NowCurrentState(
         kind = NowCurrentStateKind.READY,
         availability = NowDataAvailability.PRESENT,
@@ -329,33 +338,33 @@ private fun readyCurrentState(
         label = "Planning state: ${planningStatus.readinessLabel()}",
         qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
             "Mixed autonomic/function evidence"
+        } else if (hasFinalSleep) {
+            "Loop sleep report attached"
         } else {
-            "Final Loop sleep context"
+            "PPI/window signal ready"
         },
         message = currentStateMessage(
             autonomicStatus = morningRead?.status,
             functionalContext = functionalContext,
-            defaultMessage = "The current read includes final Loop sleep context. Use it as pacing context, not a verdict."
+            defaultMessage = if (hasFinalSleep) {
+                finalSleepMessage
+            } else {
+                "PPI is aligned to a usable sleep/rest window. Loop sleep report is pending for comparison."
+            }
         )
     )
 }
 
-private fun provisionalCurrentState(
+private fun needsWindowCurrentState(
     morningRead: MorningReadSnapshot?,
     functionalContext: NowFunctionalContext
 ): NowCurrentState {
     val planningStatus = planningStatus(morningRead?.status, functionalContext.status)
-    val source = morningRead?.morningReadSource()
-    val defaultMessage = if (source == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW) {
-        "PPI is available, but Lodestone does not yet have a usable sleep window for a current read."
-    } else {
-        "PPI is available before the final Loop sleep report, so this current signal remains provisional."
-    }
     return NowCurrentState(
-        kind = NowCurrentStateKind.PROVISIONAL_READ,
+        kind = NowCurrentStateKind.NEEDS_WINDOW,
         availability = NowDataAvailability.PARTIAL,
         status = planningStatus,
-        label = "Provisional planning state: ${planningStatus.readinessLabel()}",
+        label = "Needs sleep/rest window",
         qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
             "Mixed autonomic/function evidence"
         } else {
@@ -364,7 +373,30 @@ private fun provisionalCurrentState(
         message = currentStateMessage(
             autonomicStatus = morningRead?.status,
             functionalContext = functionalContext,
-            defaultMessage = defaultMessage
+            defaultMessage = "PPI is available, but Lodestone needs a usable sleep/rest window before the current signal is ready."
+        )
+    )
+}
+
+private fun lowConfidenceCurrentState(
+    morningRead: MorningReadSnapshot?,
+    functionalContext: NowFunctionalContext
+): NowCurrentState {
+    val planningStatus = planningStatus(morningRead?.status, functionalContext.status)
+    return NowCurrentState(
+        kind = NowCurrentStateKind.LOW_CONFIDENCE_READ,
+        availability = NowDataAvailability.PARTIAL,
+        status = planningStatus,
+        label = "Limited planning state: ${planningStatus.readinessLabel()}",
+        qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
+            "Mixed autonomic/function evidence"
+        } else {
+            "Thin PPI/window evidence"
+        },
+        message = currentStateMessage(
+            autonomicStatus = morningRead?.status,
+            functionalContext = functionalContext,
+            defaultMessage = "PPI/window evidence is present, but coverage is thin. Treat this current signal as tentative context."
         )
     )
 }
@@ -484,9 +516,9 @@ private fun buildSignalRobustness(
 ): NowSignalRobustness {
     val sleepReport = when {
         noMainSleep -> NowDataPoint("Sleep report", NowDataAvailability.NOT_APPLICABLE, "No main sleep saved")
-        hasFinalSleep -> NowDataPoint("Sleep report", NowDataAvailability.PRESENT, "Final Loop sleep context present")
+        hasFinalSleep -> NowDataPoint("Sleep report", NowDataAvailability.PRESENT, "Loop sleep report attached")
         syncRunning -> NowDataPoint("Sleep report", NowDataAvailability.PENDING, "Checking Loop")
-        hasPpi -> NowDataPoint("Sleep report", NowDataAvailability.PENDING, "Awaiting final Loop report")
+        hasPpi -> NowDataPoint("Sleep report", NowDataAvailability.PARTIAL, "Loop sleep report pending for comparison")
         else -> NowDataPoint("Sleep report", NowDataAvailability.MISSING, "Not synced yet")
     }
     val ppi = when {
@@ -787,7 +819,7 @@ private fun buildTodayReadinessStatus(
     val stage = when {
         markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> TodayReadinessStage.SLEEP_TIME
         syncRunning -> TodayReadinessStage.STARTING_SYNC
-        hasFinalSleep || noMainSleep -> TodayReadinessStage.UPDATE_COMPLETE
+        hasFinalSleep || noMainSleep || currentState.kind == NowCurrentStateKind.READY -> TodayReadinessStage.UPDATE_COMPLETE
         hasPpi -> TodayReadinessStage.INITIAL_PPI
         else -> TodayReadinessStage.NOT_STARTED
     }
@@ -803,7 +835,8 @@ private fun buildTodayReadinessStatus(
             stage = stage,
             morningRead = morningRead,
             hasFinalSleep = hasFinalSleep,
-            hasPpi = hasPpi
+            hasPpi = hasPpi,
+            hasUsableWindow = noMainSleep || morningRead.hasEstablishedSleepWindow()
         )
     }
     return TodayReadinessStatus(
@@ -837,16 +870,23 @@ private fun hrvDetailForState(
 ): String =
     when {
         noMainSleep -> "No main sleep is saved, so overnight HRV alignment is not applicable for this date."
-        morningRead?.rawPpiGoodEpochCount != null -> "Raw PPI is aligned to ${analysisWindow.label}; use the signal as pacing context."
+        morningRead.hasPpiSignal() && !morningRead.hasEstablishedSleepWindow() ->
+            "PPI is available, but Lodestone has no usable sleep/rest window for alignment yet."
+        morningRead?.rawPpiGoodEpochCount != null -> {
+            val reportContext = if (morningRead.sleepDataReady) {
+                ""
+            } else {
+                " Loop sleep report is pending for comparison."
+            }
+            "Raw PPI is aligned to ${analysisWindow.label}; use the signal as pacing context.$reportContext"
+        }
         analysisWindow.sourceType == NowAnalysisWindowSourceType.PENDING -> analysisWindow.reason
         analysisWindow.sourceType == NowAnalysisWindowSourceType.UNKNOWN ->
             "The active analysis source is unclassified; review provenance before relying on HRV detail."
         analysisWindow.sourceType == NowAnalysisWindowSourceType.MARKER_DERIVED ->
             "Marker-derived timing is selected; PPI detail will appear when enough aligned data is available."
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW ->
-            "PPI is available, but Lodestone has no usable sleep window for alignment yet."
         morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true ->
-            "The provisional morning signal is using ${analysisWindow.label} while final sleep context is pending."
+            "The current signal is using ${analysisWindow.label} while Loop sleep report is pending for comparison."
         else -> "PPI detail will appear after Lodestone syncs enough current Loop data."
     }
 
@@ -934,14 +974,6 @@ private fun SyncRunEntity.isReadinessSync(): Boolean =
 private fun List<SyncRunEntity>.latestReadinessSync(): SyncRunEntity? =
     filter { it.isReadinessSync() }.maxByOrNull { it.startedAtEpochMs }
 
-private fun MorningReadSnapshot?.hasPpiSignal(): Boolean =
-    this?.rawPpiGoodEpochCount != null ||
-        this?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
-
-private fun MorningReadSnapshot?.hasEstablishedSleepWindow(): Boolean =
-    this?.sleepDataReady == true ||
-        this?.morningReadSource()?.hasEstablishedSleepWindow == true
-
 private fun TrafficLightStatus?.readinessLabel(): String =
     this?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "TBC"
 
@@ -963,11 +995,11 @@ private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean):
     when {
         noMainSleep -> "No main sleep decision"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT ->
-            "Provisional calibrated sleep window + PPI"
+            "Calibrated sleep window + PPI, Loop report pending"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT ->
-            "Provisional manual sleep window + PPI"
+            "Manual sleep window + PPI, Loop report pending"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT ->
-            "Provisional PPI-inferred sleep window"
+            "PPI-inferred sleep window, Loop report pending"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Calibrated sleep window + PPI, Loop report as context"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
@@ -975,11 +1007,11 @@ private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean):
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "PPI-inferred sleep window, Loop report as context"
         morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
-            "PPI aligned to final Loop sleep context"
+            "PPI aligned to Loop sleep report"
         morningRead?.sleepDataReady == true ->
             "Loop sleep context only"
         morningRead?.isInterim == true ->
-            "Provisional current signal"
+            "Current signal, Loop report pending"
         else -> "Waiting for morning data"
     }
 
@@ -1073,7 +1105,7 @@ private fun ppiReceiptLabelForState(morningRead: MorningReadSnapshot?): String =
         "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
     }
     morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "Received, missing sleep window"
-    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, awaiting final sleep report"
+    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, Loop report pending"
     else -> "Not received yet"
 }
 

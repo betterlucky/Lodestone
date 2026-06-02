@@ -35,7 +35,7 @@ class NowScreenStateTest {
     }
 
     @Test
-    fun partialPpiSeparatesProvisionalCurrentStateFromMissingFinalReport() {
+    fun readyPpiWindowDoesNotWaitForFinalLoopReport() {
         val state = nowState(
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -46,15 +46,59 @@ class NowScreenStateTest {
             )
         )
 
-        assertEquals(NowCurrentStateKind.PROVISIONAL_READ, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Provisional planning state:"))
-        assertTrue(state.currentState.message.contains("remains provisional"))
-        assertEquals(NowDataAvailability.PARTIAL, state.currentState.availability)
-        assertEquals(NowDataAvailability.PENDING, state.signalRobustness.sleepReport.availability)
+        assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
+        assertTrue(state.currentState.label.startsWith("Planning state:"))
+        assertEquals("PPI/window signal ready", state.currentState.qualifier)
+        assertTrue(state.currentState.message.contains("pending for comparison"))
+        assertEquals(NowDataAvailability.PRESENT, state.currentState.availability)
+        assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
+        assertEquals("Loop sleep report pending for comparison", state.signalRobustness.sleepReport.detail)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.ppi.availability)
         assertEquals(NowAnalysisWindowSourceType.MODEL_ESTIMATE, state.activeAnalysisWindow.sourceType)
         assertEquals("calibrated sleep window", state.activeAnalysisWindow.label)
         assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
+        assertTrue(state.readinessStatus.dataQuality.missingInputs.isEmpty())
+        assertTrue("Loop sleep report comparison" in state.readinessStatus.dataQuality.supportingGaps)
+    }
+
+    @Test
+    fun ppiWithoutUsableWindowNeedsWindowInsteadOfWaitingForFinalReport() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_pending_manual_sleep_window",
+                rawPpiGoodEpochCount = 28,
+                rawPpiCoverageHours = 4.0
+            )
+        )
+
+        assertEquals(NowCurrentStateKind.NEEDS_WINDOW, state.currentState.kind)
+        assertEquals("Needs sleep/rest window", state.currentState.label)
+        assertTrue(state.currentState.message.contains("usable sleep/rest window"))
+        assertEquals(NowAnalysisWindowSourceType.PENDING, state.activeAnalysisWindow.sourceType)
+        assertTrue("Sleep/rest window" in state.readinessStatus.dataQuality.missingInputs)
+        assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
+    }
+
+    @Test
+    fun thinPpiCoverageKeepsCurrentStateLimited() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_calibrated_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 8,
+                rawPpiCoverageHours = 2.5
+            )
+        )
+
+        assertEquals(NowCurrentStateKind.LOW_CONFIDENCE_READ, state.currentState.kind)
+        assertTrue(state.currentState.label.startsWith("Limited planning state:"))
+        assertTrue(state.currentState.message.contains("coverage is thin"))
+        assertEquals("Thin PPI/window evidence", state.currentState.qualifier)
+        assertEquals("Brittle", state.stateStability.label)
+        assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
 
     @Test
@@ -71,7 +115,7 @@ class NowScreenStateTest {
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertTrue(state.currentState.label.startsWith("Planning state:"))
-        assertEquals("Final Loop sleep context", state.currentState.qualifier)
+        assertEquals("Loop sleep report attached", state.currentState.qualifier)
         assertTrue(state.currentState.message.contains("pacing context"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
@@ -175,7 +219,7 @@ class NowScreenStateTest {
     }
 
     @Test
-    fun provisionalWindowAlsoResolvesBedtimeMarker() {
+    fun localWindowAlsoResolvesBedtimeMarker() {
         val state = nowState(
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -188,7 +232,8 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowMarkerState.RESOLVED_BEDTIME, state.markerStatus.state)
-        assertEquals(NowCurrentStateKind.PROVISIONAL_READ, state.currentState.kind)
+        assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
+        assertTrue(state.currentState.message.contains("pending for comparison"))
         assertTrue(state.activeMorningRead != null)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
