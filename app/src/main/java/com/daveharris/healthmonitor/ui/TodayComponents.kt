@@ -290,10 +290,6 @@ fun TodayHeroCard(
     nowState: NowScreenState,
     onOpenSettings: () -> Unit
 ) {
-    val confidence = nowState.activeMorningRead?.confidence
-        ?.takeUnless { it.equals("pending", ignoreCase = true) }
-        ?.replaceFirstChar { it.titlecase() }
-
     Card(
         shape = RoundedCornerShape(30.dp),
         colors = CardDefaults.cardColors(containerColor = Color.Transparent)
@@ -343,18 +339,7 @@ fun TodayHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    HeroPill(nowState.currentState.qualifier)
-                    HeroPill("Signal: ${nowState.signalRobustness.label}")
-                    if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
-                        HeroPill(nowState.functionalContext.label)
-                    }
-                    HeroPill("Loop: ${nowState.deviceConnection.detail}")
-                    HeroPill("Source: ${nowState.activeAnalysisWindow.label}")
-                    confidence?.let { HeroPill("$it confidence") }
-                    if (nowState.stateStability.availability != NowDataAvailability.MISSING) {
-                        HeroPill("Stability: ${nowState.stateStability.label}")
-                    }
-                    nowState.readinessStatus.heroPrompt?.let { HeroPill(it) }
+                    heroPills(nowState).forEach { HeroPill(it) }
                 }
                 Text(
                     nowState.currentState.message,
@@ -365,6 +350,22 @@ fun TodayHeroCard(
         }
     }
 }
+
+private fun heroPills(nowState: NowScreenState): List<String> =
+    buildList {
+        add(nowState.currentState.qualifier)
+        add("Signal: ${nowState.signalRobustness.label}")
+        val needsDeviceContext = nowState.readinessStatus.connectionPrompt != null ||
+            nowState.deviceConnection.availability in setOf(
+                NowDataAvailability.MISSING,
+                NowDataAvailability.PENDING
+            )
+        if (needsDeviceContext) {
+            add(nowState.deviceConnection.detail)
+        } else {
+            nowState.readinessStatus.heroPrompt?.let { add(it) }
+        }
+    }.distinct().take(3)
 
 @Composable
 private fun HeroPill(label: String) {

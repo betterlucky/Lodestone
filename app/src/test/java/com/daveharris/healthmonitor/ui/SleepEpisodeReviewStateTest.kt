@@ -125,6 +125,50 @@ class SleepEpisodeReviewStateTest {
         assertTrue(state.dateGroups[2].needsAttention)
     }
 
+    @Test
+    fun overlappingManualLoopAndPpiWindowsKeepDistinctCompactStates() {
+        val manual = sleepEpisode(
+            id = 10,
+            startEpochMs = Instant.parse("2026-05-27T22:45:00Z").toEpochMilli(),
+            endEpochMs = Instant.parse("2026-05-28T06:20:00Z").toEpochMilli(),
+            episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+            source = SleepEpisodeSources.MANUAL,
+            confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+            isPrimaryForReadiness = true
+        )
+        val loop = sleepEpisode(
+            id = 11,
+            startEpochMs = Instant.parse("2026-05-27T23:10:00Z").toEpochMilli(),
+            endEpochMs = Instant.parse("2026-05-28T06:05:00Z").toEpochMilli(),
+            episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+            source = SleepEpisodeSources.POLAR_SLEEP,
+            confidence = SleepEpisodeConfidences.HIGH
+        )
+        val ppi = sleepEpisode(
+            id = 12,
+            startEpochMs = Instant.parse("2026-05-27T22:30:00Z").toEpochMilli(),
+            endEpochMs = Instant.parse("2026-05-28T06:00:00Z").toEpochMilli(),
+            episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+            source = SleepEpisodeSources.PPI_INFERRED,
+            confidence = SleepEpisodeConfidences.MEDIUM
+        )
+
+        val state = buildSleepEpisodeReviewState(
+            activeDate = "2026-05-28",
+            reviewDates = listOf("2026-05-28"),
+            episodes = listOf(loop, ppi, manual),
+            zoneId = utc
+        )
+
+        val items = state.activeDateGroup!!.items
+        assertEquals(listOf("Needs attention", "Selected", "Supporting"), items.map { it.rowStateLabel })
+        assertEquals(listOf("Suggested from PPI", "Manual", "Loop report"), items.map { it.sourceLabel })
+        assertEquals(listOf(false, false, true), items.map { it.isLoopReport })
+        assertTrue(state.activeDateGroup!!.hasPrimaryReadinessWindow)
+        assertEquals(1, state.totalCandidateCount)
+        assertEquals(1, state.totalConfirmedCount)
+    }
+
     private fun sleepEpisode(
         id: Long,
         sourceDate: String = "2026-05-28",

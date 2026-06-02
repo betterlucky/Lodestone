@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
-import com.daveharris.healthmonitor.data.TrafficLightStatus
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
@@ -100,45 +100,16 @@ fun DataScreen(
             )
         }
         item {
-            MorningSignalSection(nowState)
-        }
-        item {
-            SectionCard(title = "Data quality", subtitle = "Morning-read inputs") {
-                DetailRow("State", nowState.signalRobustness.label)
-                DetailRow("Basis", nowState.signalRobustness.basisLabel)
-                DetailRow("Sleep report", nowState.signalRobustness.sleepReport.detail)
-                DetailRow("PPI", nowState.signalRobustness.ppi.detail)
-                DetailRow("Baseline", nowState.signalRobustness.baseline.detail)
-                DetailRow("Nightly Recharge", nowState.signalRobustness.nightlyRecharge.detail)
-            }
-        }
-        item {
-            SectionCard(title = "Check in", subtitle = "Loop current-signal checklist") {
-                SupportText("Use Check in to sync and assess the current situation without marking wake time. Use the sleep/wake buttons only when you want to record those events.")
-                DetailRow("Status", nowState.currentState.label)
-                DetailRow("Robustness", nowState.signalRobustness.label)
-                DetailRow("Stability", nowState.stateStability.label)
-                DetailRow("Marker", nowState.markerStatus.label)
-                DetailRow("Last used", nowState.freshness.lastUsed.detail)
-                DetailRow("Loop sync", nowState.freshness.loopSync.detail)
-                DetailRow("Device", viewModel.selectedDeviceId ?: "None selected")
-                DetailRow(
-                    "Connection",
-                    runtime.connectedDevice?.name?.let { "Connected to $it" }
-                        ?: runtime.connectionPhase.replaceFirstChar { it.titlecase() }
-                )
-                ButtonRow {
-                    StatusBadge(
-                        label = morningConnectionBadgeLabel(runtime, todayStatus),
-                        status = morningConnectionBadgeStatus(runtime, todayStatus)
-                    )
-                }
-                DetailRow("Final Loop sleep context", todayStatus.sleepReport)
-                DetailRow("PPI data from Loop", todayStatus.ppiReceipt)
+            SectionCard(title = "Check in", subtitle = "Sync current data") {
                 SupportText(todayStatus.message)
                 todayStatus.catchUpPrompt?.let { SupportText(it) }
-                todayStatus.connectionPrompt?.let { SupportText(it) }
-                SupportText("PPI may arrive before the final Loop sleep report. Lodestone can show a provisional read from markers or inferred windows, then keep the vendor sleep report as context when it resolves.")
+                if (shouldShowLoopAttention(nowState, runtime, viewModel.isBusy)) {
+                    BannerNote(
+                        text = loopAttentionText(nowState),
+                        tint = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f),
+                        textColor = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
                 ButtonRow {
                     Button(
                         onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
@@ -172,6 +143,9 @@ fun DataScreen(
                     }
                 }
             }
+        }
+        item {
+            MorningSignalSection(nowState)
         }
         item {
             CandidateReviewSection(
@@ -211,38 +185,42 @@ fun DataScreen(
                     ) {
                         Text("View HRV trajectory")
                     }
-                    OutlinedButton(
-                        onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
-                        enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
-                    ) {
-                        Text("Check in")
-                    }
                 }
+            }
+        }
+        item {
+            SectionCard(title = "Data quality", subtitle = "Morning-read inputs") {
+                DetailRow("State", nowState.signalRobustness.label)
+                DetailRow("Basis", nowState.signalRobustness.basisLabel)
+                DetailRow("Sleep report", nowState.signalRobustness.sleepReport.detail)
+                DetailRow("PPI", nowState.signalRobustness.ppi.detail)
+                DetailRow("Baseline", nowState.signalRobustness.baseline.detail)
+                DetailRow("Nightly Recharge", nowState.signalRobustness.nightlyRecharge.detail)
             }
         }
     }
 }
 
-private fun morningConnectionBadgeLabel(
+private fun shouldShowLoopAttention(
+    nowState: NowScreenState,
     runtime: DeviceRuntimeState,
-    todayStatus: TodayReadinessStatus
-): String =
+    isBusy: Boolean
+): Boolean =
     when {
-        !runtime.bluetoothPowered -> "Bluetooth off"
-        runtime.connectionPhase == "connected" -> "Loop link solid"
-        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> "Recovering link"
-        runtime.connectionPhase == "connecting" -> "Connecting"
-        else -> "Loop not connected"
+        nowState.deviceConnection.availability == NowDataAvailability.MISSING -> true
+        nowState.deviceConnection.availability == NowDataAvailability.PENDING -> true
+        nowState.readinessStatus.connectionPrompt != null -> true
+        isBusy -> true
+        runtime.connectionPhase == "connecting" -> true
+        else -> false
     }
 
-private fun morningConnectionBadgeStatus(
-    runtime: DeviceRuntimeState,
-    todayStatus: TodayReadinessStatus
-): TrafficLightStatus? =
+private fun loopAttentionText(nowState: NowScreenState): String =
     when {
-        !runtime.bluetoothPowered -> TrafficLightStatus.CRASH
-        runtime.connectionPhase == "connected" -> TrafficLightStatus.GOOD
-        todayStatus.stage == TodayReadinessStage.STARTING_SYNC -> TrafficLightStatus.UNSTEADY
-        runtime.connectionPhase == "connecting" -> TrafficLightStatus.OK
-        else -> null
+        nowState.readinessStatus.connectionPrompt != null -> nowState.readinessStatus.connectionPrompt
+        nowState.deviceConnection.detail == "Bluetooth off" -> "Bluetooth is off. Turn it on before syncing with the Loop."
+        nowState.deviceConnection.detail == "No Loop selected" -> "No Loop selected. Choose a Loop in Settings before syncing."
+        nowState.deviceConnection.availability == NowDataAvailability.MISSING -> nowState.deviceConnection.detail
+        nowState.deviceConnection.availability == NowDataAvailability.PENDING -> "Connecting to Loop. Keep the phone and Loop close."
+        else -> "Keep the phone and Loop close until sync finishes."
     }

@@ -106,10 +106,12 @@ data class SleepEpisodeDisplayItem(
     val sourceLabel: String,
     val confidenceLabel: String,
     val primaryLabel: String?,
+    val rowStateLabel: String,
     val evidenceSummary: String,
     val isCandidate: Boolean,
     val isConfirmed: Boolean,
     val isNoSleep: Boolean,
+    val isLoopReport: Boolean,
     val canClearDecision: Boolean,
     val isPrimaryForReadiness: Boolean
 )
@@ -158,10 +160,12 @@ fun SleepEpisodeEntity.toSleepEpisodeDisplayItem(
         sourceLabel = sourceLabel(source),
         confidenceLabel = confidenceLabel(confidence),
         primaryLabel = if (isPrimaryForReadiness) "Current-signal window" else null,
+        rowStateLabel = rowStateLabel(source, isCandidate, isConfirmed, isPrimaryForReadiness, isNoSleep),
         evidenceSummary = evidenceSummary(evidenceJson, episodeKind, source, isCandidate, isNoSleep),
         isCandidate = isCandidate,
         isConfirmed = isConfirmed,
         isNoSleep = isNoSleep,
+        isLoopReport = source == SleepEpisodeSources.POLAR_SLEEP,
         canClearDecision = isConfirmed && !isCandidate,
         isPrimaryForReadiness = isPrimaryForReadiness
     )
@@ -243,6 +247,22 @@ private fun confidenceLabel(confidence: String): String =
         SleepEpisodeConfidences.HIGH -> "High signal"
         SleepEpisodeConfidences.USER_CONFIRMED -> "Confirmed"
         else -> confidence.replace('_', ' ').replaceFirstChar { it.titlecase(Locale.UK) }
+    }
+
+private fun rowStateLabel(
+    source: String,
+    isCandidate: Boolean,
+    isConfirmed: Boolean,
+    isPrimaryForReadiness: Boolean,
+    isNoSleep: Boolean
+): String =
+    when {
+        isPrimaryForReadiness -> "Selected"
+        isNoSleep -> "Saved decision"
+        isCandidate -> "Needs attention"
+        source == SleepEpisodeSources.POLAR_SLEEP -> "Supporting"
+        isConfirmed -> "Saved"
+        else -> "Evidence"
     }
 
 private fun evidenceSummary(
