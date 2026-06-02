@@ -75,6 +75,34 @@ data class HrvTrajectoryPoint(
     val epochQuality: String
 )
 
+enum class MorningReadSource(
+    val key: String,
+    val hasEstablishedSleepWindow: Boolean = false
+) {
+    USER_CONFIRMED_NO_SLEEP("user_confirmed_no_sleep"),
+    EDITED_SLEEP_EPISODE_PRIMARY("edited_sleep_episode_primary", hasEstablishedSleepWindow = true),
+    MIXED_SLEEP_EPISODE_PRIMARY("mixed_sleep_episode_primary", hasEstablishedSleepWindow = true),
+    MANUAL_SLEEP_EPISODE_PRIMARY("manual_sleep_episode_primary", hasEstablishedSleepWindow = true),
+    CONFIRMED_SLEEP_EPISODE_PRIMARY("confirmed_sleep_episode_primary", hasEstablishedSleepWindow = true),
+    PPI247_SLEEP_WINDOW("ppi247_sleep_window", hasEstablishedSleepWindow = true),
+    RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT("raw_ppi_calibrated_window_pending_sleep_report", hasEstablishedSleepWindow = true),
+    RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT("raw_ppi_manual_window_pending_sleep_report", hasEstablishedSleepWindow = true),
+    RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT("raw_ppi_inferred_window_pending_sleep_report", hasEstablishedSleepWindow = true),
+    RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT("raw_ppi_calibrated_window_primary_with_sleep_report", hasEstablishedSleepWindow = true),
+    RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT("raw_ppi_manual_window_primary_with_sleep_report", hasEstablishedSleepWindow = true),
+    RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT("raw_ppi_inferred_window_primary_with_sleep_report", hasEstablishedSleepWindow = true),
+    NIGHTLY_RECHARGE_SUMMARY("nightly_recharge_summary"),
+    SLEEP_CONTEXT_ONLY("sleep_context_only", hasEstablishedSleepWindow = true),
+    RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW("raw_ppi_pending_manual_sleep_window"),
+    RAW_PPI_PENDING_SLEEP_WINDOW("raw_ppi_pending_sleep_window"),
+    AWAITING_SLEEP_DATA("awaiting_sleep_data");
+
+    companion object {
+        fun fromKey(key: String?): MorningReadSource? =
+            entries.firstOrNull { it.key == key }
+    }
+}
+
 enum class TrafficLightStatus {
     GOOD,
     OK,

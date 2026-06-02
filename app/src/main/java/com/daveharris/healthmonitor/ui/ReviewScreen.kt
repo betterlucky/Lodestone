@@ -147,6 +147,10 @@ fun JournalScreen(
                     checked = viewModel.muscleWeaknessTodayDraft,
                     onCheckedChange = viewModel::updateMuscleWeaknessToday
                 )
+                GripStrengthField(
+                    value = viewModel.manualGripStrengthKgDraft,
+                    onValueChange = viewModel::updateManualGripStrengthKg
+                )
                 SectionLabel("Notes")
                 NotesField(
                     value = viewModel.notesDraft,

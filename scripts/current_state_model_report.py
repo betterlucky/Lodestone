@@ -100,6 +100,23 @@ class CurrentStateDay:
         return self.evening_outcome in OUTCOME_ORDER
 
 
+@dataclass(frozen=True)
+class PemLagEpisode:
+    trigger_date: str
+    trigger_type: str
+    window_dates: tuple[str, ...]
+    affected_dates: tuple[str, ...]
+    missing_dates: tuple[str, ...]
+    pem_dates: tuple[str, ...]
+    mostly_horizontal_dates: tuple[str, ...]
+    peak_date: str | None
+    peak_lag_days: int | None
+    recovery_tail_days: int | None
+    trigger_outcome: str | None
+    worst_outcome: str | None
+    outcome_movement: str
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -144,6 +161,10 @@ def date_range(start: str, end: str) -> list[str]:
     if last < first:
         return []
     return [(first + timedelta(days=offset)).isoformat() for offset in range((last - first).days + 1)]
+
+
+def days_between(first: str, second: str) -> int:
+    return (date.fromisoformat(second) - date.fromisoformat(first)).days
 
 
 def known_dates(conn: sqlite3.Connection, start_date: str | None, end_date: str) -> list[str]:
@@ -252,6 +273,150 @@ def latest_prediction(conn: sqlite3.Connection, source_date: str) -> sqlite3.Row
 
 def daily_review(conn: sqlite3.Connection, source_date: str) -> sqlite3.Row | None:
     return one(conn, "select * from daily_check_in where sourceDate = ?", (source_date,))
+
+
+def review_outcome(row: sqlite3.Row | None) -> str | None:
+    value = row_value(row, "eveningOutcome")
+    return value if value in OUTCOME_ORDER else None
+
+
+def outcome_movement_label(trigger_outcome: str | None, worst_outcome: str | None) -> str:
+    if trigger_outcome not in OUTCOME_ORDER and worst_outcome not in OUTCOME_ORDER:
+        return "outcome unknown"
+    if trigger_outcome not in OUTCOME_ORDER:
+        return f"unknown -> {worst_outcome}"
+    if worst_outcome not in OUTCOME_ORDER:
+        return f"{trigger_outcome} -> unknown"
+    delta = OUTCOME_ORDER[worst_outcome] - OUTCOME_ORDER[trigger_outcome]
+    if delta > 0:
+        direction = "worse"
+    elif delta < 0:
+        direction = "better"
+    else:
+        direction = "same"
+    return f"{trigger_outcome} -> {worst_outcome} ({direction})"
+
+
+def major_task_trigger_type(row: sqlite3.Row) -> str | None:
+    if row_bool(row, "majorTask") != True:
+        return None
+    return row_value(row, "majorTaskType") or "major_task"
+
+
+def is_lag_affected_day(row: sqlite3.Row) -> bool:
+    outcome = review_outcome(row)
+    return (
+        row_bool(row, "pemPaybackToday") == True
+        or row_bool(row, "paybackPeakToday") == True
+        or row_bool(row, "mostlyHorizontal") == True
+        or outcome in {"UNSTEADY", "CRASH"}
+    )
+
+
+def first_recovery_after_peak(
+    reviews_by_date: dict[str, sqlite3.Row],
+    peak_date: str | None,
+    window_dates: list[str],
+) -> int | None:
+    if peak_date is None or peak_date not in window_dates:
+        return None
+    peak_index = window_dates.index(peak_date)
+    for candidate in window_dates[peak_index + 1:]:
+        row = reviews_by_date.get(candidate)
+        if row is None:
+            continue
+        outcome = review_outcome(row)
+        if (
+            row_bool(row, "pemPaybackToday") != True
+            and row_bool(row, "mostlyHorizontal") != True
+            and outcome in {"GOOD", "OK"}
+        ):
+            return days_between(peak_date, candidate)
+    return None
+
+
+def build_pem_lag_episodes(
+    conn: sqlite3.Connection,
+    start_date: str | None,
+    end_date: str,
+    lag_days: int = 5,
+) -> list[PemLagEpisode]:
+    if lag_days < 1:
+        return []
+    trigger_query = """
+        select * from daily_check_in
+        where majorTask = 1
+          and sourceDate <= ?
+    """
+    params: list[Any] = [end_date]
+    if start_date:
+        trigger_query += " and sourceDate >= ?"
+        params.append(start_date)
+    trigger_query += " order by sourceDate"
+
+    episodes: list[PemLagEpisode] = []
+    for trigger in conn.execute(trigger_query, tuple(params)):
+        trigger_date = trigger["sourceDate"]
+        trigger_type = major_task_trigger_type(trigger)
+        if trigger_type is None:
+            continue
+        trigger_day = date.fromisoformat(trigger_date)
+        window_dates = []
+        for offset in range(1, lag_days + 1):
+            window_date = (trigger_day + timedelta(days=offset)).isoformat()
+            if window_date <= end_date:
+                window_dates.append(window_date)
+        if not window_dates:
+            continue
+        placeholders = ",".join("?" for _ in window_dates)
+        rows = conn.execute(
+            f"select * from daily_check_in where sourceDate in ({placeholders})",
+            tuple(window_dates),
+        ).fetchall()
+        reviews_by_date = {row["sourceDate"]: row for row in rows}
+        missing_dates = tuple(day for day in window_dates if day not in reviews_by_date)
+        pem_dates = tuple(
+            day for day in window_dates
+            if row_bool(reviews_by_date.get(day), "pemPaybackToday") == True
+        )
+        mostly_horizontal_dates = tuple(
+            day for day in window_dates
+            if row_bool(reviews_by_date.get(day), "mostlyHorizontal") == True
+        )
+        affected_dates = tuple(
+            day for day in window_dates
+            if day in reviews_by_date and is_lag_affected_day(reviews_by_date[day])
+        )
+        peak_dates = [
+            day for day in window_dates
+            if row_bool(reviews_by_date.get(day), "paybackPeakToday") == True
+        ]
+        peak_date = peak_dates[0] if peak_dates else None
+        reviewed_outcomes = [
+            review_outcome(reviews_by_date[day])
+            for day in window_dates
+            if review_outcome(reviews_by_date.get(day)) in OUTCOME_ORDER
+        ]
+        worst_outcome = max(reviewed_outcomes, key=lambda item: OUTCOME_ORDER[item]) if reviewed_outcomes else None
+        trigger_outcome = review_outcome(trigger)
+        episodes.append(
+            PemLagEpisode(
+                trigger_date=trigger_date,
+                trigger_type=trigger_type,
+                window_dates=tuple(window_dates),
+                affected_dates=affected_dates,
+                missing_dates=missing_dates,
+                pem_dates=pem_dates,
+                mostly_horizontal_dates=mostly_horizontal_dates,
+                peak_date=peak_date,
+                peak_lag_days=days_between(trigger_date, peak_date) if peak_date else None,
+                recovery_tail_days=first_recovery_after_peak(reviews_by_date, peak_date, window_dates),
+                trigger_outcome=trigger_outcome,
+                worst_outcome=worst_outcome,
+                outcome_movement=outcome_movement_label(trigger_outcome, worst_outcome),
+            )
+        )
+    return episodes
 
 
 def selected_episode(episodes: list[sqlite3.Row]) -> sqlite3.Row | None:
@@ -585,6 +750,7 @@ def build_report(conn: sqlite3.Connection, start_date: str | None, end_date: str
     autonomic_alignment = alignment_for(days, "autonomic_status")
     functional_alignment = alignment_for(days, "functional_status")
     old_alignment = alignment_for(days, "old_readiness_status")
+    pem_lag_episodes = build_pem_lag_episodes(conn, start_date, end_date)
     return {
         "day_count": len(days),
         "current_status_days": sum(day.has_current_status for day in days),
@@ -609,6 +775,8 @@ def build_report(conn: sqlite3.Connection, start_date: str | None, end_date: str
         "functional_alignment": functional_alignment,
         "old_readiness_alignment": old_alignment,
         "current_vs_old": current_vs_old(days),
+        "pem_lag_episode_count": len(pem_lag_episodes),
+        "pem_lag_episodes": [asdict(episode) for episode in pem_lag_episodes],
         "days": [asdict(day) for day in days],
         "humility_note": (
             "This is a baseline v2 shape test, not a trained model. It asks what "
@@ -677,6 +845,20 @@ def print_report(report: dict[str, Any]) -> None:
     print(f"  changed days: {comparison['changed_days']}")
     print(f"  more cautious than old: {comparison['more_cautious_days']} ({preview(comparison['more_cautious_examples'])})")
     print(f"  less cautious than old: {comparison['less_cautious_days']} ({preview(comparison['less_cautious_examples'])})")
+    print()
+    print("Delayed PEM lag episodes")
+    print(f"  trigger episodes: {report['pem_lag_episode_count']}")
+    for episode in report["pem_lag_episodes"][:8]:
+        print(
+            "  "
+            f"{episode['trigger_date']} {episode['trigger_type']}: "
+            f"affected={preview(episode['affected_dates'], 5)}, "
+            f"peak={episode['peak_date'] or 'unknown'}, "
+            f"lag={episode['peak_lag_days'] if episode['peak_lag_days'] is not None else 'unknown'}d, "
+            f"tail={episode['recovery_tail_days'] if episode['recovery_tail_days'] is not None else 'unknown'}d, "
+            f"missing={preview(episode['missing_dates'], 5)}, "
+            f"outcome={episode['outcome_movement']}"
+        )
 
 
 def main() -> None:

@@ -218,6 +218,16 @@ class ProbeRepository(
         var rowId = 0L
         database.withTransaction {
             dao.clearPrimarySleepEpisodeForDate(sourceDate, now)
+            dao.deleteSleepEpisodesForDateAndKind(
+                sourceDate = sourceDate,
+                episodeKind = SleepEpisodeKinds.NO_SLEEP
+            )
+            dao.deleteUnconfirmedSleepEpisodeCandidatesForDateAndKind(
+                sourceDate = sourceDate,
+                source = SleepEpisodeSources.PPI_INFERRED,
+                episodeKind = SleepEpisodeKinds.MAIN_SLEEP,
+                confirmedConfidence = SleepEpisodeConfidences.USER_CONFIRMED
+            )
             rowId = dao.insertSleepEpisode(
                 SleepEpisodeEntity(
                     sourceDate = sourceDate,
@@ -2312,9 +2322,9 @@ class ProbeRepository(
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
             val pendingSource = when {
                 ppi247Autonomic != null -> provisionalWindow.source
-                hasRawPpi && provisionalWindow == null -> "raw_ppi_pending_manual_sleep_window"
-                hasRawPpi -> "raw_ppi_pending_sleep_window"
-                else -> "awaiting_sleep_data"
+                hasRawPpi && provisionalWindow == null -> MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
+                hasRawPpi -> MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
+                else -> MorningReadSource.AWAITING_SLEEP_DATA.key
             }
             val scoreResult = scoreMorningRead(
                 durationMinutes = provisionalDurationMinutes,
@@ -2395,9 +2405,9 @@ class ProbeRepository(
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
             val pendingSource = when {
                 ppi247Autonomic != null -> provisionalWindow.source
-                hasRawPpi && provisionalWindow == null -> "raw_ppi_pending_manual_sleep_window"
-                hasRawPpi -> "raw_ppi_pending_sleep_window"
-                else -> "awaiting_sleep_data"
+                hasRawPpi && provisionalWindow == null -> MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
+                hasRawPpi -> MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
+                else -> MorningReadSource.AWAITING_SLEEP_DATA.key
             }
             val scoreResult = scoreMorningRead(
                 durationMinutes = provisionalDurationMinutes,
@@ -2475,14 +2485,14 @@ class ProbeRepository(
         val scoringDurationMinutes = primaryWindow?.durationMinutes?.takeIf { usePrimaryWindow } ?: durationMinutes
         val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: rmssd
         val autonomicSource = when {
-            usePrimaryWindow && primaryWindow.source == "raw_ppi_calibrated_window_pending_sleep_report" ->
-                "raw_ppi_calibrated_window_primary_with_sleep_report"
-            usePrimaryWindow && primaryWindow.source == "raw_ppi_inferred_window_pending_sleep_report" ->
-                "raw_ppi_inferred_window_primary_with_sleep_report"
-            usePrimaryWindow -> "raw_ppi_manual_window_primary_with_sleep_report"
-            loopPpi247Autonomic != null -> "ppi247_sleep_window"
-            nightlySummary != null -> "nightly_recharge_summary"
-            else -> "sleep_context_only"
+            usePrimaryWindow && primaryWindow.source == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT.key ->
+                MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
+            usePrimaryWindow && primaryWindow.source == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT.key ->
+                MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
+            usePrimaryWindow -> MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
+            loopPpi247Autonomic != null -> MorningReadSource.PPI247_SLEEP_WINDOW.key
+            nightlySummary != null -> MorningReadSource.NIGHTLY_RECHARGE_SUMMARY.key
+            else -> MorningReadSource.SLEEP_CONTEXT_ONLY.key
         }
 
         val scoreResult = scoreMorningRead(
@@ -2548,10 +2558,10 @@ class ProbeRepository(
         val end = endEpochMs ?: return null
         if (end <= start) return null
         val sourceLabel = when (source) {
-            SleepEpisodeSources.EDITED -> "edited_sleep_episode_primary"
-            SleepEpisodeSources.MIXED -> "mixed_sleep_episode_primary"
-            SleepEpisodeSources.MANUAL -> "manual_sleep_episode_primary"
-            else -> "confirmed_sleep_episode_primary"
+            SleepEpisodeSources.EDITED -> MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY.key
+            SleepEpisodeSources.MIXED -> MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY.key
+            SleepEpisodeSources.MANUAL -> MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY.key
+            else -> MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY.key
         }
         val label = when (episodeKind) {
             SleepEpisodeKinds.NAP -> "selected nap window"
@@ -2571,7 +2581,7 @@ class ProbeRepository(
         sourceDate: String,
         baselineReady: Boolean
     ): MorningReadSnapshot {
-        val autonomicSource = "user_confirmed_no_sleep"
+        val autonomicSource = MorningReadSource.USER_CONFIRMED_NO_SLEEP.key
         val scoreResult = scoreMorningRead(
             durationMinutes = 0,
             autonomicRmssd = null,
@@ -2903,9 +2913,9 @@ class ProbeRepository(
         val estimatedOnset = ppiOnsetEpochMs ?: bed?.markerEpochMs ?: return null
         if (estimatedWake <= estimatedOnset) return null
         val source = when {
-            bed == null -> "raw_ppi_inferred_window_pending_sleep_report"
-            estimatedOnset > bed.markerEpochMs -> "raw_ppi_calibrated_window_pending_sleep_report"
-            else -> "raw_ppi_manual_window_pending_sleep_report"
+            bed == null -> MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT.key
+            estimatedOnset > bed.markerEpochMs -> MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT.key
+            else -> MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT.key
         }
         val label = when {
             bed == null && awakeMarker == null -> "PPI-inferred sleep/wake window"
@@ -3173,20 +3183,20 @@ class ProbeRepository(
             reasonsJson == other.reasonsJson
 
     private fun autonomicSourceLabel(source: String): String =
-        when (source) {
-            "ppi247_sleep_window" -> "24/7 PPI"
-            "raw_ppi_calibrated_window_pending_sleep_report" -> "Calibrated-window PPI"
-            "raw_ppi_manual_window_pending_sleep_report" -> "Manual-window PPI"
-            "raw_ppi_inferred_window_pending_sleep_report" -> "PPI-inferred-window PPI"
-            "raw_ppi_calibrated_window_primary_with_sleep_report" -> "Calibrated-window PPI"
-            "raw_ppi_manual_window_primary_with_sleep_report" -> "Manual-window PPI"
-            "raw_ppi_inferred_window_primary_with_sleep_report" -> "PPI-inferred-window PPI"
-            "edited_sleep_episode_primary" -> "Edited-window PPI"
-            "mixed_sleep_episode_primary" -> "Confirmed-window PPI"
-            "manual_sleep_episode_primary" -> "Manual-window PPI"
-            "confirmed_sleep_episode_primary" -> "Confirmed-window PPI"
-            "user_confirmed_no_sleep" -> "No-sleep"
-            "nightly_recharge_summary" -> "Nightly Recharge"
+        when (MorningReadSource.fromKey(source)) {
+            MorningReadSource.PPI247_SLEEP_WINDOW -> "24/7 PPI"
+            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "Calibrated-window PPI"
+            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "Manual-window PPI"
+            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred-window PPI"
+            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Calibrated-window PPI"
+            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Manual-window PPI"
+            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred-window PPI"
+            MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY -> "Edited-window PPI"
+            MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY -> "Confirmed-window PPI"
+            MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY -> "Manual-window PPI"
+            MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "Confirmed-window PPI"
+            MorningReadSource.USER_CONFIRMED_NO_SLEEP -> "No-sleep"
+            MorningReadSource.NIGHTLY_RECHARGE_SUMMARY -> "Nightly Recharge"
             else -> "Overnight"
         }
 

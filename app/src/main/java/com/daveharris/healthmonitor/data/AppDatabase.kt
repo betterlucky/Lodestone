@@ -34,7 +34,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FoodLogItemEntity::class,
         DailyWeightEntity::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -380,6 +380,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_23_24 = object : Migration(23, 24) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE daily_check_in ADD COLUMN manualGripStrengthKg REAL")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context,
@@ -400,7 +406,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_19_20,
                 MIGRATION_20_21,
                 MIGRATION_21_22,
-                MIGRATION_22_23
+                MIGRATION_22_23,
+                MIGRATION_23_24
             )
             .build()
     }

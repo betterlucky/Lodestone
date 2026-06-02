@@ -300,7 +300,8 @@ data class DailyCheckInEntity(
     val majorTaskType: String? = null,
     val pemPaybackToday: Boolean? = null,
     val paybackPeakToday: Boolean? = null,
-    val paybackPeakConfidence: String? = null
+    val paybackPeakConfidence: String? = null,
+    val manualGripStrengthKg: Double? = null
 )
 
 @Entity(

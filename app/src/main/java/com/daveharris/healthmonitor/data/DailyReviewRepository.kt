@@ -30,7 +30,8 @@ class DailyReviewRepository(
         majorTaskType: String?,
         pemPaybackToday: Boolean?,
         paybackPeakToday: Boolean?,
-        paybackPeakConfidence: String?
+        paybackPeakConfidence: String?,
+        manualGripStrengthKg: Double?
     ) {
         val now = System.currentTimeMillis()
         val existing = dao.getDailyCheckIn(sourceDate)
@@ -50,7 +51,8 @@ class DailyReviewRepository(
                 majorTaskType = majorTaskType,
                 pemPaybackToday = pemPaybackToday,
                 paybackPeakToday = paybackPeakToday,
-                paybackPeakConfidence = paybackPeakConfidence
+                paybackPeakConfidence = paybackPeakConfidence,
+                manualGripStrengthKg = manualGripStrengthKg
             )
         )
     }

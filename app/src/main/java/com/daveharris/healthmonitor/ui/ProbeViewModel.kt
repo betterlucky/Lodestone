@@ -110,6 +110,8 @@ class ProbeViewModel(
         private set
     var muscleWeaknessTodayDraft by mutableStateOf(false)
         private set
+    var manualGripStrengthKgDraft by mutableStateOf("")
+        private set
     var notesDraft by mutableStateOf("")
         private set
     var dayShapeCapturedDraft by mutableStateOf(false)
@@ -644,7 +646,8 @@ class ProbeViewModel(
                     notes = "Edited window"
                 )
                 statusMessage = if (saved) {
-                    "Sleep/rest window edited."
+                    val candidateCount = refreshInferredSleepEpisodeCandidates(sleepEpisodeReviewDates.value)
+                    "Sleep/rest window edited.${candidateCount.sleepCandidateSuffix()}"
                 } else {
                     "Sleep/rest window was not found."
                 }
@@ -668,8 +671,9 @@ class ProbeViewModel(
                     startEpochMs = startEpochMs,
                     endEpochMs = endEpochMs
                 )
+                val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(sourceDate))
                 setSleepEpisodeReviewDates(sourceDate)
-                statusMessage = "Manual sleep window saved for the current signal."
+                statusMessage = "Manual sleep window saved for the current signal.${candidateCount.sleepCandidateSuffix()}"
             }
         }
     }
@@ -692,7 +696,8 @@ class ProbeViewModel(
                     markerEpochMs = markerEpochMs
                 )
                 statusMessage = if (saved) {
-                    "Marker time saved."
+                    val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(targetDate))
+                    "Marker time saved.${candidateCount.sleepCandidateSuffix()}"
                 } else {
                     "Marker was not found."
                 }
@@ -774,6 +779,10 @@ class ProbeViewModel(
 
     fun updateMuscleWeaknessToday(value: Boolean) {
         muscleWeaknessTodayDraft = value
+    }
+
+    fun updateManualGripStrengthKg(value: String) {
+        manualGripStrengthKgDraft = sanitizeGripStrengthInput(value)
     }
 
     fun updateMostlyHorizontal(value: Boolean) {
@@ -909,7 +918,8 @@ class ProbeViewModel(
                     majorTaskType = if (dayShapeCapturedDraft && majorTaskDraft) majorTaskTypeDraft else null,
                     pemPaybackToday = if (dayShapeCapturedDraft) pemPaybackTodayDraft else null,
                     paybackPeakToday = if (dayShapeCapturedDraft) paybackPeakTodayDraft else null,
-                    paybackPeakConfidence = paybackPeakConfidenceForSave()
+                    paybackPeakConfidence = paybackPeakConfidenceForSave(),
+                    manualGripStrengthKg = gripStrengthKgOrNull(manualGripStrengthKgDraft)
                 )
                 if (!pemPaybackTodayDraft) {
                     autoMarkSingleDayPaybackPeakIfNeeded(savedDate)
@@ -1091,6 +1101,7 @@ class ProbeViewModel(
             runCatching { TrafficLightStatus.valueOf(value) }.getOrNull()
         }
         muscleWeaknessTodayDraft = entity.muscleWeaknessToday
+        manualGripStrengthKgDraft = entity.manualGripStrengthKg?.toString().orEmpty()
         notesDraft = entity.notes.orEmpty()
         dayShapeCapturedDraft = entity.dayShapeCaptured == true
         mostlyHorizontalDraft = dayShapeCapturedDraft && entity.mostlyHorizontal == true
@@ -1128,6 +1139,7 @@ class ProbeViewModel(
         eveningOutcomeDraft = null
         approachToDayDraft = null
         muscleWeaknessTodayDraft = false
+        manualGripStrengthKgDraft = ""
         notesDraft = ""
         clearDayShapeDraft()
     }
@@ -1250,6 +1262,29 @@ class ProbeViewModel(
         }
     }
 }
+
+internal fun sanitizeGripStrengthInput(value: String): String {
+    var decimalSeen = false
+    return buildString {
+        value.forEach { rawChar ->
+            val char = if (rawChar == ',') '.' else rawChar
+            when {
+                char.isDigit() -> append(char)
+                char == '.' && !decimalSeen -> {
+                    decimalSeen = true
+                    append(char)
+                }
+            }
+        }
+        // Six characters covers the accepted 0.1-150.0 kg range while keeping the field low-friction.
+    }.take(6)
+}
+
+// Nullable because grip capture is optional; 0.1-150.0 kg accepts normal dynamometer readings
+// while filtering slips such as "0" or extra digits pasted into the field.
+internal fun gripStrengthKgOrNull(value: String): Double? =
+    value.toDoubleOrNull()
+        ?.takeIf { it in 0.1..150.0 }
 
 private fun String?.toNowMarkerMode(): NowMarkerMode =
     runCatching { NowMarkerMode.valueOf(this ?: "") }.getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING)
