@@ -345,6 +345,9 @@ fun TodayHeroCard(
                 ) {
                     HeroPill(nowState.currentState.qualifier)
                     HeroPill("Signal: ${nowState.signalRobustness.label}")
+                    if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
+                        HeroPill(nowState.functionalContext.label)
+                    }
                     HeroPill("Loop: ${nowState.deviceConnection.detail}")
                     HeroPill("Source: ${nowState.activeAnalysisWindow.label}")
                     confidence?.let { HeroPill("$it confidence") }
@@ -403,7 +406,7 @@ fun MorningSignalSection(
 ) {
     val morningRead = nowState.activeMorningRead
     val todayStatus = nowState.readinessStatus
-    val tone = statusTone(morningRead?.status)
+    val tone = statusTone(nowState.currentState.status ?: morningRead?.status)
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
@@ -417,6 +420,9 @@ fun MorningSignalSection(
                 Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Current state", nowState.currentState.label)
+                    if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
+                        DetailRow("Functional context", nowState.functionalContext.label)
+                    }
                     DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
                     DetailRow("Report state", todayStatus.sleepReport)
                     DetailRow("PPI", todayStatus.ppiReceipt)
@@ -424,7 +430,9 @@ fun MorningSignalSection(
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Planning state", nowState.currentState.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Autonomic signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Functional context", nowState.functionalContext.label)
                     DetailRow("Stability", nowState.stateStability.label)
                     DetailRow("Report state", morningReadReportStateLabel(morningRead))
                     DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
@@ -433,6 +441,9 @@ fun MorningSignalSection(
                 }
                 morningRead.reasons.take(3).forEach { reason ->
                     Text("* $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
+                    Text(nowState.functionalContext.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Date", morningRead.sourceDate ?: "unknown")

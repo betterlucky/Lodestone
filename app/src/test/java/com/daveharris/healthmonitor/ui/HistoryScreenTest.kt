@@ -43,7 +43,7 @@ class HistoryScreenTest {
         assertEquals("2026-05-31", latest.sourceDate)
         assertEquals(TrafficLightStatus.UNSTEADY, latest.predictionStatus)
         assertEquals(TrafficLightStatus.CRASH, latest.outcomeStatus)
-        assertEquals("Morning signal and outcome differed", latest.predictionOutcomeLabel)
+        assertEquals("Autonomic signal looked steadier than functional outcome", latest.predictionOutcomeLabel)
         assertEquals("Short/irregular sleep", latest.sleepBucketLabel)
         assertTrue(latest.dataCompletenessLabel.contains("prediction"))
         assertTrue(latest.dataCompletenessLabel.contains("journal"))
@@ -53,6 +53,8 @@ class HistoryScreenTest {
         assertEquals("1800 kcal, 4 items, 1 tea, 11.0h window", latest.foodSummaryLabel)
         assertEquals("70.0 kg at 08:00", latest.weightLabel)
         assertEquals("28.5 kg", latest.gripStrengthLabel)
+        assertTrue(latest.functionalContextLabel.contains("Outcome: Crash"))
+        assertTrue(latest.functionalContextLabel.contains("day shape unknown"))
     }
 
     @Test
@@ -66,10 +68,36 @@ class HistoryScreenTest {
 
         val report = reports.single()
         assertEquals("No morning signal", report.predictionLabel)
-        assertEquals("Outcome saved without a morning signal", report.predictionOutcomeLabel)
+        assertEquals("Functional outcome saved without an autonomic signal", report.predictionOutcomeLabel)
         assertEquals("No morning signal evidence", report.robustnessLabel)
         assertEquals("journal", report.dataCompletenessLabel)
         assertEquals("No active window recorded", report.windowProvenanceLabel)
+    }
+
+    @Test
+    fun reportsMixedAutonomicAndFunctionalEvidenceWithoutFailureLanguage() {
+        val reports = buildHistoryDayReports(
+            predictions = listOf(
+                prediction("2026-05-31", issuedAt = 1, status = TrafficLightStatus.GOOD.name)
+            ),
+            checkIns = listOf(
+                checkIn(
+                    "2026-05-31",
+                    TrafficLightStatus.UNSTEADY.name,
+                    dayShapeCaptured = true,
+                    mostlyHorizontal = true,
+                    pemPaybackToday = true
+                )
+            ),
+            foodSummaries = emptyList(),
+            weights = emptyList()
+        )
+
+        val report = reports.single()
+        assertEquals("Autonomic signal looked steadier than functional outcome", report.predictionOutcomeLabel)
+        assertTrue(report.functionalContextLabel.contains("Mostly horizontal"))
+        assertTrue(report.functionalContextLabel.contains("PEM / payback"))
+        assertTrue(report.dataCompletenessLabel.contains("day shape"))
     }
 
     @Test
@@ -181,7 +209,13 @@ class HistoryScreenTest {
             reasonsJson = "[]"
         )
 
-    private fun checkIn(sourceDate: String, outcome: String): DailyCheckInEntity =
+    private fun checkIn(
+        sourceDate: String,
+        outcome: String,
+        dayShapeCaptured: Boolean? = null,
+        mostlyHorizontal: Boolean? = null,
+        pemPaybackToday: Boolean? = null
+    ): DailyCheckInEntity =
         DailyCheckInEntity(
             sourceDate = sourceDate,
             eveningOutcome = outcome,
@@ -190,6 +224,14 @@ class HistoryScreenTest {
             notes = "notes",
             createdAtEpochMs = 1,
             updatedAtEpochMs = 2,
+            dayShapeCaptured = dayShapeCaptured,
+            mostlyHorizontal = mostlyHorizontal,
+            leftHouse = false,
+            majorTask = false,
+            majorTaskType = null,
+            pemPaybackToday = pemPaybackToday,
+            paybackPeakToday = false,
+            paybackPeakConfidence = null,
             manualGripStrengthKg = 28.5
         )
 
