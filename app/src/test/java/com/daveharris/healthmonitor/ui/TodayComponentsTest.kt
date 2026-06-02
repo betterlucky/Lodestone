@@ -15,12 +15,12 @@ class TodayComponentsTest {
         )
 
         assertEquals(TodayDataQualityState.WAITING, summary.state)
-        assertEquals(listOf("Final Loop sleep report", "24/7 PPI epochs"), summary.missingInputs)
+        assertEquals(listOf("Sleep/rest window", "24/7 PPI epochs"), summary.missingInputs)
         assertTrue("Morning-read snapshot" in summary.supportingGaps)
     }
 
     @Test
-    fun dataQualityIsPartialWhenPpiArrivesBeforeFinalSleep() {
+    fun dataQualityTreatsUsablePpiWindowAsReadyWithSupportingComparisonGap() {
         val summary = todayDataQualitySummary(
             stage = TodayReadinessStage.INITIAL_PPI,
             morningRead = morningRead(
@@ -33,7 +33,25 @@ class TodayComponentsTest {
         )
 
         assertEquals(TodayDataQualityState.PARTIAL, summary.state)
-        assertEquals(listOf("Final Loop sleep report"), summary.missingInputs)
+        assertTrue(summary.missingInputs.isEmpty())
+        assertTrue("Loop sleep report comparison" in summary.supportingGaps)
+    }
+
+    @Test
+    fun dataQualityStillBlocksWhenPpiHasNoUsableWindow() {
+        val summary = todayDataQualitySummary(
+            stage = TodayReadinessStage.INITIAL_PPI,
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_pending_manual_sleep_window",
+                rawPpiGoodEpochCount = 42,
+                rawPpiCoverageHours = 5.5
+            )
+        )
+
+        assertEquals(TodayDataQualityState.PARTIAL, summary.state)
+        assertEquals(listOf("Sleep/rest window"), summary.missingInputs)
     }
 
     @Test

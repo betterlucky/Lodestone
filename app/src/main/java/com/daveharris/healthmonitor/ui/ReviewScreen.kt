@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.MorningReadSource
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 
 @Composable
@@ -209,7 +210,7 @@ private fun JournalContextCard(
             return@SectionCard
         }
         DetailRow("Morning signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
-        DetailRow("Signal state", morningRead.provisionalFinalLabel())
+        DetailRow("Signal state", morningRead.signalContextLabel())
         DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
         DetailRow("Source", morningRead.overnightAutonomicSource.replace('_', ' '))
         morningRead.reasons.firstOrNull()?.let { reason ->
@@ -218,9 +219,11 @@ private fun JournalContextCard(
     }
 }
 
-private fun MorningReadSnapshot.provisionalFinalLabel(): String =
+private fun MorningReadSnapshot.signalContextLabel(): String =
     when {
-        sleepDataReady -> "Final Loop sleep context present"
-        isInterim -> "Provisional, awaiting final Loop sleep context"
+        sleepDataReady -> "Loop sleep report attached"
+        MorningReadSource.fromKey(overnightAutonomicSource)?.hasEstablishedSleepWindow == true ->
+            "Current signal ready; Loop report pending for comparison"
+        isInterim -> "Current signal limited; sleep window pending"
         else -> "Current, sleep context pending"
     }
