@@ -511,18 +511,6 @@ fun morningReadBasisLabel(
             "Waiting for morning data"
     }
 
-private fun MorningReadSnapshot.hasPpiSignal(): Boolean =
-    overnightAutonomicSource.contains("ppi", ignoreCase = true) ||
-        (rawPpiGoodEpochCount ?: 0) > 0
-
-private fun MorningReadSnapshot?.hasEstablishedSleepWindow(): Boolean =
-    this?.sleepDataReady == true ||
-        this?.morningReadSource()?.hasEstablishedSleepWindow == true
-
-private fun MorningReadSnapshot?.hasSufficientReadyPpiCoverage(): Boolean =
-    (this?.rawPpiGoodEpochCount ?: 0) >= MIN_READY_PPI_GOOD_EPOCHS &&
-        (this?.rawPpiCoverageHours ?: 0.0) >= MIN_READY_PPI_COVERAGE_HOURS
-
 private fun MorningReadSnapshot.analysisWindowLabel(): String =
     when (morningReadSource()) {
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
@@ -849,6 +837,3 @@ private fun hrvTimeSpanLabel(points: List<HrvTrajectoryPoint>): String {
 private fun formatEpochTime(epochMs: Long): String =
     DateTimeFormatter.ofPattern("HH:mm", java.util.Locale.UK)
         .format(Instant.ofEpochMilli(epochMs).atZone(ZoneId.systemDefault()))
-
-private const val MIN_READY_PPI_GOOD_EPOCHS = 12
-private const val MIN_READY_PPI_COVERAGE_HOURS = 3.0

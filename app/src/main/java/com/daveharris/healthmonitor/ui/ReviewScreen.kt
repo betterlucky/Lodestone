@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
-import com.daveharris.healthmonitor.data.MorningReadSource
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 
 @Composable
@@ -222,8 +221,9 @@ private fun JournalContextCard(
 private fun MorningReadSnapshot.signalContextLabel(): String =
     when {
         sleepDataReady -> "Loop sleep report attached"
-        MorningReadSource.fromKey(overnightAutonomicSource)?.hasEstablishedSleepWindow == true ->
+        hasEstablishedSleepWindow() && hasSufficientReadyPpiCoverage() ->
             "Current signal ready; Loop report pending for comparison"
+        hasEstablishedSleepWindow() -> "Current signal limited; thin PPI coverage"
         isInterim -> "Current signal limited; sleep window pending"
         else -> "Current, sleep context pending"
     }

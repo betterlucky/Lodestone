@@ -974,18 +974,6 @@ private fun SyncRunEntity.isReadinessSync(): Boolean =
 private fun List<SyncRunEntity>.latestReadinessSync(): SyncRunEntity? =
     filter { it.isReadinessSync() }.maxByOrNull { it.startedAtEpochMs }
 
-private fun MorningReadSnapshot?.hasPpiSignal(): Boolean =
-    this?.rawPpiGoodEpochCount != null ||
-        this?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
-
-private fun MorningReadSnapshot?.hasEstablishedSleepWindow(): Boolean =
-    this?.sleepDataReady == true ||
-        this?.morningReadSource()?.hasEstablishedSleepWindow == true
-
-private fun MorningReadSnapshot?.hasSufficientReadyPpiCoverage(): Boolean =
-    (this?.rawPpiGoodEpochCount ?: 0) >= MIN_READY_PPI_GOOD_EPOCHS &&
-        (this?.rawPpiCoverageHours ?: 0.0) >= MIN_READY_PPI_COVERAGE_HOURS
-
 private fun TrafficLightStatus?.readinessLabel(): String =
     this?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "TBC"
 
@@ -1199,5 +1187,3 @@ private fun relativeAgeLabel(age: Duration): String {
 }
 
 private val STALE_FRESHNESS_DURATION: Duration = Duration.ofHours(36)
-private const val MIN_READY_PPI_GOOD_EPOCHS = 12
-private const val MIN_READY_PPI_COVERAGE_HOURS = 3.0
