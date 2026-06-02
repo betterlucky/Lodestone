@@ -20,7 +20,12 @@ yes | sdkmanager \
   "system-images;android-35;google_apis_tablet;arm64-v8a"
 ```
 
-This Codex session installed the `emulator` package successfully under `/opt/homebrew/share/android-commandlinetools/emulator`. The Android 35 system-image download did not complete reliably after ten minutes for the phone+tablet install, and a second phone-only attempt also timed out after ten minutes, so the AVDs were not created on this machine.
+This Codex session installed the `emulator` package and both Android 35 ARM64 system images under `/opt/homebrew/share/android-commandlinetools`, then created both AVDs. The earlier setup looked stuck because `sdkmanager` prints little after `Preparing` while downloading multi-GB zips:
+
+- phone image: `arm64-v8a-35_r09.zip`, about 1.78 GB compressed, about 3.8 GB installed
+- tablet image: `arm64-v8a-35_r02.zip`, about 1.99 GB compressed, about 4.1 GB installed
+
+For large image downloads, prefer a 30-minute timeout rather than a 10-minute timeout on this connection.
 
 If the Android 35 image repeatedly stalls, use the matching Android 34 package as a temporary fallback:
 
@@ -54,13 +59,23 @@ avdmanager create avd \
 Start an AVD:
 
 ```bash
-emulator -avd Lodestone_API35_phone -no-snapshot -no-boot-anim
+SDK_ROOT="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+"$SDK_ROOT/emulator/emulator" \
+  -avd Lodestone_API35_phone \
+  -no-snapshot \
+  -no-boot-anim
 ```
 
 Then run:
 
 ```bash
 scripts/lodestone_screenshot_smoke.sh
+```
+
+When more than one Android device is connected, set `ADB_SERIAL`:
+
+```bash
+ADB_SERIAL=emulator-5556 scripts/lodestone_screenshot_smoke.sh
 ```
 
 Host requirements: `adb`, `python3`, and a connected authorised emulator/device. The script builds and installs the debug APK before capture.

@@ -4,7 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_ID="${APP_ID:-com.daveharris.healthmonitor}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/build/qa-screenshots/$(date +%Y%m%d-%H%M%S)}"
-ADB="${ADB:-adb}"
+ADB_BIN="${ADB:-adb}"
+ADB_SERIAL="${ADB_SERIAL:-}"
+ADB_CMD=("$ADB_BIN")
+if [[ -n "$ADB_SERIAL" ]]; then
+  ADB_CMD+=(-s "$ADB_SERIAL")
+fi
 
 mkdir -p "$OUT_DIR"
 
@@ -13,7 +18,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! "$ADB" get-state >/dev/null 2>&1; then
+if ! "${ADB_CMD[@]}" get-state >/dev/null 2>&1; then
   echo "No authorised Android device or emulator is connected." >&2
   echo "Start an AVD such as Lodestone_API35_phone, then rerun this script." >&2
   exit 2
@@ -22,26 +27,26 @@ fi
 cd "$ROOT_DIR"
 ./gradlew :app:assembleDebug >/dev/null
 
-"$ADB" install -r app/build/outputs/apk/debug/app-debug.apk >/dev/null
-if ! "$ADB" shell pm path "$APP_ID" | grep -q '^package:'; then
+"${ADB_CMD[@]}" install -r app/build/outputs/apk/debug/app-debug.apk >/dev/null
+if ! "${ADB_CMD[@]}" shell pm path "$APP_ID" | grep -q '^package:'; then
   echo "Install did not leave $APP_ID visible to package manager." >&2
   exit 3
 fi
 
 for permission in android.permission.BLUETOOTH_SCAN android.permission.BLUETOOTH_CONNECT; do
-  "$ADB" shell pm grant "$APP_ID" "$permission" >/dev/null 2>&1 || true
+  "${ADB_CMD[@]}" shell pm grant "$APP_ID" "$permission" >/dev/null 2>&1 || true
 done
 
-"$ADB" shell monkey -p "$APP_ID" 1 >/dev/null
+"${ADB_CMD[@]}" shell am start -n "$APP_ID/.MainActivity" >/dev/null
 for _ in {1..12}; do
-  if "$ADB" shell dumpsys window 2>/dev/null | tr -d '\r' | grep -Eq "mCurrentFocus|mFocusedApp" &&
-      "$ADB" shell dumpsys window 2>/dev/null | tr -d '\r' | grep -Eq "$APP_ID"; then
+  if "${ADB_CMD[@]}" shell dumpsys window 2>/dev/null | tr -d '\r' | grep -Eq "mCurrentFocus|mFocusedApp" &&
+      "${ADB_CMD[@]}" shell dumpsys window 2>/dev/null | tr -d '\r' | grep -Eq "$APP_ID"; then
     break
   fi
   sleep 1
 done
 
-screen_size="$("$ADB" shell wm size | tr -d '\r' | awk -F': ' '/Physical size/ {print $2}')"
+screen_size="$("${ADB_CMD[@]}" shell wm size | tr -d '\r' | awk -F': ' '/Physical size/ {print $2}')"
 width="${screen_size%x*}"
 height="${screen_size#*x}"
 if [[ -z "$width" || -z "$height" || "$width" == "$screen_size" ]]; then
@@ -60,8 +65,8 @@ tap_bottom_nav() {
 
 dump_window() {
   local name="$1"
-  "$ADB" shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
-  "$ADB" pull /sdcard/window.xml "$OUT_DIR/${name}.xml" >/dev/null 2>&1 || true
+  "${ADB_CMD[@]}" shell uiautomator dump /sdcard/window.xml >/dev/null 2>&1 || true
+  "${ADB_CMD[@]}" pull /sdcard/window.xml "$OUT_DIR/${name}.xml" >/dev/null 2>&1 || true
 }
 
 tap_label() {
@@ -93,15 +98,15 @@ for node in root.iter("node"):
 PY
 )"
   if [[ -n "$bounds" ]]; then
-    "$ADB" shell input tap $bounds
+    "${ADB_CMD[@]}" shell input tap $bounds
   else
-    "$ADB" shell input tap "$fallback_x" "$fallback_y"
+    "${ADB_CMD[@]}" shell input tap "$fallback_x" "$fallback_y"
   fi
 }
 
 capture() {
   local name="$1"
-  "$ADB" exec-out screencap -p > "$OUT_DIR/${name}.png"
+  "${ADB_CMD[@]}" exec-out screencap -p > "$OUT_DIR/${name}.png"
   dump_window "$name"
 }
 
