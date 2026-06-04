@@ -1,6 +1,7 @@
 package com.daveharris.healthmonitor.ui
 
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
+import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SleepEpisodeConfidences
 import com.daveharris.healthmonitor.data.SleepEpisodeEntity
@@ -125,6 +126,30 @@ class NowScreenStateTest {
     }
 
     @Test
+    fun autonomicContextFlagsStrainAndRecoveryMomentumWithoutOverridingPlanningState() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 12,
+                rawPpiCoverageHours = 4.0,
+                nightlyRmssd = 62.0,
+                status = TrafficLightStatus.GOOD,
+                hrvTrajectory = trajectory(
+                    48.0, 50.0, 52.0, 54.0, 55.0, 58.0,
+                    62.0, 65.0, 70.0, 76.0, 82.0, 88.0
+                )
+            )
+        )
+
+        assertEquals(TrafficLightStatus.GOOD, state.currentState.status)
+        assertEquals("Strained, recovering", state.autonomicContext.label)
+        assertTrue(state.autonomicContext.strainFlag)
+        assertTrue(state.autonomicContext.recoveryMomentum)
+        assertTrue(state.autonomicContext.detail.contains("early-late"))
+    }
+
+    @Test
     fun recentLowerFunctionJournalContextMakesPlanningStateMoreCautiousThanAutonomicSignal() {
         val state = nowState(
             morningRead = morningRead(
@@ -153,6 +178,38 @@ class NowScreenStateTest {
         assertTrue(state.currentState.message.contains("not proof you are recovered"))
         assertTrue(state.functionalContext.detail.contains("lower-function spell"))
         assertTrue(state.readinessStatus.message.contains("lower-function spell"))
+    }
+
+    @Test
+    fun recentStableJournalOutcomeAllowsOnlyCautiousRecoveryAfterLowerFunctionSpell() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 88.0,
+                status = TrafficLightStatus.GOOD
+            ),
+            dailyCheckIns = listOf(
+                checkIn(
+                    sourceDate = "2026-05-30",
+                    outcome = TrafficLightStatus.OK
+                ),
+                checkIn(
+                    sourceDate = "2026-05-29",
+                    outcome = TrafficLightStatus.UNSTEADY,
+                    pemPaybackToday = true
+                )
+            )
+        )
+
+        assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
+        assertEquals(TrafficLightStatus.OK, state.functionalContext.status)
+        assertEquals(TrafficLightStatus.OK, state.currentState.status)
+        assertEquals("Loop sleep report attached", state.currentState.qualifier)
+        assertTrue(state.functionalContext.detail.contains("cautious recovery"))
+        assertTrue(state.functionalContext.detail.contains("recent Unsteady"))
     }
 
     @Test
@@ -399,7 +456,8 @@ class NowScreenStateTest {
         rawPpiCoverageHours: Double?,
         isInterim: Boolean = false,
         nightlyRmssd: Double? = null,
-        status: TrafficLightStatus = TrafficLightStatus.OK
+        status: TrafficLightStatus = TrafficLightStatus.OK,
+        hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
     ): MorningReadSnapshot =
         MorningReadSnapshot(
             sourceDate = "2026-05-31",
@@ -416,8 +474,18 @@ class NowScreenStateTest {
             sleepDataReady = sleepDataReady,
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,
             rawPpiPoorEpochCount = 0,
-            rawPpiCoverageHours = rawPpiCoverageHours
+            rawPpiCoverageHours = rawPpiCoverageHours,
+            hrvTrajectory = hrvTrajectory
         )
+
+    private fun trajectory(vararg values: Double): List<HrvTrajectoryPoint> =
+        values.mapIndexed { index, value ->
+            HrvTrajectoryPoint(
+                epochStartEpochMs = epoch("2026-05-31T00:00:00") + index * 300_000L,
+                rmssdMs = value,
+                epochQuality = "good"
+            )
+        }
 
     private fun checkIn(
         sourceDate: String,

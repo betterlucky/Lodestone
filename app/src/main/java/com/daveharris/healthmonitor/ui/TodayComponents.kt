@@ -462,6 +462,7 @@ fun MorningSignalSection(
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Planning state", nowState.currentState.status?.let { labelForStatus(it.name) } ?: "TBC")
                     DetailRow("Autonomic signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Autonomic context", nowState.autonomicContext.label)
                     DetailRow("Functional context", nowState.functionalContext.label)
                     DetailRow("Stability", nowState.stateStability.label)
                     DetailRow("Report state", morningReadReportStateLabel(morningRead))
@@ -474,6 +475,9 @@ fun MorningSignalSection(
                 }
                 if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
                     Text(nowState.functionalContext.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (nowState.autonomicContext.availability == NowDataAvailability.PRESENT) {
+                    Text(nowState.autonomicContext.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Date", morningRead.sourceDate ?: "unknown")

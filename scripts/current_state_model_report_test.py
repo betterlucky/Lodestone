@@ -158,11 +158,11 @@ class CurrentStateModelReportTest(unittest.TestCase):
         day = report_module.build_day(self.conn, "2026-05-02", baseline_days=14)
 
         self.assertEqual(day.evidence_basis, "source_date_ppi")
-        self.assertEqual(day.current_status, "OK")
+        self.assertEqual(day.current_status, "UNSTEADY")
         self.assertEqual(day.autonomic_status, "GOOD")
-        self.assertEqual(day.functional_status, "OK")
+        self.assertEqual(day.functional_status, "UNSTEADY")
         self.assertEqual(day.prior_subjective_state, "UNSTEADY")
-        self.assertEqual(day.prior_subjective_penalty, 1)
+        self.assertEqual(day.prior_subjective_penalty, 2)
 
     def test_selected_episode_window_is_preferred_when_ppi_overlaps(self) -> None:
         self.add_ppi_day("2026-04-30")
@@ -255,6 +255,62 @@ class CurrentStateModelReportTest(unittest.TestCase):
         self.assertEqual(day.functional_status, "UNSTEADY")
         self.assertEqual(day.planning_status, "UNSTEADY")
         self.assertEqual(day.current_status, "UNSTEADY")
+
+    def test_functional_lane_allows_cautious_recovery_after_stable_day(self) -> None:
+        self.add_ppi_day("2026-05-01")
+        self.add_ppi_day("2026-05-02")
+        self.add_ppi_day("2026-05-03")
+        self.insert_review("2026-05-01", "UNSTEADY")
+        self.insert_review("2026-05-02", "OK")
+        self.conn.commit()
+
+        day = report_module.build_day(self.conn, "2026-05-03", baseline_days=14)
+
+        self.assertEqual(day.autonomic_status, "GOOD")
+        self.assertEqual(day.functional_status, "OK")
+        self.assertEqual(day.planning_status, "OK")
+        self.assertTrue(any("cautious recovery" in note for note in day.functional_notes))
+
+    def test_autonomic_context_tracks_strain_and_recovery_momentum_without_status_override(self) -> None:
+        values = [48.0, 50.0, 52.0, 54.0, 55.0, 58.0, 62.0, 65.0, 70.0, 76.0, 82.0, 88.0]
+        for index, value in enumerate(values):
+            self.insert_ppi("2026-05-02", index * 300000, rmssd_ms=value)
+        self.conn.commit()
+
+        day = report_module.build_day(self.conn, "2026-05-02", baseline_days=14)
+
+        self.assertEqual(day.autonomic_status, "GOOD")
+        self.assertEqual(day.autonomic_context_label, "Strained, recovering")
+        self.assertTrue(day.autonomic_strain_flag)
+        self.assertTrue(day.autonomic_recovery_momentum)
+        self.assertLess(day.p25_rmssd_ms, 60.0)
+
+    def test_report_summarises_autonomic_context_outcomes_and_next_day_movement(self) -> None:
+        strained_values = [48.0, 50.0, 52.0, 54.0, 55.0, 58.0, 62.0, 65.0, 70.0, 76.0, 82.0, 88.0]
+        steady_values = [82.0, 84.0, 86.0, 88.0, 90.0, 92.0, 94.0, 96.0, 98.0, 100.0, 102.0, 104.0]
+        for index, value in enumerate(strained_values):
+            self.insert_ppi("2026-05-01", index * 300000, rmssd_ms=value)
+        for index, value in enumerate(steady_values):
+            self.insert_ppi("2026-05-02", index * 300000, rmssd_ms=value)
+        self.insert_review("2026-05-01", "UNSTEADY")
+        self.insert_review("2026-05-02", "OK")
+        self.conn.commit()
+
+        report = report_module.build_report(
+            self.conn,
+            start_date="2026-05-01",
+            end_date="2026-05-02",
+            baseline_days=14,
+        )
+
+        strain = report["autonomic_context_outcomes"]["strain"]
+        self.assertEqual(strain["flagged_count"], 1)
+        self.assertEqual(strain["flagged_rough_count"], 1)
+        self.assertEqual(strain["flagged_rough_rate"], 1.0)
+        self.assertEqual(
+            report["autonomic_context_next_day"]["strain"]["flagged_movements"],
+            {"next_better": 1},
+        )
 
     def test_day_shape_fields_are_reported_when_present(self) -> None:
         self.insert_review(
