@@ -2,6 +2,7 @@ package com.daveharris.healthmonitor.data
 
 import android.content.Context
 import androidx.room.withTransaction
+import com.daveharris.healthmonitor.wakeTargetDateForMarker
 import com.daveharris.healthmonitor.util.ExportManager
 import com.daveharris.healthmonitor.util.GsonProvider
 import com.daveharris.healthmonitor.polar.PolarProbeManager
@@ -426,13 +427,18 @@ class ProbeRepository(
         notes: String? = null,
         dedupeWindowMs: Long = 15 * 60 * 1000L
     ): Long {
-        val latest = dao.getLatestWakeMarker(sourceDate, markerSource)
+        val markerSourceDate = if (markerSource == WakeMarkerSources.IM_AWAKE) {
+            wakeTargetDateForMarker(markerEpochMs).toString()
+        } else {
+            sourceDate
+        }
+        val latest = dao.getLatestWakeMarker(markerSourceDate, markerSource)
         if (latest != null && kotlin.math.abs(markerEpochMs - latest.markerEpochMs) <= dedupeWindowMs) {
             return latest.id
         }
         return dao.insertWakeMarker(
             WakeMarkerEntity(
-                sourceDate = sourceDate,
+                sourceDate = markerSourceDate,
                 markerEpochMs = markerEpochMs,
                 markerSource = markerSource,
                 deviceId = deviceId,

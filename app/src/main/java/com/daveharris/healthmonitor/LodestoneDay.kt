@@ -21,6 +21,9 @@ fun resolveLodestoneDisplayDate(
 ): LodestoneDayResolution {
     val now = Instant.ofEpochMilli(nowEpochMs).atZone(zoneId)
     val wallDate = now.toLocalDate()
+    val latestMorningDate = latestMorningReadSourceDate?.let {
+        runCatching { LocalDate.parse(it) }.getOrNull()
+    }
     val latestMarker = wakeMarkers
         .asSequence()
         .filterNot { it.notes == "manual awake command" }
@@ -37,6 +40,13 @@ fun resolveLodestoneDisplayDate(
         )
     }
 
+    if (latestMorningDate == wallDate) {
+        return LodestoneDayResolution(
+            sourceDate = wallDate.toString(),
+            reason = "latest_read_wall_date"
+        )
+    }
+
     if (
         latestMarker?.markerSource == WakeMarkerSources.IM_AWAKE &&
         Duration.between(Instant.ofEpochMilli(latestMarker.markerEpochMs), now.toInstant()) <= ACTIVE_WAKE_MARKER_DURATION
@@ -47,9 +57,6 @@ fun resolveLodestoneDisplayDate(
         )
     }
 
-    val latestMorningDate = latestMorningReadSourceDate?.let {
-        runCatching { LocalDate.parse(it) }.getOrNull()
-    }
     if (latestMorningDate == wallDate.minusDays(1) && now.toLocalTime().isBefore(SLEEP_TARGET_PIVOT)) {
         return LodestoneDayResolution(
             sourceDate = latestMorningDate.toString(),
@@ -74,6 +81,40 @@ fun sleepTargetDateForBedtime(
         bedtime.toLocalDate()
     }
 }
+
+fun resolveLodestoneCheckInDate(
+    nowEpochMs: Long = System.currentTimeMillis(),
+    wakeMarkers: List<WakeMarkerEntity>,
+    zoneId: ZoneId = ZoneId.systemDefault()
+): LodestoneDayResolution {
+    val now = Instant.ofEpochMilli(nowEpochMs).atZone(zoneId)
+    val latestMarker = wakeMarkers
+        .asSequence()
+        .filterNot { it.notes == "manual awake command" }
+        .sortedBy { it.markerEpochMs }
+        .lastOrNull()
+
+    if (
+        latestMarker?.markerSource == WakeMarkerSources.GOING_TO_BED &&
+        Duration.between(Instant.ofEpochMilli(latestMarker.markerEpochMs), now.toInstant()) <= ACTIVE_BEDTIME_MARKER_DURATION
+    ) {
+        return LodestoneDayResolution(
+            sourceDate = sleepTargetDateForBedtime(latestMarker.markerEpochMs, zoneId).toString(),
+            reason = "sleep_in_progress"
+        )
+    }
+
+    return LodestoneDayResolution(
+        sourceDate = now.toLocalDate().toString(),
+        reason = "wall_date_check_in"
+    )
+}
+
+fun wakeTargetDateForMarker(
+    markerEpochMs: Long = System.currentTimeMillis(),
+    zoneId: ZoneId = ZoneId.systemDefault()
+): LocalDate =
+    Instant.ofEpochMilli(markerEpochMs).atZone(zoneId).toLocalDate()
 
 private val SLEEP_TARGET_PIVOT: LocalTime = LocalTime.NOON
 internal val ACTIVE_BEDTIME_MARKER_DURATION: Duration = Duration.ofHours(30)

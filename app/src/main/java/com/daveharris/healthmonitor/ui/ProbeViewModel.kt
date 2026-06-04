@@ -14,8 +14,10 @@ import com.daveharris.healthmonitor.HealthMonitorApp
 import com.daveharris.healthmonitor.MorningReadScheduler
 import com.daveharris.healthmonitor.SyncCommandWorker
 import com.daveharris.healthmonitor.SyncCoordinator
+import com.daveharris.healthmonitor.resolveLodestoneCheckInDate
 import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 import com.daveharris.healthmonitor.sleepTargetDateForBedtime
+import com.daveharris.healthmonitor.wakeTargetDateForMarker
 import com.daveharris.healthmonitor.data.DailyReviewRepository
 import com.daveharris.healthmonitor.data.DeviceProfileEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
@@ -314,7 +316,7 @@ class ProbeViewModel(
     fun runCheckInSync() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         selectCheckInIntent(NowCheckInIntent.INFO)
-        val today = currentLodestoneDate()
+        val today = currentCheckInTargetDate()
         selectCheckInDate(today)
         viewModelScope.launch {
             runBusyAction("Checking in…") {
@@ -341,7 +343,7 @@ class ProbeViewModel(
 
     fun runCatchUpSync() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
-        val today = currentLodestoneDate()
+        val today = currentCheckInTargetDate()
         val sourceDates = catchUpSourceDates(today)
         selectCheckInDate(today)
         viewModelScope.launch {
@@ -412,11 +414,7 @@ class ProbeViewModel(
         val targetDate = if (intent == NowCheckInIntent.BEDTIME) {
             sleepTargetDateForBedtime(markerEpochMs).toString()
         } else {
-            resolveLodestoneDisplayDate(
-                nowEpochMs = markerEpochMs,
-                latestMorningReadSourceDate = morningRead.value?.sourceDate,
-                wakeMarkers = recentWakeMarkers.value
-            ).sourceDate
+            wakeTargetDateForMarker(markerEpochMs).toString()
         }
         selectCheckInDate(targetDate)
         viewModelScope.launch {
@@ -1199,6 +1197,11 @@ class ProbeViewModel(
     fun currentLodestoneDate(): String =
         resolveLodestoneDisplayDate(
             latestMorningReadSourceDate = morningRead.value?.sourceDate,
+            wakeMarkers = recentWakeMarkers.value
+        ).sourceDate
+
+    private fun currentCheckInTargetDate(): String =
+        resolveLodestoneCheckInDate(
             wakeMarkers = recentWakeMarkers.value
         ).sourceDate
 
