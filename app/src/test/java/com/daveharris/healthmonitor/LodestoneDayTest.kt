@@ -56,6 +56,30 @@ class LodestoneDayTest {
     }
 
     @Test
+    fun checkInTargetIgnoresPreviousWakeMarker() {
+        val resolution = resolveLodestoneCheckInDate(
+            nowEpochMs = epoch("2026-06-04T10:15:00"),
+            wakeMarkers = listOf(marker("2026-06-03", "2026-06-03T07:59:00", "manual_im_awake")),
+            zoneId = zone
+        )
+
+        assertEquals("2026-06-04", resolution.sourceDate)
+        assertEquals("wall_date_check_in", resolution.reason)
+    }
+
+    @Test
+    fun checkInTargetKeepsActiveBedtimeMarkerOnSleepResultDate() {
+        val resolution = resolveLodestoneCheckInDate(
+            nowEpochMs = epoch("2026-05-26T23:30:00"),
+            wakeMarkers = listOf(marker("2026-05-27", "2026-05-26T23:15:00", "manual_going_to_bed")),
+            zoneId = zone
+        )
+
+        assertEquals("2026-05-27", resolution.sourceDate)
+        assertEquals("sleep_in_progress", resolution.reason)
+    }
+
+    @Test
     fun staleWakeMarkerExpiresAfterThirtyHours() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T14:01:00"),
@@ -66,6 +90,22 @@ class LodestoneDayTest {
 
         assertEquals("2026-05-27", resolution.sourceDate)
         assertEquals("wall_date", resolution.reason)
+    }
+
+    @Test
+    fun wallDateMorningReadBeatsPreviousWakeMarker() {
+        val resolution = resolveLodestoneDisplayDate(
+            nowEpochMs = epoch("2026-06-04T10:15:00"),
+            latestMorningReadSourceDate = "2026-06-04",
+            wakeMarkers = listOf(
+                marker("2026-06-03", "2026-06-03T07:59:00", "manual_im_awake"),
+                marker("2026-06-03", "2026-06-04T09:00:00", "manual_im_awake")
+            ),
+            zoneId = zone
+        )
+
+        assertEquals("2026-06-04", resolution.sourceDate)
+        assertEquals("latest_read_wall_date", resolution.reason)
     }
 
     @Test
@@ -139,6 +179,16 @@ class LodestoneDayTest {
 
         assertEquals("2026-05-26", resolution.sourceDate)
         assertEquals("pre_sleep_after_midnight", resolution.reason)
+    }
+
+    @Test
+    fun wakeTargetDateUsesMarkerLocalDate() {
+        val targetDate = wakeTargetDateForMarker(
+            markerEpochMs = epoch("2026-06-04T09:00:00"),
+            zoneId = zone
+        )
+
+        assertEquals("2026-06-04", targetDate.toString())
     }
 
     private fun marker(
