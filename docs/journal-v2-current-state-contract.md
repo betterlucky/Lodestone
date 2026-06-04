@@ -109,12 +109,42 @@ readiness/status output.
 The planning state must not be `GOOD` solely because HRV looks good when recent
 function says the user is in a poor-function spell.
 
+The current working model is asymmetric:
+
+- Downgrades can happen quickly when function, PEM, or clear autonomic strain
+  looks poor.
+- Upgrades should be slower. A recent rough functional state should persist
+  until there is at least one later `OK`/`GOOD` functional outcome, and recovery
+  should normally climb to `OK` before `GOOD`.
+- Good HRV/PPI should be treated as possible recovery context, not immediate
+  permission to spend energy freely.
+- Sleep/rest windows are evidence and provenance for autonomic reads, not the
+  central model anchor.
+
 Useful mixed-state copy pattern:
 
 > Autonomic signal looks steady, but recent outcomes suggest a lower-function
 > spell.
 
 This is not a contradiction. It is the point of the lane split.
+
+Autonomic context should be descriptive until there is more data. Current
+candidate labels:
+
+| Label | Meaning |
+| --- | --- |
+| Autonomic strain | Low-tail HRV or average RMSSD is low enough to treat the signal cautiously. |
+| Autonomic watch | Lower-tail HRV is mildly subdued. |
+| Recovery momentum | The HRV trajectory rises or dips then recovers, but this is not an upgrade by itself. |
+| Strained, recovering | Low-tail HRV is still strained, while the trajectory rises later in the window. |
+| Autonomic steady | The current HRV distribution and curve do not add an obvious strain flag. |
+| Autonomic drift down | The trajectory falls later in the window. |
+
+The useful hypothesis to track is that low-tail HRV (`p25`/`p10`) and resting HR
+may flag strain, while upper-tail HRV (`p75`/`p90`) and rising curves may show
+recovery potential before usable function returns. Do not promote upper-tail HRV
+or a rising curve into a direct `GOOD` planning state without matching
+functional evidence.
 
 ## Historic Data
 
@@ -141,3 +171,14 @@ and show:
 - missing labels
 
 These are descriptive reports, not causal claims.
+
+Autonomic-lane reports should similarly remain descriptive:
+
+- same-day rough outcome rate for strain and recovery-momentum flags
+- next-day movement after those flags
+- lag windows once there are enough labelled days
+- separate treatment of sleep/rest-window features and full rolling-day features
+
+With the current small single-person dataset, report deltas are hypothesis
+generation only. The robust conclusion so far is that functional inertia matters
+much more than raw autonomic optimism.
