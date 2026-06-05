@@ -9,7 +9,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 STATUS_ORDER = {"GOOD": 0, "OK": 1, "UNSTEADY": 2, "CRASH": 3}
@@ -205,14 +205,28 @@ def quantile(values: list[float], percentile: float) -> float | None:
     return sorted_values[lower] * (1.0 - upper_weight) + sorted_values[upper] * upper_weight
 
 
+def rolling_median(values: list[float], window_size: int) -> list[float]:
+    if len(values) <= 2:
+        return values
+    half_window = window_size // 2
+    smoothed: list[float] = []
+    for index, value in enumerate(values):
+        start = max(0, index - half_window)
+        end = min(len(values), index + half_window + 1)
+        window = values[start:end]
+        smoothed.append(float(median(window)) if window else value)
+    return smoothed
+
+
 def trajectory_shape(values: list[float]) -> tuple[float | None, str | None]:
     if len(values) < 3:
         return None, None
-    third_size = max(1, len(values) // 3)
-    early = mean(values[:third_size])
-    middle_start = max(0, (len(values) - third_size) // 2)
-    middle = mean(values[middle_start:middle_start + third_size])
-    late = mean(values[-third_size:])
+    smoothed = rolling_median(values, window_size=5)
+    third_size = max(1, len(smoothed) // 3)
+    early = mean(smoothed[:third_size])
+    middle_start = max(0, (len(smoothed) - third_size) // 2)
+    middle = mean(smoothed[middle_start:middle_start + third_size])
+    late = mean(smoothed[-third_size:])
     delta = late - early
     min_edge = min(early, late)
     max_edge = max(early, late)
@@ -351,7 +365,7 @@ def outcome_movement_label(trigger_outcome: str | None, worst_outcome: str | Non
 
 
 def major_task_trigger_type(row: sqlite3.Row) -> str | None:
-    if row_bool(row, "majorTask") != True:
+    if row_bool(row, "majorTask") is not True:
         return None
     return row_value(row, "majorTaskType") or "major_task"
 
@@ -359,9 +373,9 @@ def major_task_trigger_type(row: sqlite3.Row) -> str | None:
 def is_lag_affected_day(row: sqlite3.Row) -> bool:
     outcome = review_outcome(row)
     return (
-        row_bool(row, "pemPaybackToday") == True
-        or row_bool(row, "paybackPeakToday") == True
-        or row_bool(row, "mostlyHorizontal") == True
+        row_bool(row, "pemPaybackToday") is True
+        or row_bool(row, "paybackPeakToday") is True
+        or row_bool(row, "mostlyHorizontal") is True
         or outcome in {"UNSTEADY", "CRASH"}
     )
 
@@ -380,8 +394,8 @@ def first_recovery_after_peak(
             continue
         outcome = review_outcome(row)
         if (
-            row_bool(row, "pemPaybackToday") != True
-            and row_bool(row, "mostlyHorizontal") != True
+            row_bool(row, "pemPaybackToday") is not True
+            and row_bool(row, "mostlyHorizontal") is not True
             and outcome in {"GOOD", "OK"}
         ):
             return days_between(peak_date, candidate)
@@ -430,11 +444,11 @@ def build_pem_lag_episodes(
         missing_dates = tuple(day for day in window_dates if day not in reviews_by_date)
         pem_dates = tuple(
             day for day in window_dates
-            if row_bool(reviews_by_date.get(day), "pemPaybackToday") == True
+            if row_bool(reviews_by_date.get(day), "pemPaybackToday") is True
         )
         mostly_horizontal_dates = tuple(
             day for day in window_dates
-            if row_bool(reviews_by_date.get(day), "mostlyHorizontal") == True
+            if row_bool(reviews_by_date.get(day), "mostlyHorizontal") is True
         )
         affected_dates = tuple(
             day for day in window_dates
@@ -442,7 +456,7 @@ def build_pem_lag_episodes(
         )
         peak_dates = [
             day for day in window_dates
-            if row_bool(reviews_by_date.get(day), "paybackPeakToday") == True
+            if row_bool(reviews_by_date.get(day), "paybackPeakToday") is True
         ]
         peak_date = peak_dates[0] if peak_dates else None
         reviewed_outcomes = [
@@ -540,11 +554,11 @@ def pct_delta(current: float | None, baseline: float | None) -> float | None:
 
 def review_functional_status(row: sqlite3.Row | None) -> str | None:
     outcome = review_outcome(row)
-    if row is not None and row_bool(row, "dayShapeCaptured") == True and (
-        row_bool(row, "mostlyHorizontal") == True
-        or row_bool(row, "pemPaybackToday") == True
-        or row_bool(row, "paybackPeakToday") == True
-        or row_bool(row, "muscleWeaknessToday") == True
+    if row is not None and row_bool(row, "dayShapeCaptured") is True and (
+        row_bool(row, "mostlyHorizontal") is True
+        or row_bool(row, "pemPaybackToday") is True
+        or row_bool(row, "paybackPeakToday") is True
+        or row_bool(row, "muscleWeaknessToday") is True
     ):
         return max_status(outcome, "UNSTEADY")
     return outcome
@@ -676,16 +690,16 @@ def autonomic_context(summary: PpiSummary) -> tuple[str, str, bool, bool]:
     falling = summary.trajectory_shape == "Falling"
     if strain and rising:
         label = "Strained, recovering"
-        interpretation = "Lower-tail HRV is still strained, but the curve rose later in the window."
+        interpretation = "Low-tail HRV is still strained, but the curve rose later in the window."
     elif strain:
         label = "Autonomic strain"
-        interpretation = "Lower-tail HRV is low enough to treat the autonomic signal cautiously."
+        interpretation = "Low-tail HRV is low enough to treat the autonomic signal cautiously."
     elif watch and rising:
         label = "Recovery momentum"
         interpretation = "The HRV curve rose later in the window, but this is context rather than an upgrade."
     elif watch:
         label = "Autonomic watch"
-        interpretation = "Lower-tail HRV is a little subdued, so use the current signal cautiously."
+        interpretation = "Low-tail HRV is a little subdued, so use the current signal cautiously."
     elif falling:
         label = "Autonomic drift down"
         interpretation = "The HRV curve drifted down later in the window."

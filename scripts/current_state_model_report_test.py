@@ -271,6 +271,18 @@ class CurrentStateModelReportTest(unittest.TestCase):
         self.assertEqual(day.planning_status, "OK")
         self.assertTrue(any("cautious recovery" in note for note in day.functional_notes))
 
+    def test_trajectory_shape_uses_rolling_median_smoothing(self) -> None:
+        values = [
+            80.0, 80.0, 20.0, 80.0,
+            80.0, 80.0, 80.0, 80.0,
+            80.0, 80.0, 80.0, 80.0,
+        ]
+
+        delta, shape = report_module.trajectory_shape(values)
+
+        self.assertEqual(delta, 0.0)
+        self.assertEqual(shape, "Mostly flat / mixed")
+
     def test_autonomic_context_tracks_strain_and_recovery_momentum_without_status_override(self) -> None:
         values = [48.0, 50.0, 52.0, 54.0, 55.0, 58.0, 62.0, 65.0, 70.0, 76.0, 82.0, 88.0]
         for index, value in enumerate(values):

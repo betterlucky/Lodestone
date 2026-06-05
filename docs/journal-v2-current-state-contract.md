@@ -134,7 +134,7 @@ candidate labels:
 | Label | Meaning |
 | --- | --- |
 | Autonomic strain | Low-tail HRV or average RMSSD is low enough to treat the signal cautiously. |
-| Autonomic watch | Lower-tail HRV is mildly subdued. |
+| Autonomic watch | Low-tail HRV is mildly subdued. |
 | Recovery momentum | The HRV trajectory rises or dips then recovers, but this is not an upgrade by itself. |
 | Strained, recovering | Low-tail HRV is still strained, while the trajectory rises later in the window. |
 | Autonomic steady | The current HRV distribution and curve do not add an obvious strain flag. |

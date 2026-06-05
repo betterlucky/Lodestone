@@ -723,10 +723,10 @@ private fun buildAutonomicContext(
         else -> "Autonomic steady"
     }
     val interpretation = when {
-        strain && rising -> "Lower-tail HRV is still strained, but the curve rose later in the window."
-        strain -> "Lower-tail HRV is low enough to treat the autonomic signal cautiously."
+        strain && rising -> "Low-tail HRV is still strained, but the curve rose later in the window."
+        strain -> "Low-tail HRV is low enough to treat the autonomic signal cautiously."
         watch && rising -> "The HRV curve rose later in the window, but this is context rather than an upgrade."
-        watch -> "Lower-tail HRV is a little subdued, so use the current signal cautiously."
+        watch -> "Low-tail HRV is a little subdued, so use the current signal cautiously."
         falling -> "The HRV curve drifted down later in the window."
         rising -> "The HRV curve rose later in the window, suggesting possible recovery momentum."
         else -> "The HRV distribution and curve do not add an obvious strain flag."

@@ -60,7 +60,8 @@ This note preserves useful context from older Codex project threads that may sta
 - The visible short-term need is more paired data, not a smarter-looking model.
 - The June 4 modelling slice added a recovery-gated functional lane and an
   autonomic strain/momentum context lane. Current local history suggested
-  functional/planning alignment around `25/33` exact, while autonomic-only
+  functional/planning alignment around `25/33` exact day-level matches against
+  saved evening outcomes in the local history slice, while autonomic-only
   remained poor. Treat those numbers as a smoke test, not tuning evidence.
 - Completeness reports need sync-profile context: Check in/morning-core do not
   fetch skin temperature or daily summary, activity sample sync is disabled in
