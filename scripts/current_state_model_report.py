@@ -9,7 +9,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from statistics import mean
+from statistics import mean, median
 from typing import Any
 
 STATUS_ORDER = {"GOOD": 0, "OK": 1, "UNSTEADY": 2, "CRASH": 3}
@@ -35,6 +35,9 @@ class PpiSummary:
     good_epoch_count: int
     poor_epoch_count: int
     mean_rmssd_ms: float | None
+    p25_rmssd_ms: float | None
+    early_late_rmssd_delta_ms: float | None
+    trajectory_shape: str | None
     mean_ppi_ms: float | None
     first_epoch_ms: int | None
     last_epoch_ms: int | None
@@ -67,6 +70,12 @@ class CurrentStateDay:
     ppi_good_epoch_count: int
     ppi_poor_epoch_count: int
     mean_rmssd_ms: float | None
+    p25_rmssd_ms: float | None
+    early_late_rmssd_delta_ms: float | None
+    autonomic_context_label: str
+    autonomic_context_detail: str
+    autonomic_strain_flag: bool
+    autonomic_recovery_momentum: bool
     rmssd_delta_pct: float | None
     mean_ppi_ms: float | None
     ppi_delta_pct: float | None
@@ -182,6 +191,59 @@ def known_dates(conn: sqlite3.Connection, start_date: str | None, end_date: str)
     return sorted(dates)
 
 
+def quantile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    bounded = max(0.0, min(1.0, percentile))
+    index = (len(sorted_values) - 1) * bounded
+    lower = int(index)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    if lower == upper:
+        return sorted_values[lower]
+    upper_weight = index - lower
+    return sorted_values[lower] * (1.0 - upper_weight) + sorted_values[upper] * upper_weight
+
+
+def rolling_median(values: list[float], window_size: int) -> list[float]:
+    if len(values) <= 2:
+        return values
+    half_window = window_size // 2
+    smoothed: list[float] = []
+    for index, value in enumerate(values):
+        start = max(0, index - half_window)
+        end = min(len(values), index + half_window + 1)
+        window = values[start:end]
+        smoothed.append(float(median(window)) if window else value)
+    return smoothed
+
+
+def trajectory_shape(values: list[float]) -> tuple[float | None, str | None]:
+    if len(values) < 3:
+        return None, None
+    smoothed = rolling_median(values, window_size=5)
+    third_size = max(1, len(smoothed) // 3)
+    early = mean(smoothed[:third_size])
+    middle_start = max(0, (len(smoothed) - third_size) // 2)
+    middle = mean(smoothed[middle_start:middle_start + third_size])
+    late = mean(smoothed[-third_size:])
+    delta = late - early
+    min_edge = min(early, late)
+    max_edge = max(early, late)
+    threshold = 8.0
+    if middle <= min_edge - threshold:
+        shape = "Dip then recovery"
+    elif middle >= max_edge + threshold:
+        shape = "Mid-window peak"
+    elif delta >= threshold:
+        shape = "Rising"
+    elif delta <= -threshold:
+        shape = "Falling"
+    else:
+        shape = "Mostly flat / mixed"
+    return round(delta, 2), shape
+
+
 def ppi_summary_from_rows(source_date: str, rows: list[sqlite3.Row]) -> PpiSummary:
     usable_rows = [
         row for row in rows
@@ -197,6 +259,8 @@ def ppi_summary_from_rows(source_date: str, rows: list[sqlite3.Row]) -> PpiSumma
         return [float(row[column]) for row in usable_rows if row[column] is not None]
 
     rmssd_values = numeric_values("rmssdMs")
+    good_rmssd_values = [float(row["rmssdMs"]) for row in good_rows if row["rmssdMs"] is not None]
+    early_late_delta, shape = trajectory_shape(good_rmssd_values)
     ppi_values = numeric_values("meanPpiMs")
     return PpiSummary(
         source_date=source_date,
@@ -205,6 +269,9 @@ def ppi_summary_from_rows(source_date: str, rows: list[sqlite3.Row]) -> PpiSumma
         good_epoch_count=len(good_rows),
         poor_epoch_count=len(poor_rows),
         mean_rmssd_ms=round(mean(rmssd_values), 2) if rmssd_values else None,
+        p25_rmssd_ms=round(quantile(good_rmssd_values, 0.25), 2) if good_rmssd_values else None,
+        early_late_rmssd_delta_ms=early_late_delta,
+        trajectory_shape=shape,
         mean_ppi_ms=round(mean(ppi_values), 2) if ppi_values else None,
         first_epoch_ms=min((row["epochStartEpochMs"] for row in rows), default=None),
         last_epoch_ms=max((row["epochEndEpochMs"] for row in rows), default=None),
@@ -298,7 +365,7 @@ def outcome_movement_label(trigger_outcome: str | None, worst_outcome: str | Non
 
 
 def major_task_trigger_type(row: sqlite3.Row) -> str | None:
-    if row_bool(row, "majorTask") != True:
+    if row_bool(row, "majorTask") is not True:
         return None
     return row_value(row, "majorTaskType") or "major_task"
 
@@ -306,9 +373,9 @@ def major_task_trigger_type(row: sqlite3.Row) -> str | None:
 def is_lag_affected_day(row: sqlite3.Row) -> bool:
     outcome = review_outcome(row)
     return (
-        row_bool(row, "pemPaybackToday") == True
-        or row_bool(row, "paybackPeakToday") == True
-        or row_bool(row, "mostlyHorizontal") == True
+        row_bool(row, "pemPaybackToday") is True
+        or row_bool(row, "paybackPeakToday") is True
+        or row_bool(row, "mostlyHorizontal") is True
         or outcome in {"UNSTEADY", "CRASH"}
     )
 
@@ -327,8 +394,8 @@ def first_recovery_after_peak(
             continue
         outcome = review_outcome(row)
         if (
-            row_bool(row, "pemPaybackToday") != True
-            and row_bool(row, "mostlyHorizontal") != True
+            row_bool(row, "pemPaybackToday") is not True
+            and row_bool(row, "mostlyHorizontal") is not True
             and outcome in {"GOOD", "OK"}
         ):
             return days_between(peak_date, candidate)
@@ -377,11 +444,11 @@ def build_pem_lag_episodes(
         missing_dates = tuple(day for day in window_dates if day not in reviews_by_date)
         pem_dates = tuple(
             day for day in window_dates
-            if row_bool(reviews_by_date.get(day), "pemPaybackToday") == True
+            if row_bool(reviews_by_date.get(day), "pemPaybackToday") is True
         )
         mostly_horizontal_dates = tuple(
             day for day in window_dates
-            if row_bool(reviews_by_date.get(day), "mostlyHorizontal") == True
+            if row_bool(reviews_by_date.get(day), "mostlyHorizontal") is True
         )
         affected_dates = tuple(
             day for day in window_dates
@@ -389,7 +456,7 @@ def build_pem_lag_episodes(
         )
         peak_dates = [
             day for day in window_dates
-            if row_bool(reviews_by_date.get(day), "paybackPeakToday") == True
+            if row_bool(reviews_by_date.get(day), "paybackPeakToday") is True
         ]
         peak_date = peak_dates[0] if peak_dates else None
         reviewed_outcomes = [
@@ -485,43 +552,75 @@ def pct_delta(current: float | None, baseline: float | None) -> float | None:
     return round((current - baseline) / baseline, 4)
 
 
+def review_functional_status(row: sqlite3.Row | None) -> str | None:
+    outcome = review_outcome(row)
+    if row is not None and row_bool(row, "dayShapeCaptured") is True and (
+        row_bool(row, "mostlyHorizontal") is True
+        or row_bool(row, "pemPaybackToday") is True
+        or row_bool(row, "paybackPeakToday") is True
+        or row_bool(row, "muscleWeaknessToday") is True
+    ):
+        return max_status(outcome, "UNSTEADY")
+    return outcome
+
+
+def max_status(*statuses: str | None) -> str | None:
+    values = [status for status in statuses if status in STATUS_ORDER]
+    return max(values, key=lambda item: STATUS_ORDER[item]) if values else None
+
+
 def recent_functional_context(conn: sqlite3.Connection, source_date: str) -> tuple[str | None, int, list[str]]:
     target = date.fromisoformat(source_date)
     prior_reviews: list[sqlite3.Row] = []
-    for offset in range(1, 4):
+    for offset in range(1, 6):
         review = daily_review(conn, (target - timedelta(days=offset)).isoformat())
         if review is not None:
             prior_reviews.append(review)
     if not prior_reviews:
         return None, 0, []
 
-    latest_outcome = prior_reviews[0]["eveningOutcome"]
-    rough_days = sum(1 for row in prior_reviews if row["eveningOutcome"] in {"UNSTEADY", "CRASH"})
-    penalty = 0
+    latest_outcome = review_functional_status(prior_reviews[0])
+    recent_statuses = [status for status in (review_functional_status(row) for row in prior_reviews) if status in STATUS_ORDER]
+    worst_recent = max_status(*recent_statuses)
+    consecutive_stable_days = 0
+    for row in prior_reviews:
+        status = review_functional_status(row)
+        if status not in STATUS_ORDER or STATUS_ORDER[status] >= STATUS_ORDER["UNSTEADY"]:
+            break
+        consecutive_stable_days += 1
+
+    functional_status: str | None
+    recovering_from_lower_function = False
+    if worst_recent in {"UNSTEADY", "CRASH"}:
+        if consecutive_stable_days == 0:
+            functional_status = worst_recent
+        else:
+            functional_status = "UNSTEADY" if worst_recent == "CRASH" else "OK"
+            recovering_from_lower_function = True
+    else:
+        functional_status = latest_outcome if latest_outcome in {"GOOD", "OK"} else worst_recent
+
     notes: list[str] = []
     if latest_outcome == "CRASH":
-        penalty += 2
         notes.append("The previous saved outcome was CRASH.")
     elif latest_outcome == "UNSTEADY":
-        penalty += 1
         notes.append("The previous saved outcome was UNSTEADY.")
-    if rough_days >= 2:
-        penalty += 1
+    if sum(1 for status in recent_statuses if status in {"UNSTEADY", "CRASH"}) >= 2:
         notes.append("Recent saved outcomes have been repeatedly rough.")
     if any(row_bool(row, "pemPaybackToday") for row in prior_reviews):
-        penalty += 1
         notes.append("Recent Journal V2 markers include PEM/payback.")
     if any(row_bool(row, "paybackPeakToday") for row in prior_reviews):
-        penalty += 1
         notes.append("A recent day was marked as the peak of a payback spell.")
     if any(row_bool(row, "mostlyHorizontal") for row in prior_reviews):
-        penalty += 1
         notes.append("Recent day-shape markers include mostly-horizontal time.")
     if any(row_value(row, "majorTaskType") == "site_visit" for row in prior_reviews):
         notes.append("A recent major-task marker was a site visit.")
-    if penalty == 0 and latest_outcome in {"GOOD", "OK"}:
+    if recovering_from_lower_function and worst_recent is not None:
+        notes.append(f"Recent outcomes suggest cautious recovery after {worst_recent}.")
+    if not notes and latest_outcome in {"GOOD", "OK"}:
         notes.append(f"The previous saved outcome was {latest_outcome}.")
-    return latest_outcome, min(penalty, 3), notes
+    severity = STATUS_ORDER[functional_status] if functional_status in STATUS_ORDER else 0
+    return latest_outcome, severity, notes
 
 
 def functional_status_from_context(
@@ -558,6 +657,63 @@ def combine_planning_status(
     if autonomic_score > functional_score:
         return autonomic_status, "autonomic_limited"
     return autonomic_status, autonomic_stability
+
+
+def signed_ms(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}{abs(value):.0f} ms"
+
+
+def autonomic_context(summary: PpiSummary) -> tuple[str, str, bool, bool]:
+    if not summary.available:
+        return (
+            "Autonomic context unavailable",
+            "No usable PPI evidence is available for strain or recovery momentum.",
+            False,
+            False,
+        )
+    if summary.good_epoch_count < 12 or summary.p25_rmssd_ms is None:
+        return (
+            "Autonomic average only",
+            f"RMSSD average is {summary.mean_rmssd_ms:.0f} ms, but clean PPI coverage is too thin for strain or momentum.",
+            False,
+            False,
+        )
+
+    p25 = summary.p25_rmssd_ms
+    average = summary.mean_rmssd_ms or 0.0
+    strain = p25 <= 60.0 or average <= 60.0
+    watch = strain or p25 <= 64.0 or average <= 70.0
+    rising = summary.trajectory_shape in {"Rising", "Dip then recovery"}
+    falling = summary.trajectory_shape == "Falling"
+    if strain and rising:
+        label = "Strained, recovering"
+        interpretation = "Low-tail HRV is still strained, but the curve rose later in the window."
+    elif strain:
+        label = "Autonomic strain"
+        interpretation = "Low-tail HRV is low enough to treat the autonomic signal cautiously."
+    elif watch and rising:
+        label = "Recovery momentum"
+        interpretation = "The HRV curve rose later in the window, but this is context rather than an upgrade."
+    elif watch:
+        label = "Autonomic watch"
+        interpretation = "Low-tail HRV is a little subdued, so use the current signal cautiously."
+    elif falling:
+        label = "Autonomic drift down"
+        interpretation = "The HRV curve drifted down later in the window."
+    elif rising:
+        label = "Recovery momentum"
+        interpretation = "The HRV curve rose later in the window, suggesting possible recovery momentum."
+    else:
+        label = "Autonomic steady"
+        interpretation = "The HRV distribution and curve do not add an obvious strain flag."
+    detail = (
+        f"P25 RMSSD {p25:.0f} ms, average {average:.0f} ms, "
+        f"early-late {signed_ms(summary.early_late_rmssd_delta_ms)}. {interpretation}"
+    )
+    return label, detail, strain, rising
 
 
 def state_from_evidence(
@@ -641,6 +797,7 @@ def build_day(conn: sqlite3.Connection, source_date: str, baseline_days: int) ->
         functional_status,
         autonomic_stability,
     )
+    autonomic_context_label, autonomic_context_detail, autonomic_strain, autonomic_recovery = autonomic_context(summary)
     notes = list(autonomic_notes)
     if functional_notes:
         notes.extend(functional_notes)
@@ -669,6 +826,12 @@ def build_day(conn: sqlite3.Connection, source_date: str, baseline_days: int) ->
         ppi_good_epoch_count=summary.good_epoch_count,
         ppi_poor_epoch_count=summary.poor_epoch_count,
         mean_rmssd_ms=summary.mean_rmssd_ms,
+        p25_rmssd_ms=summary.p25_rmssd_ms,
+        early_late_rmssd_delta_ms=summary.early_late_rmssd_delta_ms,
+        autonomic_context_label=autonomic_context_label,
+        autonomic_context_detail=autonomic_context_detail,
+        autonomic_strain_flag=autonomic_strain,
+        autonomic_recovery_momentum=autonomic_recovery,
         rmssd_delta_pct=rmssd_delta,
         mean_ppi_ms=summary.mean_ppi_ms,
         ppi_delta_pct=ppi_delta,
@@ -744,6 +907,90 @@ def current_vs_old(days: list[CurrentStateDay]) -> dict[str, Any]:
     }
 
 
+def rough_outcome(outcome: str | None) -> bool:
+    return outcome in {"UNSTEADY", "CRASH"}
+
+
+def rate(numerator: int, denominator: int) -> float | None:
+    if denominator == 0:
+        return None
+    return round(numerator / denominator, 3)
+
+
+def autonomic_context_outcomes(days: list[CurrentStateDay]) -> dict[str, Any]:
+    paired = [day for day in days if day.has_outcome and day.p25_rmssd_ms is not None]
+    label_counts: dict[str, dict[str, int]] = {}
+    for label, rows in group_by(paired, lambda day: day.autonomic_context_label).items():
+        label_counts[label] = dict(Counter(day.evening_outcome for day in rows if day.evening_outcome))
+
+    def flag_summary(flag_attr: str) -> dict[str, Any]:
+        flagged = [day for day in paired if getattr(day, flag_attr)]
+        unflagged = [day for day in paired if not getattr(day, flag_attr)]
+        flagged_rough = sum(rough_outcome(day.evening_outcome) for day in flagged)
+        unflagged_rough = sum(rough_outcome(day.evening_outcome) for day in unflagged)
+        return {
+            "paired_count": len(paired),
+            "flagged_count": len(flagged),
+            "flagged_rough_count": flagged_rough,
+            "flagged_rough_rate": rate(flagged_rough, len(flagged)),
+            "unflagged_count": len(unflagged),
+            "unflagged_rough_count": unflagged_rough,
+            "unflagged_rough_rate": rate(unflagged_rough, len(unflagged)),
+        }
+
+    return {
+        "paired_count": len(paired),
+        "label_outcome_counts": label_counts,
+        "strain": flag_summary("autonomic_strain_flag"),
+        "recovery_momentum": flag_summary("autonomic_recovery_momentum"),
+    }
+
+
+def next_day_movement(current: str | None, next_outcome: str | None) -> str | None:
+    if current not in OUTCOME_ORDER or next_outcome not in OUTCOME_ORDER:
+        return None
+    delta = OUTCOME_ORDER[next_outcome] - OUTCOME_ORDER[current]
+    if delta > 0:
+        return "next_worse"
+    if delta < 0:
+        return "next_better"
+    return "next_same"
+
+
+def autonomic_context_next_day(days: list[CurrentStateDay]) -> dict[str, Any]:
+    by_date = {day.source_date: day for day in days}
+    paired: list[tuple[CurrentStateDay, str]] = []
+    for day in days:
+        next_date = (date.fromisoformat(day.source_date) + timedelta(days=1)).isoformat()
+        movement = next_day_movement(day.evening_outcome, by_date.get(next_date).evening_outcome if next_date in by_date else None)
+        if movement and day.p25_rmssd_ms is not None:
+            paired.append((day, movement))
+
+    def movement_summary(flag_attr: str) -> dict[str, Any]:
+        flagged = [movement for day, movement in paired if getattr(day, flag_attr)]
+        unflagged = [movement for day, movement in paired if not getattr(day, flag_attr)]
+        return {
+            "paired_count": len(paired),
+            "flagged_count": len(flagged),
+            "flagged_movements": dict(Counter(flagged)),
+            "unflagged_count": len(unflagged),
+            "unflagged_movements": dict(Counter(unflagged)),
+        }
+
+    return {
+        "paired_count": len(paired),
+        "strain": movement_summary("autonomic_strain_flag"),
+        "recovery_momentum": movement_summary("autonomic_recovery_momentum"),
+    }
+
+
+def group_by(items: list[CurrentStateDay], key_fn) -> dict[str, list[CurrentStateDay]]:
+    grouped: dict[str, list[CurrentStateDay]] = {}
+    for item in items:
+        grouped.setdefault(key_fn(item), []).append(item)
+    return grouped
+
+
 def build_report(conn: sqlite3.Connection, start_date: str | None, end_date: str, baseline_days: int) -> dict[str, Any]:
     days = [build_day(conn, source_date, baseline_days) for source_date in known_dates(conn, start_date, end_date)]
     planning_alignment = alignment_for(days, "planning_status")
@@ -769,12 +1016,17 @@ def build_report(conn: sqlite3.Connection, start_date: str | None, end_date: str
         "planning_state_counts": dict(Counter(day.planning_status or "missing" for day in days)),
         "state_counts": dict(Counter(day.current_status or "missing" for day in days)),
         "stability_counts": dict(Counter(day.state_stability for day in days)),
+        "autonomic_context_counts": dict(Counter(day.autonomic_context_label for day in days)),
+        "autonomic_strain_days": sum(day.autonomic_strain_flag for day in days),
+        "autonomic_recovery_momentum_days": sum(day.autonomic_recovery_momentum for day in days),
         "current_alignment": planning_alignment,
         "planning_alignment": planning_alignment,
         "autonomic_alignment": autonomic_alignment,
         "functional_alignment": functional_alignment,
         "old_readiness_alignment": old_alignment,
         "current_vs_old": current_vs_old(days),
+        "autonomic_context_outcomes": autonomic_context_outcomes(days),
+        "autonomic_context_next_day": autonomic_context_next_day(days),
         "pem_lag_episode_count": len(pem_lag_episodes),
         "pem_lag_episodes": [asdict(episode) for episode in pem_lag_episodes],
         "days": [asdict(day) for day in days],
@@ -806,6 +1058,28 @@ def print_alignment(title: str, alignment: dict[str, Any]) -> None:
     print()
 
 
+def print_autonomic_context_checks(report: dict[str, Any]) -> None:
+    outcomes = report["autonomic_context_outcomes"]
+    next_day = report["autonomic_context_next_day"]
+    print("Autonomic context checks")
+    print(f"  paired context/outcome days: {outcomes['paired_count']}")
+    for key, label in (("strain", "strain"), ("recovery_momentum", "recovery momentum")):
+        summary = outcomes[key]
+        print(
+            f"  {label}: {summary['flagged_count']} flagged, "
+            f"rough={summary['flagged_rough_count']} rate={summary['flagged_rough_rate']}; "
+            f"unflagged rough rate={summary['unflagged_rough_rate']}"
+        )
+    print(f"  paired next-day movements: {next_day['paired_count']}")
+    for key, label in (("strain", "strain"), ("recovery_momentum", "recovery momentum")):
+        summary = next_day[key]
+        print(
+            f"  {label} next-day: flagged={summary['flagged_movements'] or {}}, "
+            f"unflagged={summary['unflagged_movements'] or {}}"
+        )
+    print()
+
+
 def print_report(report: dict[str, Any]) -> None:
     print("Current-state baseline v2")
     print(f"  days scanned: {report['day_count']}")
@@ -828,6 +1102,11 @@ def print_report(report: dict[str, Any]) -> None:
     print("Autonomic statuses")
     for key, count in sorted(report["autonomic_state_counts"].items(), key=lambda item: STATUS_ORDER.get(item[0], 99)):
         print(f"  {key}: {count}")
+    print("Autonomic context")
+    for key, count in sorted(report["autonomic_context_counts"].items()):
+        print(f"  {key}: {count}")
+    print(f"  strain flags: {report['autonomic_strain_days']}")
+    print(f"  recovery momentum flags: {report['autonomic_recovery_momentum_days']}")
     print("Functional statuses")
     for key, count in sorted(report["functional_state_counts"].items(), key=lambda item: STATUS_ORDER.get(item[0], 99)):
         print(f"  {key}: {count}")
@@ -839,6 +1118,7 @@ def print_report(report: dict[str, Any]) -> None:
     print_alignment("Functional lane alignment", report["functional_alignment"])
     print_alignment("Planning-state alignment", report["planning_alignment"])
     print_alignment("Old readiness alignment", report["old_readiness_alignment"])
+    print_autonomic_context_checks(report)
     comparison = report["current_vs_old"]
     print("Current-state vs old readiness")
     print(f"  comparable days: {comparison['comparable_days']}")

@@ -3,6 +3,7 @@ package com.daveharris.healthmonitor.ui
 import com.daveharris.healthmonitor.ACTIVE_BEDTIME_MARKER_DURATION
 import com.daveharris.healthmonitor.ACTIVE_WAKE_MARKER_DURATION
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
+import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.MorningReadSource
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
@@ -89,6 +90,12 @@ data class NowFunctionalContext(
     val detail: String
 )
 
+private data class FunctionalRecoveryGate(
+    val status: TrafficLightStatus?,
+    val worstRecentStatus: TrafficLightStatus?,
+    val recoveringFromLowerFunction: Boolean
+)
+
 data class NowSignalRobustness(
     val availability: NowDataAvailability,
     val label: String,
@@ -105,6 +112,14 @@ data class NowStateStability(
     val availability: NowDataAvailability,
     val label: String,
     val detail: String
+)
+
+data class NowAutonomicContext(
+    val availability: NowDataAvailability,
+    val label: String,
+    val detail: String,
+    val strainFlag: Boolean,
+    val recoveryMomentum: Boolean
 )
 
 data class NowFreshness(
@@ -159,6 +174,7 @@ data class NowScreenState(
     val functionalContext: NowFunctionalContext,
     val signalRobustness: NowSignalRobustness,
     val stateStability: NowStateStability,
+    val autonomicContext: NowAutonomicContext,
     val freshness: NowFreshness,
     val markerStatus: NowMarkerStatus,
     val primaryActions: NowPrimaryActions,
@@ -227,6 +243,7 @@ fun buildNowScreenState(
         dailyCheckIns = dailyCheckIns
     )
     val stateStability = buildStateStability(relevantMorningRead, noMainSleep)
+    val autonomicContext = buildAutonomicContext(relevantMorningRead, noMainSleep)
     val currentState = buildCurrentState(
         morningRead = relevantMorningRead,
         noMainSleep = noMainSleep,
@@ -264,6 +281,7 @@ fun buildNowScreenState(
         functionalContext = functionalContext,
         signalRobustness = signalRobustness,
         stateStability = stateStability,
+        autonomicContext = autonomicContext,
         freshness = freshness,
         markerStatus = markerStatus,
         primaryActions = primaryActions,
@@ -439,8 +457,8 @@ private fun buildFunctionalContext(
         )
     }
 
-    val statuses = recentRows.mapNotNull { (_, row) -> row.functionalStatus() }
-    val status = statuses.maxByOrNull { it.severityRank() }
+    val recoveryGate = recentRows.recoveryGate()
+    val status = recoveryGate.status
     val latest = recentRows.first().second
     val lowerFunction = status != null && status.severityRank() >= TrafficLightStatus.UNSTEADY.severityRank()
     val anchors = recentRows.flatMap { (_, row) -> row.functionalAnchors() }.distinct()
@@ -448,6 +466,9 @@ private fun buildFunctionalContext(
     val detailParts = buildList {
         add("$rowCount Journal outcome${if (rowCount == 1) "" else "s"} in the last 5 days")
         latest.functionalStatus()?.let { add("latest ${labelForStatus(it.name)} on ${latest.sourceDate}") }
+        recoveryGate.worstRecentStatus
+            ?.takeIf { recoveryGate.recoveringFromLowerFunction }
+            ?.let { add("recovering after recent ${labelForStatus(it.name)}") }
         if (anchors.isNotEmpty()) add(anchors.joinToString(", "))
         if (recentRows.any { (_, row) -> row.dayShapeCaptured != true }) add("some day-shape unknown")
     }
@@ -461,6 +482,8 @@ private fun buildFunctionalContext(
         },
         detail = if (lowerFunction) {
             "Recent outcomes suggest a lower-function spell: ${detailParts.joinToString("; ")}."
+        } else if (recoveryGate.recoveringFromLowerFunction) {
+            "Recent outcomes suggest cautious recovery: ${detailParts.joinToString("; ")}."
         } else {
             "Recent functional context: ${detailParts.joinToString("; ")}."
         }
@@ -499,6 +522,47 @@ private fun DailyCheckInEntity.functionalAnchors(): List<String> {
         if (paybackPeakToday == true) add("payback peak")
         if (muscleWeaknessToday) add("muscle weakness")
     }
+}
+
+private fun List<Pair<LocalDate, DailyCheckInEntity>>.recoveryGate(): FunctionalRecoveryGate {
+    val statuses = mapNotNull { (_, row) -> row.functionalStatus() }
+    val worstRecent = statuses.maxByOrNull { it.severityRank() }
+    val latest = firstOrNull()?.second?.functionalStatus()
+    if (worstRecent == null) {
+        return FunctionalRecoveryGate(
+            status = null,
+            worstRecentStatus = null,
+            recoveringFromLowerFunction = false
+        )
+    }
+    if (worstRecent.severityRank() < TrafficLightStatus.UNSTEADY.severityRank()) {
+        return FunctionalRecoveryGate(
+            status = latest ?: worstRecent,
+            worstRecentStatus = worstRecent,
+            recoveringFromLowerFunction = false
+        )
+    }
+
+    val consecutiveStableRows = takeWhile { (_, row) ->
+        row.functionalStatus()?.let { it.severityRank() <= TrafficLightStatus.OK.severityRank() } == true
+    }.size
+    if (consecutiveStableRows == 0) {
+        return FunctionalRecoveryGate(
+            status = worstRecent,
+            worstRecentStatus = worstRecent,
+            recoveringFromLowerFunction = false
+        )
+    }
+    val recoveredStatus = if (worstRecent == TrafficLightStatus.CRASH) {
+        TrafficLightStatus.UNSTEADY
+    } else {
+        TrafficLightStatus.OK
+    }
+    return FunctionalRecoveryGate(
+        status = recoveredStatus,
+        worstRecentStatus = worstRecent,
+        recoveringFromLowerFunction = true
+    )
 }
 
 private fun NowFunctionalContext.disagreesWithAutonomic(autonomicStatus: TrafficLightStatus?): Boolean =
@@ -602,6 +666,163 @@ private fun buildStateStability(
         label = label,
         detail = "$goodEpochs usable PPI windows across ${String.format(java.util.Locale.UK, "%.1fh", coverageHours)}."
     )
+}
+
+private fun buildAutonomicContext(
+    morningRead: MorningReadSnapshot?,
+    noMainSleep: Boolean
+): NowAutonomicContext {
+    if (noMainSleep) {
+        return NowAutonomicContext(
+            availability = NowDataAvailability.NOT_APPLICABLE,
+            label = "Not applicable",
+            detail = "No main sleep is saved for this date, so Lodestone is not anchoring an autonomic trajectory.",
+            strainFlag = false,
+            recoveryMomentum = false
+        )
+    }
+    if (morningRead == null) {
+        return NowAutonomicContext(
+            availability = NowDataAvailability.MISSING,
+            label = "Autonomic context unavailable",
+            detail = "Sync current PPI before reading autonomic strain or recovery momentum.",
+            strainFlag = false,
+            recoveryMomentum = false
+        )
+    }
+
+    val points = morningRead.hrvTrajectory
+        .filter { it.epochQuality.equals("good", ignoreCase = true) }
+        .sortedBy { it.epochStartEpochMs }
+    if (points.size < 12) {
+        return NowAutonomicContext(
+            availability = if (morningRead.nightlyRmssd != null) NowDataAvailability.PARTIAL else NowDataAvailability.MISSING,
+            label = if (morningRead.nightlyRmssd != null) "Autonomic average only" else "Autonomic context unavailable",
+            detail = morningRead.nightlyRmssd?.let {
+                "RMSSD average is ${it.toInt()} ms, but there are not enough PPI windows to describe strain or momentum."
+            } ?: "Need at least 12 clean PPI windows before describing strain or momentum.",
+            strainFlag = false,
+            recoveryMomentum = false
+        )
+    }
+
+    val summary = autonomicTrajectorySummary(points)
+    val p25 = summary.p25RmssdMs
+    val average = summary.averageRmssdMs
+    val strain = p25 <= 60.0 || average <= 60.0
+    val watch = strain || p25 <= 64.0 || average <= 70.0
+    val rising = summary.shapeLabel == "Rising" || summary.shapeLabel == "Dip then recovery"
+    val falling = summary.shapeLabel == "Falling"
+    val label = when {
+        strain && rising -> "Strained, recovering"
+        strain -> "Autonomic strain"
+        watch && rising -> "Recovery momentum"
+        watch -> "Autonomic watch"
+        falling -> "Autonomic drift down"
+        rising -> "Recovery momentum"
+        else -> "Autonomic steady"
+    }
+    val interpretation = when {
+        strain && rising -> "Low-tail HRV is still strained, but the curve rose later in the window."
+        strain -> "Low-tail HRV is low enough to treat the autonomic signal cautiously."
+        watch && rising -> "The HRV curve rose later in the window, but this is context rather than an upgrade."
+        watch -> "Low-tail HRV is a little subdued, so use the current signal cautiously."
+        falling -> "The HRV curve drifted down later in the window."
+        rising -> "The HRV curve rose later in the window, suggesting possible recovery momentum."
+        else -> "The HRV distribution and curve do not add an obvious strain flag."
+    }
+    return NowAutonomicContext(
+        availability = NowDataAvailability.PRESENT,
+        label = label,
+        detail = "P25 RMSSD ${p25.toInt()} ms, average ${average.toInt()} ms, early-late ${formatSignedMs(summary.earlyLateDeltaMs)}. $interpretation",
+        strainFlag = strain,
+        recoveryMomentum = rising
+    )
+}
+
+private data class AutonomicTrajectorySummary(
+    val averageRmssdMs: Double,
+    val p25RmssdMs: Double,
+    val earlyLateDeltaMs: Double,
+    val shapeLabel: String
+)
+
+private fun autonomicTrajectorySummary(points: List<HrvTrajectoryPoint>): AutonomicTrajectorySummary {
+    val values = points.map { it.rmssdMs }
+    val smooth = rollingMedianRmssd(values, windowSize = 5)
+    val thirdSize = (smooth.size / 3).coerceAtLeast(1)
+    val early = smooth.take(thirdSize).average()
+    val middleStart = ((smooth.size - thirdSize) / 2).coerceAtLeast(0)
+    val middle = smooth.drop(middleStart).take(thirdSize).average()
+    val late = smooth.takeLast(thirdSize).average()
+    val delta = late - early
+    val shape = autonomicShapeLabel(
+        early = early,
+        middle = middle,
+        late = late,
+        linearDelta = delta
+    )
+    return AutonomicTrajectorySummary(
+        averageRmssdMs = values.average(),
+        p25RmssdMs = values.quantile(0.25),
+        earlyLateDeltaMs = delta,
+        shapeLabel = shape
+    )
+}
+
+private fun rollingMedianRmssd(values: List<Double>, windowSize: Int): List<Double> {
+    if (values.size <= 2) return values
+    val halfWindow = windowSize / 2
+    return values.mapIndexed { index, value ->
+        val start = (index - halfWindow).coerceAtLeast(0)
+        val endExclusive = (index + halfWindow + 1).coerceAtMost(values.size)
+        values.subList(start, endExclusive).medianOrNull() ?: value
+    }
+}
+
+private fun autonomicShapeLabel(
+    early: Double,
+    middle: Double,
+    late: Double,
+    linearDelta: Double
+): String {
+    val minEdge = minOf(early, late)
+    val maxEdge = maxOf(early, late)
+    val threshold = 8.0
+    return when {
+        middle <= minEdge - threshold -> "Dip then recovery"
+        middle >= maxEdge + threshold -> "Mid-window peak"
+        linearDelta >= threshold -> "Rising"
+        linearDelta <= -threshold -> "Falling"
+        else -> "Mostly flat / mixed"
+    }
+}
+
+private fun List<Double>.quantile(percentile: Double): Double {
+    val sorted = sorted()
+    if (sorted.isEmpty()) return 0.0
+    val index = (sorted.size - 1) * percentile.coerceIn(0.0, 1.0)
+    val lower = kotlin.math.floor(index).toInt()
+    val upper = kotlin.math.ceil(index).toInt()
+    if (lower == upper) return sorted[lower]
+    val upperWeight = index - lower
+    return sorted[lower] * (1.0 - upperWeight) + sorted[upper] * upperWeight
+}
+
+private fun List<Double>.medianOrNull(): Double? {
+    if (isEmpty()) return null
+    val sorted = sorted()
+    val middle = sorted.size / 2
+    return if (sorted.size % 2 == 0) {
+        (sorted[middle - 1] + sorted[middle]) / 2.0
+    } else {
+        sorted[middle]
+    }
+}
+
+private fun formatSignedMs(value: Double): String {
+    val sign = if (value >= 0) "+" else "-"
+    return "$sign${kotlin.math.abs(value).toInt()} ms"
 }
 
 private fun buildFreshness(

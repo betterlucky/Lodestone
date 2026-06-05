@@ -30,6 +30,16 @@ This note preserves useful context from older Codex project threads that may sta
 - **Do not overclaim.** The model is still provisional/deterministic. Do not present traffic-light output as proven until enough paired daily prediction/outcome data exists.
 - **Polar Loop/Polar 360 is the main target.** Garmin is useful as a comparison sidecar but is brittle enough that it should not drive the main architecture unless explicitly reopened.
 - **Raw PPI matters.** `PPI_247` is the important autonomic lane when present. `HR_247`, Nightly Recharge, sleep report data, respiration, skin temperature, activity context, and subjective labels are supporting lanes.
+- **Functional inertia is the current planning anchor.** Recent rough function,
+  PEM, or mostly-horizontal state should persist until a later stable outcome
+  suggests cautious recovery. Good HRV/PPI can show recovery context, but should
+  not erase a lower-function spell by itself.
+- **Autonomic context is descriptive.** Low-tail HRV and HR may flag strain;
+  rising curves or upper-tail HRV may suggest recovery momentum. Treat those as
+  hypotheses and report-side tracking, not direct traffic-light overrides.
+- **Sleep/rest windows are evidence, not the throne.** They provide useful
+  stillness/provenance for PPI interpretation, but the current-state framing
+  should not assume one canonical main sleep.
 - **Flow handoff is practical reality.** Polar Flow competes for the single BLE connection. Lodestone should provide clear handoff/retry behaviour rather than promising seamless coexistence.
 - **Food stays separate.** FoodLog owns food capture. Lodestone imports daily CSVs and weight rows from the FoodLog workflow.
 - **User-selected date matters.** Review/import/reset behaviour should respect the active review date and should not accidentally rewrite ratings or notes for another date.
@@ -48,6 +58,11 @@ This note preserves useful context from older Codex project threads that may sta
 - Garmin Connect/givemydata access is fragile on macOS because of browser automation, permissions, Chrome profile/driver issues, and possible rate limits.
 - H10/Sleep2/Health Connect are calibration routes, not normal daily workflow. Sleep2 screenshot import uses the selected review date, so backdated imports need care.
 - The visible short-term need is more paired data, not a smarter-looking model.
+- The June 4 modelling slice added a recovery-gated functional lane and an
+  autonomic strain/momentum context lane. Current local history suggested
+  functional/planning alignment around `25/33` exact day-level matches against
+  saved evening outcomes in the local history slice, while autonomic-only
+  remained poor. Treat those numbers as a smoke test, not tuning evidence.
 - Completeness reports need sync-profile context: Check in/morning-core do not
   fetch skin temperature or daily summary, activity sample sync is disabled in
   the current build, and HR/skin/activity raw rows may be pruned after derived
