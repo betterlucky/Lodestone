@@ -3,6 +3,7 @@ package com.daveharris.healthmonitor.ui
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import java.time.LocalDate
@@ -34,7 +35,7 @@ class HistoryScreenTest {
                 prediction("2026-05-31", issuedAt = 1, status = TrafficLightStatus.OK.name, sleepMinutes = 450),
                 prediction("2026-05-31", issuedAt = 2, status = TrafficLightStatus.UNSTEADY.name, sleepMinutes = 210)
             ),
-            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name)),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name, manualGripStrengthKg = 28.5)),
             foodSummaries = listOf(food("2026-05-31")),
             weights = listOf(weight("2026-05-31"))
         )
@@ -153,6 +154,23 @@ class HistoryScreenTest {
     }
 
     @Test
+    fun reportsImportedGripSessionsAsFunctionalEvidence() {
+        val reports = buildHistoryDayReports(
+            predictions = emptyList(),
+            checkIns = emptyList(),
+            foodSummaries = emptyList(),
+            weights = emptyList(),
+            gripSessions = listOf(gripSession("2026-05-31"))
+        )
+
+        val report = reports.single()
+        assertEquals("2026-05-31", report.sourceDate)
+        assertEquals("grip", report.dataCompletenessLabel)
+        assertTrue(report.gripStrengthLabel.contains("1 session"))
+        assertTrue(report.gripStrengthLabel.contains("best 35.1 kg"))
+    }
+
+    @Test
     fun reportBuilderHandlesLargerLocalHistoryWithoutDroppingRows() {
         val start = LocalDate.parse("2020-01-01")
         val dates = (0 until 2_000).map { start.plusDays(it.toLong()).toString() }
@@ -214,7 +232,8 @@ class HistoryScreenTest {
         outcome: String,
         dayShapeCaptured: Boolean? = null,
         mostlyHorizontal: Boolean? = null,
-        pemPaybackToday: Boolean? = null
+        pemPaybackToday: Boolean? = null,
+        manualGripStrengthKg: Double? = null
     ): DailyCheckInEntity =
         DailyCheckInEntity(
             sourceDate = sourceDate,
@@ -232,7 +251,7 @@ class HistoryScreenTest {
             pemPaybackToday = pemPaybackToday,
             paybackPeakToday = false,
             paybackPeakConfidence = null,
-            manualGripStrengthKg = 28.5
+            manualGripStrengthKg = manualGripStrengthKg
         )
 
     private fun food(
@@ -261,6 +280,34 @@ class HistoryScreenTest {
             measuredTime = measuredTime,
             weightKg = 70.0,
             notes = null,
+            importSource = "test",
+            importedAtEpochMs = 1
+        )
+
+    private fun gripSession(sourceDate: String): GripSessionEntity =
+        GripSessionEntity(
+            sessionId = "grip-$sourceDate-test",
+            sourceDate = sourceDate,
+            startedAtEpochMs = 1,
+            startedAtLocal = "${sourceDate}T09:00:00+01:00",
+            hand = "left",
+            protocolLabel = "check_2",
+            pullSeconds = 3.0,
+            restSeconds = 5.0,
+            expectedRepCount = 2,
+            setNumber = 1,
+            restGapMinutes = null,
+            deviceLabel = null,
+            bodyPosition = null,
+            armPosition = null,
+            handleSetting = null,
+            notes = null,
+            completedRepCount = 2,
+            bestValueKg = 35.1,
+            meanValueKg = 32.0,
+            firstValueKg = 35.1,
+            lastValueKg = 29.0,
+            bestToLastDropPct = 17.38,
             importSource = "test",
             importedAtEpochMs = 1
         )

@@ -57,6 +57,8 @@ fun ProbeApp(
     onRequestPermissions: () -> Unit,
     onImportFoodCsv: () -> Unit,
     onSetFoodFolder: () -> Unit,
+    onImportGripCsv: () -> Unit,
+    onSetGripFolder: () -> Unit,
     onImportSleep2Screenshot: () -> Unit,
     onRequestHealthConnectPermissions: () -> Unit,
     onOpenHealthConnectSettings: () -> Unit
@@ -69,6 +71,7 @@ fun ProbeApp(
     val dailyCheckIns by viewModel.dailyCheckIns.collectAsState()
     val foodDailySummaries by viewModel.foodDailySummaries.collectAsState()
     val dailyWeights by viewModel.dailyWeights.collectAsState()
+    val gripSessions by viewModel.gripSessions.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
     val morningPredictionSnapshots by viewModel.morningPredictionSnapshots.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
@@ -172,6 +175,7 @@ fun ProbeApp(
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
                             viewModel = viewModel,
                             onSetFoodFolder = onSetFoodFolder,
+                            onSetGripFolder = onSetGripFolder,
                             onImportSleep2Screenshot = onImportSleep2Screenshot,
                             onRequestHealthConnectPermissions = onRequestHealthConnectPermissions,
                             onOpenHealthConnectSettings = onOpenHealthConnectSettings,
@@ -207,8 +211,10 @@ fun ProbeApp(
                                             dailyCheckIns = dailyCheckIns,
                                             foodDailySummaries = foodDailySummaries,
                                             dailyWeights = dailyWeights,
+                                            gripSessions = gripSessions,
                                             viewModel = viewModel,
                                             onImportFoodCsv = onImportFoodCsv,
+                                            onImportGripCsv = onImportGripCsv,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }
                                         )
@@ -219,6 +225,7 @@ fun ProbeApp(
                                             dailyCheckIns = dailyCheckIns,
                                             foodDailySummaries = foodDailySummaries,
                                             dailyWeights = dailyWeights,
+                                            gripSessions = gripSessions,
                                             wakeMarkers = recentWakeMarkers,
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
                                             viewModel = viewModel,

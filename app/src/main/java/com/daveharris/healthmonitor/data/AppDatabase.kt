@@ -32,9 +32,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WakeMarkerEntity::class,
         FoodDailySummaryEntity::class,
         FoodLogItemEntity::class,
-        DailyWeightEntity::class
+        DailyWeightEntity::class,
+        GripSessionEntity::class,
+        GripRepEntity::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -386,6 +388,58 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_24_25 = object : Migration(24, 25) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS grip_session (
+                        sessionId TEXT NOT NULL PRIMARY KEY,
+                        sourceDate TEXT NOT NULL,
+                        startedAtEpochMs INTEGER,
+                        startedAtLocal TEXT,
+                        hand TEXT,
+                        protocolLabel TEXT,
+                        pullSeconds REAL,
+                        restSeconds REAL,
+                        expectedRepCount INTEGER,
+                        setNumber INTEGER,
+                        restGapMinutes REAL,
+                        deviceLabel TEXT,
+                        bodyPosition TEXT,
+                        armPosition TEXT,
+                        handleSetting TEXT,
+                        notes TEXT,
+                        completedRepCount INTEGER NOT NULL,
+                        bestValueKg REAL,
+                        meanValueKg REAL,
+                        firstValueKg REAL,
+                        lastValueKg REAL,
+                        bestToLastDropPct REAL,
+                        importSource TEXT,
+                        importedAtEpochMs INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_session_sourceDate ON grip_session(sourceDate)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_session_startedAtEpochMs ON grip_session(startedAtEpochMs)")
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS grip_rep (
+                        sessionId TEXT NOT NULL,
+                        sourceDate TEXT NOT NULL,
+                        repIndex INTEGER NOT NULL,
+                        valueKg REAL NOT NULL,
+                        repFlag TEXT,
+                        importedAtEpochMs INTEGER NOT NULL,
+                        PRIMARY KEY(sessionId, repIndex)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_rep_sourceDate ON grip_rep(sourceDate)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_rep_sessionId ON grip_rep(sessionId)")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(
                 context,
@@ -407,7 +461,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_20_21,
                 MIGRATION_21_22,
                 MIGRATION_22_23,
-                MIGRATION_23_24
+                MIGRATION_23_24,
+                MIGRATION_24_25
             )
             .build()
     }

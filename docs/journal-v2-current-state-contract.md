@@ -158,6 +158,11 @@ Reports should be explicit about era and completeness:
 - Journal V2 chip data
 - objective measurements such as future grip strength
 
+Grip strength should stay in the functional lane. The low-friction manual daily
+field remains a fallback for a single reading; timed protocol sessions should be
+imported from Grip Recorder session CSVs and stored separately as sessions plus
+reps. Treat the source CSVs as disposable once Lodestone has imported them.
+
 ## Analysis Direction
 
 Delayed PEM should be analysed over lag windows, not only next-day transitions.

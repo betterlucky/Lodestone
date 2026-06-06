@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.MorningReadSource
@@ -48,17 +49,19 @@ fun HistoryScreen(
     dailyCheckIns: List<DailyCheckInEntity>,
     foodDailySummaries: List<FoodDailySummaryEntity>,
     dailyWeights: List<DailyWeightEntity>,
+    gripSessions: List<GripSessionEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     sleepEpisodeReviewState: SleepEpisodeReviewState,
     viewModel: ProbeViewModel,
     onOpenSettings: () -> Unit
 ) {
-    val reports = remember(morningPredictionSnapshots, dailyCheckIns, foodDailySummaries, dailyWeights) {
+    val reports = remember(morningPredictionSnapshots, dailyCheckIns, foodDailySummaries, dailyWeights, gripSessions) {
         buildHistoryDayReports(
             predictions = morningPredictionSnapshots,
             checkIns = dailyCheckIns,
             foodSummaries = foodDailySummaries,
-            weights = dailyWeights
+            weights = dailyWeights,
+            gripSessions = gripSessions
         )
     }
     var selectedReportDate by rememberSaveable { mutableStateOf<String?>(null) }
@@ -277,7 +280,8 @@ fun buildHistoryDayReports(
     predictions: List<MorningPredictionSnapshotEntity>,
     checkIns: List<DailyCheckInEntity>,
     foodSummaries: List<FoodDailySummaryEntity>,
-    weights: List<DailyWeightEntity>
+    weights: List<DailyWeightEntity>,
+    gripSessions: List<GripSessionEntity> = emptyList()
 ): List<HistoryDayReport> {
     val latestPredictionByDate = predictions
         .groupBy { it.sourceDate }
@@ -285,7 +289,8 @@ fun buildHistoryDayReports(
     val checkInsByDate = checkIns.associateBy { it.sourceDate }
     val foodByDate = foodSummaries.associateBy { it.sourceDate }
     val weightsByDate = weights.associateBy { it.sourceDate }
-    val dates = (latestPredictionByDate.keys + checkInsByDate.keys + foodByDate.keys + weightsByDate.keys)
+    val gripByDate = gripSessions.groupBy { it.sourceDate }
+    val dates = (latestPredictionByDate.keys + checkInsByDate.keys + foodByDate.keys + weightsByDate.keys + gripByDate.keys)
         .sortedDescending()
     val previousPredictionStatusByDate = mutableMapOf<String, String?>()
     var latestOlderPredictionStatus: String? = null
@@ -302,6 +307,7 @@ fun buildHistoryDayReports(
         val outcomeStatus = checkIn?.eveningOutcome?.toTrafficLightStatusOrNull()
         val food = foodByDate[date]
         val weight = weightsByDate[date]
+        val gripForDate = gripByDate[date].orEmpty()
         HistoryDayReport(
             sourceDate = date,
             predictionStatus = predictionStatus,
@@ -311,13 +317,13 @@ fun buildHistoryDayReports(
             predictionOutcomeLabel = predictionOutcomeLabel(predictionStatus, outcomeStatus),
             functionalContextLabel = functionalContextLabel(checkIn),
             robustnessLabel = robustnessLabel(prediction),
-            dataCompletenessLabel = dataCompletenessLabel(prediction, checkIn, food, weight),
+            dataCompletenessLabel = dataCompletenessLabel(prediction, checkIn, food, weight, gripForDate),
             windowProvenanceLabel = historyWindowSourceLabel(prediction),
             sleepBucketLabel = sleepBucketLabel(prediction?.sleepDurationMinutes),
             stabilityTransitionLabel = stabilityTransitionLabel(previousPrediction, prediction?.status),
             foodSummaryLabel = historyFoodLabel(food),
             weightLabel = historyWeightLabel(weight),
-            gripStrengthLabel = historyGripStrengthLabel(checkIn),
+            gripStrengthLabel = historyGripStrengthLabel(checkIn, gripForDate),
             notes = checkIn?.notes
         )
     }
@@ -383,7 +389,8 @@ private fun dataCompletenessLabel(
     prediction: MorningPredictionSnapshotEntity?,
     checkIn: DailyCheckInEntity?,
     food: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?
+    weight: DailyWeightEntity?,
+    gripSessions: List<GripSessionEntity>
 ): String {
     val present = buildList {
         if (prediction != null) add("prediction")
@@ -393,6 +400,7 @@ private fun dataCompletenessLabel(
         if (checkIn?.dayShapeCaptured == true) add("day shape")
         if (food != null) add("food")
         if (weight != null) add("weight")
+        if (checkIn?.manualGripStrengthKg != null || gripSessions.isNotEmpty()) add("grip")
     }
     return if (present.isEmpty()) "No tracked data yet" else present.joinToString(", ")
 }
@@ -414,8 +422,20 @@ private fun historyWeightLabel(weight: DailyWeightEntity?): String =
         String.format(java.util.Locale.UK, "%.1f kg%s", it.weightKg, measured)
     } ?: "No weight row"
 
-private fun historyGripStrengthLabel(checkIn: DailyCheckInEntity?): String =
-    checkIn?.manualGripStrengthKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) } ?: "No grip reading"
+private fun historyGripStrengthLabel(
+    checkIn: DailyCheckInEntity?,
+    sessions: List<GripSessionEntity>
+): String {
+    if (sessions.isEmpty()) {
+        return checkIn?.manualGripStrengthKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) }
+            ?: "No grip reading"
+    }
+    val parts = buildList {
+        checkIn?.manualGripStrengthKg?.let { add(String.format(java.util.Locale.UK, "manual %.1f kg", it)) }
+        if (sessions.isNotEmpty()) add(reviewGripSessionSummary(sessions))
+    }
+    return parts.joinToString(" · ").ifBlank { "No grip reading" }
+}
 
 private fun sleepBucketLabel(minutes: Int?): String =
     when {

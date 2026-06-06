@@ -160,6 +160,12 @@ interface ProbeDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDailyWeights(entities: List<DailyWeightEntity>)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertGripSessions(entities: List<GripSessionEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertGripReps(entities: List<GripRepEntity>)
+
     @Query("DELETE FROM food_log_item WHERE sourceDate IN (:sourceDates)")
     suspend fun deleteFoodLogItemsForDates(sourceDates: List<String>)
 
@@ -168,6 +174,12 @@ interface ProbeDao {
 
     @Query("DELETE FROM daily_weight WHERE sourceDate IN (:sourceDates)")
     suspend fun deleteDailyWeightsForDates(sourceDates: List<String>)
+
+    @Query("DELETE FROM grip_rep WHERE sessionId IN (:sessionIds)")
+    suspend fun deleteGripRepsForSessions(sessionIds: List<String>)
+
+    @Query("DELETE FROM grip_session WHERE sessionId IN (:sessionIds)")
+    suspend fun deleteGripSessions(sessionIds: List<String>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPpi247Epochs(entities: List<Ppi247EpochEntity>)
@@ -402,6 +414,9 @@ interface ProbeDao {
 
     @Query("SELECT * FROM daily_weight ORDER BY sourceDate DESC")
     fun observeDailyWeights(): Flow<List<DailyWeightEntity>>
+
+    @Query("SELECT * FROM grip_session ORDER BY sourceDate DESC, startedAtEpochMs DESC, sessionId DESC")
+    fun observeGripSessions(): Flow<List<GripSessionEntity>>
 
     @Query("SELECT * FROM sleep_night_raw ORDER BY sourceDate DESC, syncTimestampEpochMs DESC LIMIT 1")
     fun observeLatestSleepRecord(): Flow<SleepNightRawEntity?>
@@ -657,6 +672,9 @@ interface ProbeDao {
 
     @Query("SELECT * FROM food_log_item WHERE sourceDate = :sourceDate ORDER BY timeLocal ASC, item ASC")
     suspend fun getFoodLogItemsForDate(sourceDate: String): List<FoodLogItemEntity>
+
+    @Query("SELECT * FROM grip_session WHERE sourceDate = :sourceDate ORDER BY startedAtEpochMs DESC, sessionId DESC")
+    suspend fun getGripSessionsForDate(sourceDate: String): List<GripSessionEntity>
 
     @Query("SELECT * FROM ppi247_day_raw WHERE sourceDate IN (:sourceDates) ORDER BY sourceDate ASC, keySummary ASC")
     suspend fun getPpiRawRecordsForDates(sourceDates: List<String>): List<Ppi247DayRawEntity>

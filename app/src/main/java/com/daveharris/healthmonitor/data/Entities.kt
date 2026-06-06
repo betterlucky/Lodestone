@@ -408,3 +408,48 @@ data class DailyWeightEntity(
     val importSource: String?,
     val importedAtEpochMs: Long
 )
+
+@Entity(
+    tableName = "grip_session",
+    indices = [Index("sourceDate"), Index("startedAtEpochMs")]
+)
+data class GripSessionEntity(
+    @PrimaryKey val sessionId: String,
+    val sourceDate: String,
+    val startedAtEpochMs: Long?,
+    val startedAtLocal: String?,
+    val hand: String?,
+    val protocolLabel: String?,
+    val pullSeconds: Double?,
+    val restSeconds: Double?,
+    val expectedRepCount: Int?,
+    val setNumber: Int?,
+    val restGapMinutes: Double?,
+    val deviceLabel: String?,
+    val bodyPosition: String?,
+    val armPosition: String?,
+    val handleSetting: String?,
+    val notes: String?,
+    val completedRepCount: Int,
+    val bestValueKg: Double?,
+    val meanValueKg: Double?,
+    val firstValueKg: Double?,
+    val lastValueKg: Double?,
+    val bestToLastDropPct: Double?,
+    val importSource: String?,
+    val importedAtEpochMs: Long
+)
+
+@Entity(
+    tableName = "grip_rep",
+    primaryKeys = ["sessionId", "repIndex"],
+    indices = [Index("sourceDate"), Index("sessionId")]
+)
+data class GripRepEntity(
+    val sessionId: String,
+    val sourceDate: String,
+    val repIndex: Int,
+    val valueKg: Double,
+    val repFlag: String?,
+    val importedAtEpochMs: Long
+)

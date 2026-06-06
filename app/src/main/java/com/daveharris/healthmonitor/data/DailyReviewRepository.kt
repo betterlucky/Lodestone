@@ -16,6 +16,7 @@ class DailyReviewRepository(
     val dailyCheckIns = dao.observeDailyCheckIns()
     val foodDailySummaries = dao.observeFoodDailySummaries()
     val dailyWeights = dao.observeDailyWeights()
+    val gripSessions = dao.observeGripSessions()
 
     suspend fun saveDailyCheckIn(
         sourceDate: String,
@@ -79,6 +80,9 @@ class DailyReviewRepository(
     suspend fun getDailyWeight(sourceDate: String): DailyWeightEntity? =
         dao.getDailyWeight(sourceDate)
 
+    suspend fun getGripSessions(sourceDate: String): List<GripSessionEntity> =
+        dao.getGripSessionsForDate(sourceDate)
+
     suspend fun clearFoodImportForDate(sourceDate: String) = withContext(Dispatchers.IO) {
         database.withTransaction {
             dao.deleteFoodLogItemsForDates(listOf(sourceDate))
@@ -139,6 +143,54 @@ class DailyReviewRepository(
 
     fun saveFoodFolder(context: Context, uri: Uri) {
         context.getSharedPreferences("food_import", Context.MODE_PRIVATE)
+            .edit()
+            .putString("folder_uri", uri.toString())
+            .apply()
+    }
+
+    suspend fun importGripCsv(context: Context, uri: Uri, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val displayName = resolveDisplayName(context, uri)
+            val importedAt = System.currentTimeMillis()
+            val result = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                GripSessionCsvImporter.parse(
+                    reader = reader,
+                    sourceName = displayName,
+                    importedAt = importedAt,
+                    targetDate = targetDate
+                )
+            } ?: error("Unable to open grip CSV.")
+            database.withTransaction {
+                dao.deleteGripRepsForSessions(result.sessionIds)
+                dao.deleteGripSessions(result.sessionIds)
+                dao.upsertGripSessions(result.sessions)
+                dao.upsertGripReps(result.reps)
+            }
+            result.sessions.size
+        }
+    }
+
+    suspend fun importLatestGripCsvFromSavedFolder(context: Context, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val folderUri = context.getSharedPreferences("grip_import", Context.MODE_PRIVATE)
+                .getString("folder_uri", null)
+                ?.let(Uri::parse)
+                ?: error("No GripRecorderData folder has been authorised.")
+            val folder = DocumentFile.fromTreeUri(context, folderUri)
+                ?: error("Unable to read the authorised GripRecorderData folder.")
+            val candidates = folder.listFiles()
+                .filter { it.isFile && GripSessionCsvImporter.isGripSessionCsvName(it.name.orEmpty()) }
+            val datedCandidates = targetDate?.let { date ->
+                candidates.filter { GripSessionCsvImporter.nameMatchesDate(it.name.orEmpty(), date) }
+            } ?: candidates
+            val latest = datedCandidates.maxByOrNull { it.lastModified() }
+                ?: error("No grip_session CSV was found in the authorised GripRecorderData folder.")
+            importGripCsv(context, latest.uri, targetDate).getOrThrow()
+        }
+    }
+
+    fun saveGripFolder(context: Context, uri: Uri) {
+        context.getSharedPreferences("grip_import", Context.MODE_PRIVATE)
             .edit()
             .putString("folder_uri", uri.toString())
             .apply()

@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import java.time.Instant
@@ -151,6 +152,92 @@ fun FoodSection(
             }
         }
     }
+}
+
+@Composable
+fun GripSessionSection(
+    sessions: List<GripSessionEntity>,
+    onSyncGrip: () -> Unit,
+    onChooseFile: () -> Unit,
+    isBusy: Boolean
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val summaryText = reviewGripSessionSummary(sessions)
+
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Grip sessions", fontWeight = FontWeight.SemiBold)
+                    Text(summaryText, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { expanded = !expanded }, enabled = !isBusy) {
+                    Text(if (expanded) "Less" else "More")
+                }
+            }
+            if (expanded) {
+                if (sessions.isNotEmpty()) {
+                    sessions.take(3).forEach { session ->
+                        GripSessionSummaryCard(session)
+                    }
+                }
+                ButtonRow {
+                    Button(onClick = onSyncGrip, enabled = !isBusy) {
+                        Text("Sync grip")
+                    }
+                    OutlinedButton(onClick = onChooseFile, enabled = !isBusy) {
+                        Text("Choose file")
+                    }
+                }
+                SupportText("Grip Recorder exports are temporary session files. Lodestone stores imported sessions in its database.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun GripSessionSummaryCard(session: GripSessionEntity) {
+    Card(
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(session.protocolLabel ?: "Grip session", fontWeight = FontWeight.SemiBold)
+            DetailRow("Hand", session.hand ?: "n/a")
+            DetailRow("Reps", session.completedRepCount.toString())
+            DetailRow("Best", session.bestValueKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) } ?: "n/a")
+            DetailRow("Mean", session.meanValueKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) } ?: "n/a")
+            DetailRow("Best-to-last drop", session.bestToLastDropPct?.let { String.format(java.util.Locale.UK, "%.1f%%", it) } ?: "n/a")
+        }
+    }
+}
+
+internal fun reviewGripSessionSummary(sessions: List<GripSessionEntity>): String {
+    if (sessions.isEmpty()) return "No grip session synced for this date"
+    val first = sessions.maxWithOrNull(
+        compareBy<GripSessionEntity> { it.startedAtEpochMs ?: Long.MIN_VALUE }.thenBy { it.sessionId }
+    ) ?: return "Grip session synced"
+    val parts = buildList {
+        add("${sessions.size} session${if (sessions.size == 1) "" else "s"}")
+        first.protocolLabel?.let { add(it.replace('_', ' ')) }
+        first.hand?.let { add(it) }
+        first.bestValueKg?.let { add(String.format(java.util.Locale.UK, "best %.1f kg", it)) }
+        first.meanValueKg?.let { add(String.format(java.util.Locale.UK, "mean %.1f kg", it)) }
+    }
+    return parts.joinToString(" · ")
 }
 
 @Composable

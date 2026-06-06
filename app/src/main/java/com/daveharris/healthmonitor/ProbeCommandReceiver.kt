@@ -343,6 +343,11 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 val count = dailyReviewRepository.importLatestFoodCsvFromDownloads(app.applicationContext, date).getOrThrow()
                 Log.i(TAG, "Imported $count food day summaries from food CSV for $date")
             }
+            "grip_sync" -> {
+                val date = foodDate ?: java.time.LocalDate.now().toString()
+                val count = dailyReviewRepository.importLatestGripCsvFromSavedFolder(app.applicationContext, date).getOrThrow()
+                Log.i(TAG, "Imported $count grip sessions from grip CSV for $date")
+            }
             "health_connect_export" -> {
                 val date = LocalDate.parse(foodDate ?: fromDate ?: LocalDate.now().toString())
                 val file = healthConnectAnalysisExporter.exportSleepAnalysis(date)
