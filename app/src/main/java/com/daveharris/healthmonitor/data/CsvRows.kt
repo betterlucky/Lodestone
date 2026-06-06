@@ -39,7 +39,13 @@ object CsvRows {
                         }
                     }
                 }
-                char == '"' -> inQuotes = true
+                char == '"' -> {
+                    if (cell.isEmpty()) {
+                        inQuotes = true
+                    } else {
+                        cell.append(char)
+                    }
+                }
                 char == ',' && !inQuotes -> commitCell()
                 (char == '\n' || char == '\r') && !inQuotes -> {
                     commitRow()

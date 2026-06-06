@@ -36,7 +36,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GripSessionEntity::class,
         GripRepEntity::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -422,22 +422,65 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_session_sourceDate ON grip_session(sourceDate)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_session_startedAtEpochMs ON grip_session(startedAtEpochMs)")
+                createGripRepTable(db)
+                createGripRepIndexes(db)
+            }
+        }
+
+        private val MIGRATION_25_26 = object : Migration(25, 26) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS grip_rep_legacy")
+                db.execSQL("DROP INDEX IF EXISTS index_grip_rep_sourceDate")
+                db.execSQL("DROP INDEX IF EXISTS index_grip_rep_sessionId")
+                db.execSQL("ALTER TABLE grip_rep RENAME TO grip_rep_legacy")
+                createGripRepTable(db)
+                // Orphan reps from the interim v25 schema are invalid under the v26 FK model.
                 db.execSQL(
                     """
-                    CREATE TABLE IF NOT EXISTS grip_rep (
-                        sessionId TEXT NOT NULL,
-                        sourceDate TEXT NOT NULL,
-                        repIndex INTEGER NOT NULL,
-                        valueKg REAL NOT NULL,
-                        repFlag TEXT,
-                        importedAtEpochMs INTEGER NOT NULL,
-                        PRIMARY KEY(sessionId, repIndex)
+                    INSERT OR IGNORE INTO grip_rep (
+                        sessionId,
+                        sourceDate,
+                        repIndex,
+                        valueKg,
+                        repFlag,
+                        importedAtEpochMs
                     )
+                    SELECT
+                        grip_rep_legacy.sessionId,
+                        grip_rep_legacy.sourceDate,
+                        grip_rep_legacy.repIndex,
+                        grip_rep_legacy.valueKg,
+                        grip_rep_legacy.repFlag,
+                        grip_rep_legacy.importedAtEpochMs
+                    FROM grip_rep_legacy
+                    INNER JOIN grip_session ON grip_session.sessionId = grip_rep_legacy.sessionId
                     """.trimIndent()
                 )
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_rep_sourceDate ON grip_rep(sourceDate)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_rep_sessionId ON grip_rep(sessionId)")
+                db.execSQL("DROP TABLE grip_rep_legacy")
+                createGripRepIndexes(db)
             }
+        }
+
+        private fun createGripRepTable(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS grip_rep (
+                    sessionId TEXT NOT NULL,
+                    sourceDate TEXT NOT NULL,
+                    repIndex INTEGER NOT NULL,
+                    valueKg REAL NOT NULL,
+                    repFlag TEXT,
+                    importedAtEpochMs INTEGER NOT NULL,
+                    PRIMARY KEY(sessionId, repIndex),
+                    FOREIGN KEY(sessionId) REFERENCES grip_session(sessionId) ON DELETE CASCADE
+                )
+                """.trimIndent()
+            )
+        }
+
+        private fun createGripRepIndexes(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_rep_sourceDate ON grip_rep(sourceDate)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS index_grip_rep_sessionId ON grip_rep(sessionId)")
         }
 
         fun create(context: Context): AppDatabase =
@@ -462,7 +505,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_21_22,
                 MIGRATION_22_23,
                 MIGRATION_23_24,
-                MIGRATION_24_25
+                MIGRATION_24_25,
+                MIGRATION_25_26
             )
             .build()
     }

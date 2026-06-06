@@ -93,7 +93,7 @@ class DailyReviewRepository(
 
     suspend fun importFoodCsv(context: Context, uri: Uri, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val displayName = resolveDisplayName(context, uri)
+            val displayName = resolveDisplayName(context, uri, fallbackName = "food-import.csv")
             val importedAt = System.currentTimeMillis()
             val result = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
                 FoodCsvImporter.parse(
@@ -150,7 +150,7 @@ class DailyReviewRepository(
 
     suspend fun importGripCsv(context: Context, uri: Uri, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val displayName = resolveDisplayName(context, uri)
+            val displayName = resolveDisplayName(context, uri, fallbackName = "grip-import.csv")
             val importedAt = System.currentTimeMillis()
             val result = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
                 GripSessionCsvImporter.parse(
@@ -161,8 +161,13 @@ class DailyReviewRepository(
                 )
             } ?: error("Unable to open grip CSV.")
             database.withTransaction {
-                dao.deleteGripRepsForSessions(result.sessionIds)
-                dao.deleteGripSessions(result.sessionIds)
+                if (GripSessionCsvImporter.isFullExportName(displayName)) {
+                    dao.deleteGripRepsForDates(result.touchedDates)
+                    dao.deleteGripSessionsForDates(result.touchedDates)
+                } else {
+                    dao.deleteGripRepsForSessions(result.sessionIds)
+                    dao.deleteGripSessions(result.sessionIds)
+                }
                 dao.upsertGripSessions(result.sessions)
                 dao.upsertGripReps(result.reps)
             }
@@ -216,7 +221,7 @@ class DailyReviewRepository(
         }
     }
 
-    private fun resolveDisplayName(context: Context, uri: Uri): String {
+    private fun resolveDisplayName(context: Context, uri: Uri, fallbackName: String): String {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val columnIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -225,6 +230,6 @@ class DailyReviewRepository(
                 }
             }
         }
-        return uri.lastPathSegment ?: "food-import.csv"
+        return uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: fallbackName
     }
 }

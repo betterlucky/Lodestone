@@ -11,10 +11,13 @@ import kotlin.math.round
 object GripSessionCsvImporter {
     fun isGripSessionCsvName(name: String): Boolean =
         name.matches(Regex("""grip_session_.*\.csv""", RegexOption.IGNORE_CASE)) ||
-            name.matches(Regex("""grip_log_full.*\.csv""", RegexOption.IGNORE_CASE))
+            isFullExportName(name)
+
+    fun isFullExportName(name: String): Boolean =
+        name.matches(Regex("""grip_log_full.*\.csv""", RegexOption.IGNORE_CASE))
 
     fun nameMatchesDate(name: String, targetDate: String): Boolean =
-        name.contains(targetDate) || name.matches(Regex("""grip_log_full.*\.csv""", RegexOption.IGNORE_CASE))
+        name.contains(targetDate) || isFullExportName(name)
 
     fun parse(
         reader: BufferedReader,

@@ -178,8 +178,14 @@ interface ProbeDao {
     @Query("DELETE FROM grip_rep WHERE sessionId IN (:sessionIds)")
     suspend fun deleteGripRepsForSessions(sessionIds: List<String>)
 
+    @Query("DELETE FROM grip_rep WHERE sourceDate IN (:sourceDates)")
+    suspend fun deleteGripRepsForDates(sourceDates: List<String>)
+
     @Query("DELETE FROM grip_session WHERE sessionId IN (:sessionIds)")
     suspend fun deleteGripSessions(sessionIds: List<String>)
+
+    @Query("DELETE FROM grip_session WHERE sourceDate IN (:sourceDates)")
+    suspend fun deleteGripSessionsForDates(sourceDates: List<String>)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertPpi247Epochs(entities: List<Ppi247EpochEntity>)

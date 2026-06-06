@@ -1,6 +1,7 @@
 package com.daveharris.healthmonitor.data
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.ColumnInfo
@@ -443,6 +444,14 @@ data class GripSessionEntity(
 @Entity(
     tableName = "grip_rep",
     primaryKeys = ["sessionId", "repIndex"],
+    foreignKeys = [
+        ForeignKey(
+            entity = GripSessionEntity::class,
+            parentColumns = ["sessionId"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
     indices = [Index("sourceDate"), Index("sessionId")]
 )
 data class GripRepEntity(
