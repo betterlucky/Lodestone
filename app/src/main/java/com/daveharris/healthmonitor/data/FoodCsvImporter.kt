@@ -21,7 +21,7 @@ object FoodCsvImporter {
         importedAt: Long,
         targetDate: String? = null
     ): FoodCsvImportResult {
-        val rows = parseCsv(reader)
+        val rows = CsvRows.parse(reader)
         if (rows.isEmpty()) error("CSV is empty.")
         val headers = rows.first().map { it.trim() }
         if (headers != expectedHeaders) {
@@ -170,62 +170,6 @@ object FoodCsvImporter {
         item.trim().lowercase(),
         quantity.trim().lowercase()
     ).joinToString("|")
-
-    private fun parseCsv(reader: BufferedReader): List<List<String>> {
-        val cells = mutableListOf<String>()
-        val cell = StringBuilder()
-        var inQuotes = false
-        val rows = mutableListOf<List<String>>()
-
-        fun commitCell() {
-            cells += cell.toString()
-            cell.clear()
-        }
-
-        fun commitRow() {
-            if (cells.isEmpty() && cell.isEmpty()) return
-            commitCell()
-            if (cells.any { it.isNotBlank() }) {
-                rows += cells.toList()
-            }
-            cells.clear()
-        }
-
-        var next = reader.read()
-        while (next != -1) {
-            val char = next.toChar()
-            when {
-                char == '"' && inQuotes -> {
-                    reader.mark(1)
-                    val peek = reader.read()
-                    if (peek == '"'.code) {
-                        cell.append('"')
-                    } else {
-                        inQuotes = false
-                        if (peek != -1) {
-                            reader.reset()
-                        }
-                    }
-                }
-                char == '"' -> inQuotes = true
-                char == ',' && !inQuotes -> commitCell()
-                (char == '\n' || char == '\r') && !inQuotes -> {
-                    commitRow()
-                    if (char == '\r') {
-                        reader.mark(1)
-                        val peek = reader.read()
-                        if (peek != '\n'.code && peek != -1) {
-                            reader.reset()
-                        }
-                    }
-                }
-                else -> cell.append(char)
-            }
-            next = reader.read()
-        }
-        commitRow()
-        return rows
-    }
 
     private fun timeDifferenceHours(start: String, end: String): Double {
         val startParts = start.split(":").mapNotNull { it.toIntOrNull() }

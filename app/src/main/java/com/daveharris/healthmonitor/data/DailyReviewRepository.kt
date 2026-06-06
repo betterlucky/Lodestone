@@ -16,6 +16,7 @@ class DailyReviewRepository(
     val dailyCheckIns = dao.observeDailyCheckIns()
     val foodDailySummaries = dao.observeFoodDailySummaries()
     val dailyWeights = dao.observeDailyWeights()
+    val gripSessions = dao.observeGripSessions()
 
     suspend fun saveDailyCheckIn(
         sourceDate: String,
@@ -79,6 +80,9 @@ class DailyReviewRepository(
     suspend fun getDailyWeight(sourceDate: String): DailyWeightEntity? =
         dao.getDailyWeight(sourceDate)
 
+    suspend fun getGripSessions(sourceDate: String): List<GripSessionEntity> =
+        dao.getGripSessionsForDate(sourceDate)
+
     suspend fun clearFoodImportForDate(sourceDate: String) = withContext(Dispatchers.IO) {
         database.withTransaction {
             dao.deleteFoodLogItemsForDates(listOf(sourceDate))
@@ -89,7 +93,7 @@ class DailyReviewRepository(
 
     suspend fun importFoodCsv(context: Context, uri: Uri, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
-            val displayName = resolveDisplayName(context, uri)
+            val displayName = resolveDisplayName(context, uri, fallbackName = "food-import.csv")
             val importedAt = System.currentTimeMillis()
             val result = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
                 FoodCsvImporter.parse(
@@ -144,6 +148,59 @@ class DailyReviewRepository(
             .apply()
     }
 
+    suspend fun importGripCsv(context: Context, uri: Uri, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val displayName = resolveDisplayName(context, uri, fallbackName = "grip-import.csv")
+            val importedAt = System.currentTimeMillis()
+            val result = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                GripSessionCsvImporter.parse(
+                    reader = reader,
+                    sourceName = displayName,
+                    importedAt = importedAt,
+                    targetDate = targetDate
+                )
+            } ?: error("Unable to open grip CSV.")
+            database.withTransaction {
+                if (GripSessionCsvImporter.isFullExportName(displayName)) {
+                    dao.deleteGripRepsForDates(result.touchedDates)
+                    dao.deleteGripSessionsForDates(result.touchedDates)
+                } else {
+                    dao.deleteGripRepsForSessions(result.sessionIds)
+                    dao.deleteGripSessions(result.sessionIds)
+                }
+                dao.upsertGripSessions(result.sessions)
+                dao.upsertGripReps(result.reps)
+            }
+            result.sessions.size
+        }
+    }
+
+    suspend fun importLatestGripCsvFromSavedFolder(context: Context, targetDate: String? = null): Result<Int> = withContext(Dispatchers.IO) {
+        runCatching {
+            val folderUri = context.getSharedPreferences("grip_import", Context.MODE_PRIVATE)
+                .getString("folder_uri", null)
+                ?.let(Uri::parse)
+                ?: error("No GripRecorderData folder has been authorised.")
+            val folder = DocumentFile.fromTreeUri(context, folderUri)
+                ?: error("Unable to read the authorised GripRecorderData folder.")
+            val candidates = folder.listFiles()
+                .filter { it.isFile && GripSessionCsvImporter.isGripSessionCsvName(it.name.orEmpty()) }
+            val datedCandidates = targetDate?.let { date ->
+                candidates.filter { GripSessionCsvImporter.nameMatchesDate(it.name.orEmpty(), date) }
+            } ?: candidates
+            val latest = datedCandidates.maxByOrNull { it.lastModified() }
+                ?: error("No grip_session CSV was found in the authorised GripRecorderData folder.")
+            importGripCsv(context, latest.uri, targetDate).getOrThrow()
+        }
+    }
+
+    fun saveGripFolder(context: Context, uri: Uri) {
+        context.getSharedPreferences("grip_import", Context.MODE_PRIVATE)
+            .edit()
+            .putString("folder_uri", uri.toString())
+            .apply()
+    }
+
     private suspend fun importLatestFoodCsvFromSavedFolder(context: Context, targetDate: String?): Result<Int?> = withContext(Dispatchers.IO) {
         runCatching {
             val folderUri = context.getSharedPreferences("food_import", Context.MODE_PRIVATE)
@@ -164,7 +221,7 @@ class DailyReviewRepository(
         }
     }
 
-    private fun resolveDisplayName(context: Context, uri: Uri): String {
+    private fun resolveDisplayName(context: Context, uri: Uri, fallbackName: String): String {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val columnIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
@@ -173,6 +230,6 @@ class DailyReviewRepository(
                 }
             }
         }
-        return uri.lastPathSegment ?: "food-import.csv"
+        return uri.lastPathSegment?.takeIf { it.isNotBlank() } ?: fallbackName
     }
 }

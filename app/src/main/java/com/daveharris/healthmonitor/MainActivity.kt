@@ -56,6 +56,24 @@ class MainActivity : ComponentActivity() {
                     vm.saveFoodFolder(uri)
                 }
             }
+            val gripCsvLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocument()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    vm.importGripCsv(uri)
+                }
+            }
+            val gripFolderLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.OpenDocumentTree()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                    vm.saveGripFolder(uri)
+                }
+            }
             val sleep2ScreenshotLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.OpenDocument()
             ) { uri: Uri? ->
@@ -104,6 +122,12 @@ class MainActivity : ComponentActivity() {
                 },
                 onSetFoodFolder = {
                     foodFolderLauncher.launch(null)
+                },
+                onImportGripCsv = {
+                    gripCsvLauncher.launch(arrayOf("text/*", "application/csv", "application/vnd.ms-excel"))
+                },
+                onSetGripFolder = {
+                    gripFolderLauncher.launch(null)
                 },
                 onImportSleep2Screenshot = {
                     sleep2ScreenshotLauncher.launch(arrayOf("image/png", "image/*"))

@@ -1,6 +1,7 @@
 package com.daveharris.healthmonitor.data
 
 import androidx.room.Entity
+import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.ColumnInfo
@@ -406,5 +407,58 @@ data class DailyWeightEntity(
     val weightKg: Double,
     val notes: String?,
     val importSource: String?,
+    val importedAtEpochMs: Long
+)
+
+@Entity(
+    tableName = "grip_session",
+    indices = [Index("sourceDate"), Index("startedAtEpochMs")]
+)
+data class GripSessionEntity(
+    @PrimaryKey val sessionId: String,
+    val sourceDate: String,
+    val startedAtEpochMs: Long?,
+    val startedAtLocal: String?,
+    val hand: String?,
+    val protocolLabel: String?,
+    val pullSeconds: Double?,
+    val restSeconds: Double?,
+    val expectedRepCount: Int?,
+    val setNumber: Int?,
+    val restGapMinutes: Double?,
+    val deviceLabel: String?,
+    val bodyPosition: String?,
+    val armPosition: String?,
+    val handleSetting: String?,
+    val notes: String?,
+    val completedRepCount: Int,
+    val bestValueKg: Double?,
+    val meanValueKg: Double?,
+    val firstValueKg: Double?,
+    val lastValueKg: Double?,
+    val bestToLastDropPct: Double?,
+    val importSource: String?,
+    val importedAtEpochMs: Long
+)
+
+@Entity(
+    tableName = "grip_rep",
+    primaryKeys = ["sessionId", "repIndex"],
+    foreignKeys = [
+        ForeignKey(
+            entity = GripSessionEntity::class,
+            parentColumns = ["sessionId"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("sourceDate"), Index("sessionId")]
+)
+data class GripRepEntity(
+    val sessionId: String,
+    val sourceDate: String,
+    val repIndex: Int,
+    val valueKg: Double,
+    val repFlag: String?,
     val importedAtEpochMs: Long
 )

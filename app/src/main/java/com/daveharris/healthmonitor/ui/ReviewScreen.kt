@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
+import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 
 @Composable
@@ -33,8 +34,10 @@ fun JournalScreen(
     dailyCheckIns: List<DailyCheckInEntity>,
     foodDailySummaries: List<FoodDailySummaryEntity>,
     dailyWeights: List<DailyWeightEntity>,
+    gripSessions: List<GripSessionEntity>,
     viewModel: ProbeViewModel,
     onImportFoodCsv: () -> Unit,
+    onImportGripCsv: () -> Unit,
     actionsEnabled: Boolean,
     onOpenSettings: () -> Unit
 ) {
@@ -43,6 +46,9 @@ fun JournalScreen(
     }
     val weightsByDate = remember(dailyWeights) {
         dailyWeights.associateBy { it.sourceDate }
+    }
+    val gripSessionsByDate = remember(gripSessions) {
+        gripSessions.groupBy { it.sourceDate }
     }
     val hasSavedReview = dailyCheckIns.any { it.sourceDate == viewModel.checkInDate }
     val hasFoodImport = viewModel.currentFoodSummary != null || viewModel.currentDailyWeight != null
@@ -178,6 +184,14 @@ fun JournalScreen(
                 weight = viewModel.currentDailyWeight,
                 onSyncFood = { if (actionsEnabled) viewModel.importLatestFoodCsvFromDownloads() },
                 onChooseFile = { if (actionsEnabled) onImportFoodCsv() },
+                isBusy = viewModel.isBusy
+            )
+        }
+        item {
+            GripSessionSection(
+                sessions = gripSessionsByDate[viewModel.checkInDate].orEmpty(),
+                onSyncGrip = { if (actionsEnabled) viewModel.importLatestGripCsvFromFolder() },
+                onChooseFile = { if (actionsEnabled) onImportGripCsv() },
                 isBusy = viewModel.isBusy
             )
         }

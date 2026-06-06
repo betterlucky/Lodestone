@@ -70,6 +70,7 @@ class ProbeViewModel(
     val dailyCheckIns = dailyReviewRepository.dailyCheckIns.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val foodDailySummaries = dailyReviewRepository.foodDailySummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val gripSessions = dailyReviewRepository.gripSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val morningPredictionSnapshots = repository.morningPredictionSnapshots.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val recentWakeMarkers = repository.recentWakeMarkers.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -994,6 +995,42 @@ class ProbeViewModel(
                     "Food CSV import successful for $date."
                 } else {
                     "Food CSV imported, but no dated entries were found."
+                }
+            }
+        }
+    }
+
+    fun importLatestGripCsvFromFolder() {
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            val date = checkInDate
+            runBusyAction("Looking for grip CSV for $date…") {
+                val importedCount = dailyReviewRepository.importLatestGripCsvFromSavedFolder(context, date).getOrThrow()
+                statusMessage = if (importedCount > 0) {
+                    "Grip session import successful for $date."
+                } else {
+                    "Grip CSV found, but no sessions were imported."
+                }
+            }
+        }
+    }
+
+    fun saveGripFolder(uri: Uri) {
+        val context = getApplication<Application>()
+        dailyReviewRepository.saveGripFolder(context, uri)
+        statusMessage = "GripRecorderData folder authorised. Sync grip will use it next time."
+    }
+
+    fun importGripCsv(uri: Uri) {
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            val date = checkInDate
+            runBusyAction("Importing grip CSV for $date…") {
+                val importedCount = dailyReviewRepository.importGripCsv(context, uri, date).getOrThrow()
+                statusMessage = if (importedCount > 0) {
+                    "Grip CSV import successful for $date."
+                } else {
+                    "Grip CSV imported, but no sessions were found."
                 }
             }
         }

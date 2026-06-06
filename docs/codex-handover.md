@@ -42,6 +42,10 @@ This note preserves useful context from older Codex project threads that may sta
   should not assume one canonical main sleep.
 - **Flow handoff is practical reality.** Polar Flow competes for the single BLE connection. Lodestone should provide clear handoff/retry behaviour rather than promising seamless coexistence.
 - **Food stays separate.** FoodLog owns food capture. Lodestone imports daily CSVs and weight rows from the FoodLog workflow.
+- **Grip stays instrument-shaped.** Grip Recorder/Grip Check owns the timed
+  pull/rest measurement UX and exports disposable session CSVs, ideally from
+  `Downloads/GripRecorderData`. Lodestone imports those sessions into its main
+  DB and owns persistence/model interpretation.
 - **User-selected date matters.** Review/import/reset behaviour should respect the active review date and should not accidentally rewrite ratings or notes for another date.
 - **Inferred candidates are not facts.** PPI-inferred sleep/rest windows remain
   suggestions until the user accepts, edits, dismisses, marks rest, or marks no
