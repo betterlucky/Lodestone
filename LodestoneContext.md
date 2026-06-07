@@ -1,225 +1,200 @@
 # Lodestone Project Context
 
-This note captures project-specific context that is easy to lose between sessions. It is deliberately practical rather than exhaustive: the aim is to preserve the quirks, decisions, and working assumptions that affect future implementation.
+This is a compact living context snapshot for collaborators and future agents.
+It is guidance, not a source of truth over current code or explicit user
+instructions.
 
-Treat this document as a snapshot and guidance aid, not the source of truth. If it conflicts with the current code, committed docs, database schema, or explicit user instructions, prefer those sources and update this note when the dust settles.
+For the modelling line of thought, read:
+
+- `docs/lexicon.md`
+- `docs/current-thesis-and-measurement-strategy.md`
+- `docs/journal-v2-current-state-contract.md`
+- `docs/codex-handover.md`
 
 ## Product Shape
 
-- Lodestone is a personal health-monitoring prototype for daily pacing, recovery tracking, and current-condition reflection.
-- The app is currently Android-first and Kotlin/Compose-based.
-- The primary daily flow is intended to be low-friction:
-  - Check in / sync / readiness read
-  - optional explicit sleep and wake markers
-  - Catch up when stale syncs, missed markers, or unresolved sleep/rest candidates need repair
-  - candidate review for possible sleep, nap, rest, no-sleep, and edited windows
-  - optional food-log import
-  - evening review with outcome, approach-to-day, notes, and muscle weakness flag
-- The app should avoid becoming a general quantified-self dashboard unless a metric has plausible pacing/recovery value.
-- Personal-use reliability matters more than public-release polish right now, but avoid painting the codebase into a private-only corner where possible.
+Lodestone is an Android-first personal health-monitoring prototype for ME/CFS
+pacing, recovery tracking, and current-condition reflection.
 
-## Current Data Strategy
+The app is trying to explain subjective function and estimate safe objective
+function, not simply produce a morning sleep-based readiness score.
 
-- Polar Loop / Polar 360-class device is the main target device.
-- Garmin is currently a secondary/side data source and may be phased out if Polar proves sufficient.
-- H10 is for calibration/testing rather than normal daily use.
-- Food logs are imported from a separate Food Log workflow/app rather than entered directly into Lodestone.
-- Health Connect export support is analysis-only for now, mainly to test whether Sleep2/H10 data can be retrieved.
+The core question is:
 
-## Polar Loop Findings
+> Given the latest available evidence, what can Lodestone responsibly say about
+> why the user feels this way and how cautiously they should approach what comes
+> next?
 
-- The Loop can expose useful `PPI_247` data, but availability has appeared inconsistent across sync timing/device state.
-- Do not assume missing PPI means the device cannot record it; first check sync timing, date windows, and whether Flow/device processing has completed.
-- Sleep and Nightly Recharge data may appear after device-side processing delay.
-- Polar Sleep is now best treated as supporting/vendor context rather than the
-  canonical readiness gate. Raw PPI plus manual or inferred sleep/rest episodes
-  should become the primary local readiness basis.
-- Inferred PPI sleep/rest rows are suggestions until the user accepts or edits
-  them. User-confirmed primary episodes can drive the readiness window;
-  confirmed naps/rest remain context unless explicitly selected, and confirmed
-  no-sleep days avoid fabricating sleep timing.
-- Flow sync often appears to make sleep reports available, but at least one test suggested Lodestone-only sync can eventually retrieve resolved sleep data too.
-- The current hypothesis is not fully settled:
-  - the Loop likely does some processing locally
-  - Flow may trigger, assist, or reveal finalisation
-  - device storage pressure may have contributed to earlier weirdness
-- Keep Flow in the loop for now, especially for firmware updates and sleep-report finalisation checks.
-- Flow competes for the single BLE connection, so Lodestone and Flow cannot reliably coexist while both want the Loop.
-- Preferred user workflow remains:
-  - restrict/disable Flow Bluetooth while Lodestone is doing its work
-  - use explicit `Prepare for Flow` handoff when syncing Flow manually
-  - close Flow / disable its Bluetooth access before returning to Lodestone
+It remains a research prototype, not a medical device or validated health
+product.
 
-## Polar Data Lanes
+## Current Daily Flow
 
-- `PPI_247` belongs in the real autonomic lane if present for accepted or
-  inferred sleep/rest windows.
-- Candidate refresh should not reinsert inferred windows that overlap a
-  confirmed sleep/rest/no-sleep decision for the same date.
-- `HR_247` is useful context but is not a substitute for PPI/HRV.
-- Nightly Recharge remains useful as a semi-derived supporting autonomic lane.
-- Sleep structure, vendor sleep timing, respiration, skin temperature, and
-  previous-day context are useful supporting lanes.
-- Offline PPI/PPG recording was valuable as an investigation route, but is not part of the normal workflow now.
-- Offline recording docs and code may be archived for future reference, but should not clutter the live daily UI.
+Keep the normal flow low friction:
 
-## Device Storage And Maintenance
+- `Check in` to sync and update the current-state/planning read.
+- Optional bedtime/wake markers when useful as annotations, not obligations.
+- Candidate review only when evidence repair is useful.
+- Journal with one-tap outcome save as the minimum valid entry.
+- Optional imports from FoodLog and Grip Recorder.
+- History for patterns, completeness, and paired signal/outcome review.
+- Settings for device, Flow handoff, folders, calibration, and diagnostics.
 
-- The Loop appears to retain multiple days of onboard data.
-- If Lodestone reduces reliance on Flow, it may need to manage old device history itself.
-- Safe maintenance principle:
-  - only delete device history for dates already archived locally
-  - retain a recent window, currently around 14 days
-  - never delete today's or recent unresolved data
-- Old offline PPG/PPI files from experiments are no longer important, but deleting stale offline files is harmless as a safety net.
-- The more important long-term maintenance question is normal Loop stored data, not old offline test files.
+Do not make the user audit sleep windows, wait for final vendor sleep reports,
+or maintain a complex tag taxonomy as normal daily homework.
 
-## Garmin Context
+## Current Model Frame
 
-- Garmin data has been useful for comparison, especially overnight HRV trajectory, HR, respiration, SpO2, stress, Body Battery, and sleep.
-- Garmin sleep detection can be poor for low-arousal wakefulness and irregular sleep.
-- Garmin may finalise sleep late or misplace wake time.
-- Garmin Connect/givemydata access is brittle:
-  - browser automation is janky on macOS
-  - permissions and Chrome profile/full-disk-access issues recur
-  - Garmin rate limits can block collection
-- There is a `docs/garmin-sidecar-plan.md`; keep Garmin as sidecar unless we later decide it is worth deeper integration.
-- Do not rely on Garmin black-box stress/Body Battery as truth; treat them as possibly useful derived context.
+Use these conceptual lanes:
 
-## H10 / Sleep2 / Health Connect
+- **Subjective function (SF):** lived state and day outcome. This remains
+  primary because Lodestone exists to explain and support the user's experience.
+- **Perceived function (PF):** the user's own capacity estimate, if explicitly
+  captured. PF is user-perceived capacity, not Lodestone's derived forecast. It
+  may be momentary or retrospective, but current journal outcome reports do not
+  automatically create a PF lane.
+- **Objective function (OF):** what the user can actually produce or tolerate
+  now. Keep OF, stability/brittleness, and PEM/payback risk as related but
+  separate planning concepts rather than one simple score.
+- **Autonomic lane:** PPI/HRV/HR context for strain, possible recovery
+  conditions, and recovery momentum.
+- **Functional lane:** recent outcomes, PEM/payback, day shape, major tasks,
+  grip sessions, and future objective probes.
+- **Planning state/current-state read:** Lodestone's derived guidance from SF
+  history, any explicit PF field if one exists, autonomic data, sleep/rest
+  evidence, grip, context, and history.
 
-- H10 is expected to be used for:
-  - calibration of PPI/HRV accuracy
-  - checking sleep-window/stage disagreement
-  - possible lean/POTS-style tests
-- Sleep2 + H10 screenshot data showed HRV broadly agreeing with Loop PPI, but sleep duration/window/staging differed materially.
-- Lodestone can now request/read Health Connect sleep, heart rate, and HRV permissions.
-- A Health Connect export successfully produced data, but the observed records were Garmin-origin only.
-- Health Connect supports multiple sleep records/origins, so Garmin/Flow do not appear to crowd out Sleep2.
-- Current suspicion:
-  - Sleep2 either did not write the H10 session to Health Connect
-  - or writes only internal analysis / image export rather than standard HC sleep/HR/HRV records
-- Sleep2 screenshot imports are calibration-only and live outside the main DB.
-- App import location: `/sdcard/Android/data/com.daveharris.healthmonitor/files/analysis-sleep2/screenshots/`.
-- Imported Sleep2 screenshots are renamed to `sleep2-statistics-YYYY-MM-DD.png` with a same-date JSON sidecar.
-- The import uses Lodestone's selected review date as the calibration date, so check the Review date before importing backdated screenshots.
-- Next low-cost Sleep2 test:
-  - force-stop Sleep2 before a recording night
-  - confirm sharing settings
-  - record with H10
-  - next day export Health Connect and inspect record origins
+The current thesis is delayed and asymmetric recovery:
 
-## Food Log Context
+- downgrades can happen quickly
+- recovery takes longer than exertion
+- good autonomic state may permit recovery but does not prove OF has recovered
+- functional inertia should keep planning cautious until later functional
+  evidence improves
+- exertion and other drains matter as much as recovery signals, but high-friction
+  exertion journaling is unlikely to be sustainable
 
-- Food logging is intentionally separate from Lodestone.
-- Lodestone imports exported CSVs, usually from a `FoodLogData` folder because Android blocks frictionless access to the main Downloads folder.
-- Current food files are named like `food_log_yyyy-mm-dd`.
-- Only import files matching the selected review date.
-- Importing food for a date must not reset existing review ratings/notes.
-- Reset on the review screen should reset the current draft/import state, not delete source CSVs.
-- Newer food-log format may include a weight row tagged as weight.
-- Height may eventually live in user settings; current personal test height noted previously as 5ft11, but avoid hard-coding this into production logic without settings.
-- Nutrient expansion is possible later because the food log contains item/amount detail and can be retrospectively enriched.
+## Data Sources
 
-## Review / Daily Rating Model
+Active:
 
-- Morning prediction and evening outcome are distinct.
-- Evening outcome remains the more meaningful subjective label for training.
-- `approach_to_day` helps explain mismatches by separating condition from pacing behaviour.
-- Muscle weakness is tracked separately because it may be rare, missable, and physiologically distinct from general fatigue/brain fog.
-- Future grip-strength measurements may become a useful first/last thing objective marker, but are not integrated yet.
-- User-selected date should be the single source of truth for the review screen.
+- Polar Loop / Polar 360-class device through the Polar BLE SDK
+- `PPI_247` as the key raw autonomic lane
+- `HR_247`, Nightly Recharge, sleep/rest provenance, skin temperature, daily
+  summaries, and activity context as supporting lanes
+- Journal V2 outcome and day-shape chips
+- FoodLog CSV imports and weight rows
+- Grip Recorder CSV imports
 
-## Current Model Direction
+Calibration / secondary:
 
-- The model is still prototype/deterministic and should be presented as interim.
-- Do not claim the model “works” until enough paired daily prediction/outcome data exists.
-- Use `scripts/readiness_outcome_report.py` to audit paired readiness/outcome
-  days, stability transitions, coarse next-day payback context, and calibration
-  buckets for no-sleep nights, DSPS-like timings, naps, inferred candidates, and
-  zero-input days.
-- Use `scripts/daily_data_completeness.py --start-date ... --end-date ...` for
-  recent lane audits. It distinguishes raw-pruned derived rows, FULL-only
-  supporting lanes, disabled activity sample sync, and attempted-but-empty or
-  failed sync domains.
-- Current useful predictors likely include:
-  - overnight PPI/RMSSD trajectory
-  - sleep duration and timing
-  - resting/overnight HR
-  - respiration
-  - skin temperature deviations
-  - previous-day load/context
-  - subjective outcome history
-  - possibly food/calories/caffeine later
-- Derived vendor scores can be useful but should not be treated as transparent ground truth.
-- Parallel model families remain a good future idea:
-  - stable deterministic default
-  - adaptive/personalised candidate
-  - comparison-only variants
-- Any adaptive model should be reversible/resettable and should not silently rewrite the user's baseline.
+- H10/Sleep2/Health Connect remain calibration or analysis routes.
+- Vendor sleep reports remain provenance/fallback/context, not the daily gate.
 
-## UI / UX Direction
+Archived:
 
-- The app has moved from experimental probe toward a calmer daily-use prototype.
-- Visual identity is currently blue/calm, with the name `Lodestone` being tried.
-- The dark theme worked for end-of-day review but can feel gloomy for daytime use; revisit colour scheme later.
-- Review screen should be clear about active date and whether food is synced.
-- Settings should stay out of the main tab flow where possible.
-- Sync tab may eventually be removed if all sync actions are handled contextually.
-- Swipe navigation uses deliberate/resistant paging to avoid accidental tab changes.
-- Post-swipe tap blocking exists to avoid accidental button activation.
+- Garmin sidecar, Polar cloud backfill, offline recording, morning polling, and
+  old morning-sync recovery notes live under `docs/archive/` and are not current
+  product direction unless explicitly reopened.
 
-## Bluetooth / Flow Constraints
+Naming note:
 
-- Loop-class Polar hardware appears to allow only one BLE central connection at a time.
-- Android cannot force another app's BLE connection to disconnect.
-- A public app cannot programmatically revoke Polar Flow's Bluetooth permission.
-- Practical strategies:
-  - user restricts Flow background/Bluetooth access
-  - Lodestone offers clear handoff to Flow
-  - Lodestone retries connection gracefully
-  - avoid promising seamless Flow coexistence
-- Shizuku/ADB-style permission toggling is possible only as a personal-device hack, not public-app-safe.
+- Some scripts, database fields, and old contracts still say `readiness`. Treat
+  that as legacy naming for current-state/planning-state work unless a task is
+  explicitly about renaming those identifiers.
 
-## External Device Options Considered
+Known live legacy identifiers:
 
-- Oura may offer useful 5-minute RMSSD-style sleep data but no raw beat-level public feed.
-- Fibion/Helix appears interesting and possibly Loop-like hardware with different firmware, but availability/SDK claims need verification.
-- Visible Band may be a cheap experimentation route for alternative Polar-like firmware/hardware behaviour.
-- PineTime/PineTime Pro is a future lead as an ultra-open hackable wearable/marker-device platform, but the current model should not be treated as a serious HRV/PPI sensor candidate.
-- Corsano appears research/HCP-oriented and less directly accessible than hoped.
-- H10/ECG patch are good calibration tools but not realistic all-day wear for this project.
-- The broader wearable market is frustrating: many devices could expose 24/7 HRV/PPI, but most deliberately gate, smooth, or withhold it.
+- App code still has `MorningRead*`, `MorningPredictionSnapshot*`,
+  `SleepEpisodeReadinessRules`, `isPrimaryForReadiness`, and
+  `no_main_sleep`-style keys.
+- Analysis scripts still include `readiness_outcome_report.py` and
+  `old_readiness` comparison fields in `current_state_model_report.py`.
+- Garmin helper scripts still exist as optional/calibration tooling even though
+  Garmin is not an active modelling dependency.
+
+Archived docs mean "not current product direction", not "all related code is
+dead". Maintain live code when it is still used, and only remove or rename
+legacy paths as deliberate migration work.
+
+## Device And Flow Reality
+
+- Polar Loop / Polar 360-class devices expose one practical BLE relationship at
+  a time. Polar Flow can compete with Lodestone for the device.
+- Lodestone should support graceful handoff, retry, and user messaging, but it
+  should not assume seamless coexistence with Flow.
+- This is active operational context. It is separate from the archived idea of
+  waiting for final Loop sleep reports as the daily gate.
+
+## Measurement Burden
+
+The user's cognitive cost can be higher than physical cost. This matters.
+
+Measurement channels should be judged by value and burden:
+
+- Journal labels are primary but can be cognitively expensive.
+- Grip is a direct but narrow physical OF probe and can affect later state.
+- `check_2` means the low-friction daily grip protocol: two recorded
+  repetitions from Grip Recorder.
+- PVT-style cognitive probes may be worth testing outside Lodestone if short,
+  dull, bounded, and skippable.
+- Tetris-like probes are exploratory only because game score is confounded by
+  practice, motivation, strategy, and retry pressure.
+- Cognitive probes need timing context. Use probe/CSV timestamps plus
+  Lodestone's sleep-window data to estimate time since likely waking. Distinguish
+  sleepy, fatigued, fogged, and high-arousal states where possible; `tired` is
+  too broad to explain much by itself. If the sleep/window evidence is
+  ambiguous, mark derived timing as uncertain.
+- Two weeks is enough to judge burden and obvious signal for a new probe, not
+  enough to prove subtle utility.
+
+Any probe can be skipped. Preserving the sustainable core channels is more
+important than adding clever measurements.
+
+## UI Direction
+
+The app is moving toward a calmer daily-use UI:
+
+- `Now` should be succinct and readable at a glance.
+- Details belong lower down, in sheets, or collapsed sections.
+- Evidence surfaces should list candidates and provenance without implying the
+  user must repair them every day.
+- Journal should remain small and simple.
+- History can hold detailed per-day data, imports, and edits.
+- Settings should keep sync/debug/calibration tools away from daily flow.
+
+Avoid generic quantified-self dashboard drift. Every visible metric should earn
+its place by helping pacing, recovery interpretation, or data repair.
+
+## Engineering Notes
+
+- Repository: `https://github.com/betterlucky/Lodestone.git`
+- Local checkout: `/Users/daveharris/dev/HealthMonitor`
+- Kotlin, Jetpack Compose, Room, WorkManager, Polar BLE SDK.
+- App targets Android API 35 and currently requires API 33+.
+- Current DB includes grip session/repetition tables and import flow.
+- Food and grip recorder apps own measurement/capture UX; Lodestone owns
+  persistence and interpretation after CSV import.
 
 ## Data Safety
 
-- Never commit:
-  - `.env`
-  - Polar cloud credentials/tokens
-  - Garmin credentials/sessions
-  - raw pulled phone databases
-  - personal health exports
-  - large analysis JSONs containing personal samples
-- Use `/tmp` for transient DB pulls, plots, and analysis artifacts unless explicitly asked to preserve them.
-- Be especially careful before DB resets or migrations; the user has explicitly said they do not want accidental data loss.
+Never commit:
 
-## Agent / Workflow Context
+- `.env` files or API tokens
+- Polar cloud credentials
+- Garmin credentials/sessions
+- raw pulled phone databases
+- personal health exports
+- calibration screenshots or labels
+- large personal sample JSON
+
+Use `/tmp` or `/private/tmp` for transient DB pulls, plots, and analysis
+artifacts unless the user asks to preserve them.
+
+## Agent Workflow
 
 - Read `docs/agent-playbook.md` before substantial work.
-- Use local Qwen sidecar only for bounded read-only helper tasks; never pass secrets or personal raw data.
-- Main agent should keep ownership of:
-  - health model design
-  - BLE/SDK interpretation
-  - database safety
-  - final patch integration
-  - verification
-- User is rate-limit constrained, so prefer targeted reads, concise summaries, and small verifiable patches.
-
-## Near-Term Next Checks
-
-- Confirm next pure Lodestone Check in sync behaviour without Flow interference.
-- Continue watching whether Loop PPI/sleep data appears reliably after processing delay.
-- Run another Health Connect export after force-stopping Sleep2 before an H10 night.
-- Decide whether Sleep2 data is retrievable enough to matter or only useful as screenshot/manual calibration.
-- Keep collecting paired readiness/evening subjective ratings before revisiting model weights seriously.
-- Revisit UX polish when data collection feels stable.
+- Use current docs before archived docs.
+- Treat local model output as advisory only.
+- Main agent should keep ownership of health model design, BLE/SDK
+  interpretation, database safety, final patch integration, and verification.
