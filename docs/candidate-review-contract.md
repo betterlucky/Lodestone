@@ -24,7 +24,7 @@ language or modelling strategy back into a single canonical sleep story.
   them as facts.
 - Distinguish inferred candidates from user-confirmed or edited episodes.
 - Give the user short repair choices: accept, edit, reject, mark rest, or mark
-  no main sleep.
+  no-sleep/no-primary-window.
 - Keep planning-state use conservative: a candidate does not become the primary
   window for the current-state read until the user confirms or explicitly
   selects it.
@@ -92,9 +92,10 @@ current-state dates and stale or missing Loop sync data.
 | Catch-up list | Multiple stale dates need attention. | `Review missing days from oldest to newest.` |
 
 The empty state is not an alarm. It should explain the next useful action:
-Check in again after the device has more data, mark no main sleep, or wait for
-more supporting evidence. A final Loop report may be supporting context, but it
-is not the hierarchy the user is waiting on.
+Check in again after the device has more data, record a
+no-sleep/no-primary-window decision, or wait for more supporting evidence. A
+final Loop report may be supporting context, but it is not the hierarchy the
+user is waiting on.
 
 ## Episode Copy
 
@@ -105,7 +106,7 @@ Use these labels consistently in rows, dialogs, status messages, and tests.
 | Possible sleep | `ppi_inferred` candidate with `episodeKind = main_sleep`. | `Possible sleep` | `Lodestone found a quiet low-movement window. Confirm or edit it before it influences today's read.` |
 | Possible nap | `ppi_inferred` candidate that the user is reviewing as a nap-sized sleep episode. | `Possible nap` | `This may be a nap or short sleep. Keep it as context unless you choose otherwise.` |
 | Rest-like | `ppi_inferred` candidate with `episodeKind = rest_candidate`. | `Rest-like window` | `The signal looks restful, but Lodestone should not call it sleep without your review.` |
-| No sleep | Confirmed `episodeKind = no_sleep`. | `No main sleep` | `You marked this day as having no main sleep window. Today's read should stay cautious rather than inventing one.` |
+| No sleep | Confirmed `episodeKind = no_sleep`. | `No sleep / no primary window` | `You marked this day as having no useful primary sleep/rest window. Today's read should stay cautious rather than inventing one.` |
 | Confirmed sleep | Confirmed `episodeKind = main_sleep`. | `Confirmed sleep` | `This sleep window can inform the main current-state read.` |
 | Confirmed nap | Confirmed `episodeKind = nap`. | `Confirmed nap` | `This stays as context unless you select it as the primary window.` |
 | Confirmed rest | Confirmed rest/non-sleep row. | `Confirmed rest` | `This was useful rest, but not the main sleep window.` |
@@ -138,10 +139,11 @@ Candidate Review 1 only defines these actions; later tasks wire them.
 | Mark as rest | Keeps the window as confirmed rest/non-sleep context, not primary current-state input. |
 | Edit window | Lets the user adjust start/end before confirming; `source` becomes `edited` or `mixed`. |
 | Reject suggestion | Prevents the same inferred row from appearing as accepted fact. |
-| Mark no main sleep | Stores a confirmed `no_sleep` row for the date with no fabricated window. |
+| Mark no-sleep/no-primary-window | Stores a confirmed `no_sleep` row for the date with no fabricated window. |
 
 Action copy should avoid medical certainty. Prefer `Use this window`,
-`Edit`, `Not sleep`, and `No main sleep` over stronger diagnostic language.
+`Edit`, `Not sleep`, and `No sleep / no primary window` over stronger
+diagnostic language.
 
 ## Current-State Rules
 

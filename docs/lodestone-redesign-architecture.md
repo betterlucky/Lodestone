@@ -177,8 +177,9 @@ The evidence sheet should show available sources:
 - no-sleep or no-primary-window decision
 - H10/Sleep2/Health Connect calibration evidence when present
 
-The user can inspect, add, edit, override, or mark no main sleep from this
-surface. The app should keep working when the user never opens it.
+The user can inspect, add, edit, override, or record a
+no-sleep/no-primary-window decision from this surface. The app should keep
+working when the user never opens it.
 
 When multiple sources provide plausible sleep windows for the same date, keep
 them visible as separate evidence rather than collapsing them too early. This is

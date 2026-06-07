@@ -24,7 +24,7 @@ Move the Garmin runner/data directory under a Codex-writable managed path, for
 example:
 
 ```text
-/Users/daveharris/dev/HealthMonitor/local/garmin-givemydata/
+<local path to your clone>/local/garmin-givemydata/
 ```
 
 Keep all personal Garmin data ignored by git:

@@ -23,7 +23,7 @@ exhaustive history. Prefer current code, explicit user instructions, and
 ## Current Project Shape
 
 - Repository: `https://github.com/betterlucky/Lodestone.git`
-- Local checkout: `/Users/daveharris/dev/HealthMonitor`
+- Local checkout: `<local path to your clone>`
 - Product name: Lodestone
 - Platform: Android-first Kotlin/Compose prototype
 - Purpose: personal ME/CFS pacing, recovery tracking, and current-condition

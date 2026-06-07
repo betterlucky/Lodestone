@@ -62,8 +62,8 @@ More detail:
 - Keeps Polar sleep reports as supporting context/fallback rather than the
   primary daily gate.
 - Lets the user review inferred sleep/rest candidates from Check in or Catch up,
-  accept/edit/dismiss them, mark rest or no main sleep, and choose explicit
-  primary windows when needed.
+  accept/edit/dismiss them, mark rest, record no-sleep/no-primary-window
+  decisions, and choose explicit primary windows when needed.
 - Captures low-friction Journal labels: evening outcome, approach to the day,
   day-shape chips, PEM/payback markers, notes, and related context.
 - Imports food-log CSVs and weight rows from a separate FoodLog workflow.

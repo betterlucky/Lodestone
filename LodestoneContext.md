@@ -169,7 +169,7 @@ its place by helping pacing, recovery interpretation, or data repair.
 ## Engineering Notes
 
 - Repository: `https://github.com/betterlucky/Lodestone.git`
-- Local checkout: `/Users/daveharris/dev/HealthMonitor`
+- Local checkout: `<local path to your clone>`
 - Kotlin, Jetpack Compose, Room, WorkManager, Polar BLE SDK.
 - App targets Android API 35 and currently requires API 33+.
 - Current DB includes grip session/repetition tables and import flow.
