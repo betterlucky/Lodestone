@@ -4,6 +4,13 @@ This note captures the design shift agreed after the first Lodestone redesign
 pass. It should guide follow-on work for Kanban cards `#181`, `#182`, `#184`,
 and the later copy pass `#188`.
 
+Read `docs/lexicon.md` and
+`docs/current-thesis-and-measurement-strategy.md` first for the current
+SF/PF/OF framing, delayed-recovery thesis, and measurement-burden rules. This
+document remains active, but older `readiness` wording should be interpreted as
+the current planning/current-state signal rather than a sleep-gated morning
+verdict.
+
 ## Product Constraint
 
 The most valuable labels are needed when energy, focus, and executive function
@@ -98,13 +105,28 @@ peak with low confidence or prompted only if that stays low friction.
 ## Current-State Model Lanes
 
 The model should split concepts that were previously collapsed into one
-readiness/status output.
+legacy readiness/status output.
+
+Current conceptual terms:
+
+| Term | Meaning |
+| --- | --- |
+| Subjective function (SF) | Lived day state and outcome. Primary because Lodestone is trying to explain how the user feels. End-of-day journal outcome reports are SF by default. |
+| Perceived function (PF) | User-estimated capacity, if explicitly captured. PF is what the user thinks they can or could do, not Lodestone's derived forecast. Current journal outcome reports do not automatically create a PF lane. |
+| Objective function (OF) | What the user can actually produce or tolerate now. Treat OF, stability/brittleness, and PEM/payback risk as related but separate planning concepts, not one simple score. |
 
 | Lane | Meaning |
 | --- | --- |
 | Autonomic lane | PPI, HRV, HR, sleep/window evidence, Nightly Recharge support. |
-| Functional lane | Recent outcomes, day-shape chips, PEM markers, task context, future grip strength. |
+| Functional lane | Recent outcomes, day-shape chips, PEM markers, task context, grip sessions, and future objective-function probes. |
 | Planning state | Conservative user-facing guidance that combines the lanes. |
+
+The app's derived forecast is `planning state` or `current-state read`, not PF.
+Use PF only for user-perceived capacity fields or labels.
+
+For the current Journal V2 shape, assume the functional lane is mostly SF
+history, PEM/payback markers, day-shape context, and objective probes. PF is a
+reserved concept unless the UI explicitly captures a capacity estimate.
 
 The planning state must not be `GOOD` solely because HRV looks good when recent
 function says the user is in a poor-function spell.
@@ -118,6 +140,8 @@ The current working model is asymmetric:
   should normally climb to `OK` before `GOOD`.
 - Good HRV/PPI should be treated as possible recovery context, not immediate
   permission to spend energy freely.
+- Exertion and other drains must remain part of the model, but avoid turning
+  them into a high-friction journaling requirement.
 - Sleep/rest windows are evidence and provenance for autonomic reads, not the
   central model anchor.
 
@@ -156,12 +180,38 @@ Reports should be explicit about era and completeness:
 
 - outcome-only historic data
 - Journal V2 chip data
-- objective measurements such as future grip strength
+- objective measurements such as grip sessions and future cognitive probes
 
 Grip strength should stay in the functional lane. The low-friction manual daily
 field remains a fallback for a single reading; timed protocol sessions should be
 imported from Grip Recorder session CSVs and stored separately as sessions plus
 reps. Treat the source CSVs as disposable once Lodestone has imported them.
+
+`check_2` means the low-friction daily grip protocol: two recorded repetitions
+from the Grip Recorder flow. It is not a two-second hold, a 2 kg threshold, or a
+diagnostic category.
+
+Grip is both a measurement and a small exertion event. Daily `check_2` readings
+should be interpreted as a narrow physical OF probe, not a complete measure of
+whole-body, cognitive, orthostatic, or sensory capacity. Longer grip protocols
+should be marked as evidence/exertion events because they can affect later
+readings.
+
+Cognitive probes such as PVT-lite or bounded Tetris-like tasks are exploratory.
+If tried, they should live in separate recorder apps first, export disposable
+CSVs, and be treated as interventions as well as measurements. Two weeks can
+test burden and obvious signal, but subtle effects need more evidence and may
+not justify integration.
+
+If a cognitive probe is trialled, capture timing context. Early-morning tests
+may measure sleep inertia or alerting; post-activity tests may measure
+exertional cost. The probe timestamp, CSV file creation time, and Lodestone's
+own sleep/rest-window data should usually be enough to estimate time since
+likely waking without asking for extra manual labels. If the sleep/rest window
+is low confidence, missing, interrupted, or ambiguous, mark the derived timing
+as uncertain rather than fabricating precision. Avoid using `tired` as the main
+label when more specific states such as sleepy, fatigued, fogged, or high
+arousal are available.
 
 ## Analysis Direction
 

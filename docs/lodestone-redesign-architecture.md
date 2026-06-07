@@ -7,17 +7,20 @@ dependent implementation cards.
 
 Related contracts and background:
 
+- `docs/current-thesis-and-measurement-strategy.md` defines the current
+  subjective-function/objective-function framing and measurement-burden rules.
 - `docs/candidate-review-contract.md` defines the existing sleep/rest candidate
   data and action contract.
-- `docs/polling-and-monitoring-decisions.md` captures current sync, polling, and
-  wake-marker assumptions.
 - `docs/codex-handover.md` preserves older project context and safety notes.
+- `docs/archive/README.md` lists older sync, Garmin, Polar cloud, and offline
+  recording notes that are no longer active direction.
 
-The core product shift is from "start of day readiness" to "sync data and show
-what Lodestone can responsibly say about the current state, the robustness of
-that read, and how stable that state appears to be." The UI should support
-non-standard sleep patterns without turning sleep-window repair into required
-daily homework.
+The core product shift is from "start of day readiness" to "use the latest
+available evidence to explain subjective state and support pacing decisions."
+The UI should support non-standard sleep patterns without turning sleep-window
+repair into required daily homework. It should also make room for objective
+function probes, such as grip or future cognitive checks, without overwhelming
+the daily flow.
 
 ## Navigation
 
@@ -58,7 +61,7 @@ Separate these concepts in UI state and copy:
 
 | Concept | Meaning |
 | --- | --- |
-| Current state | The pacing/readiness-like status Lodestone can currently infer. |
+| Current state | The pacing/planning status Lodestone can currently infer. |
 | Signal robustness | Whether the read is well supported by data coverage, quality, freshness, and baseline history. |
 | State stability | Whether the current inferred state appears steady, mixed, improving, or degrading. |
 | Freshness | How recently relevant data and sync attempts were updated. |
@@ -170,12 +173,13 @@ The evidence sheet should show available sources:
 - manual bedtime marker
 - manual wake marker
 - edited user window
-- PPI-inferred rest/nap candidates
-- no-main-sleep decision
+- PPI-inferred sleep/rest window candidates
+- no-sleep or no-primary-window decision
 - H10/Sleep2/Health Connect calibration evidence when present
 
-The user can inspect, add, edit, override, or mark no main sleep from this
-surface. The app should keep working when the user never opens it.
+The user can inspect, add, edit, override, or record a
+no-sleep/no-primary-window decision from this surface. The app should keep
+working when the user never opens it.
 
 When multiple sources provide plausible sleep windows for the same date, keep
 them visible as separate evidence rather than collapsing them too early. This is
@@ -210,7 +214,7 @@ The active provenance should identify, where available:
 - source date
 - start and end time
 - source type, such as model estimate, edited user window, Loop report,
-  marker-derived window, no-main-sleep, or pending
+  marker-derived window, no-sleep/no-primary-window, or pending
 - confidence or robustness label
 - whether it was user-selected or model-selected
 - short reason why it was used
@@ -294,14 +298,15 @@ proves frustrating in real use.
 - Do not make sleep-window candidate review required unless the app genuinely
   needs user input.
 - Keep inferred/model estimates labelled as estimates.
-- Keep no-main-sleep explicit rather than fabricating a sleep window.
+- Keep no-sleep/no-primary-window decisions explicit rather than fabricating a
+  sleep window.
 - Use the same active analysis-window provenance for status, HRV, display, and
   history.
 - Keep debug and calibration tools visually separate from daily controls.
 - Prefer focused view-state objects over rebuilding interpretation directly in
   large composables.
 - Add tests for marker modes, stale/missed markers, active provenance, time
-  editing, no-main-sleep, and selected-date behavior.
+  editing, no-sleep/no-primary-window decisions, and selected-date behavior.
 
 ## Follow-On Task Map
 
