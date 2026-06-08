@@ -326,6 +326,16 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 }
                 Log.i(TAG, "Disk space probe completed: runId=$runId")
             }
+            "device_file_list_probe" -> {
+                val id = requireNotNull(selectedDeviceId) { "device_file_list_probe requires automation_device_id or selected device" }
+                val from = LocalDate.parse(requireNotNull(fromDate) { "device_file_list_probe requires probe_from_date" })
+                val to = LocalDate.parse(toDate ?: fromDate)
+                val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.runDeviceDateFileListProbe(connectedId, from, to).getOrThrow()
+                }
+                Log.i(TAG, "Device file list probe completed: runId=$runId, range=$from..$to")
+            }
             "offline_ppg_cleanup" -> {
                 val id = requireNotNull(selectedDeviceId) { "offline_ppg_cleanup requires automation_device_id or selected device" }
                 val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->

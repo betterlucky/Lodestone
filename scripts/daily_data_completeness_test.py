@@ -163,7 +163,7 @@ class DailyDataCompletenessTest(unittest.TestCase):
             (sync_run_id, domain, requested_range, status, records, error),
         )
 
-    def test_core_profile_explains_full_only_lanes_and_hr_raw_pruning(self) -> None:
+    def test_core_profile_reports_missing_primary_lanes_and_hr_raw_pruning(self) -> None:
         sync_run_id = self.add_sync_run("morning core sync completed")
         for domain in ("SLEEP", "NIGHTLY_RECHARGE", "PPI_247"):
             self.add_domain(sync_run_id, domain, "SUPPORTED", 1)
@@ -184,9 +184,9 @@ class DailyDataCompletenessTest(unittest.TestCase):
         self.assertEqual(report["polar"]["hr247"]["raw_records"], 0)
         self.assertEqual(report["polar"]["hr247"]["epochs"], 1)
         self.assertIn("derived epochs", report["supporting_lane_interpretation"]["HR_247"])
-        self.assertIn("only FULL manual sync", report["supporting_lane_interpretation"]["SKIN_TEMPERATURE"])
-        self.assertIn("only FULL manual sync", report["supporting_lane_interpretation"]["DAILY_SUMMARY"])
-        self.assertIn("disabled", report["supporting_lane_interpretation"]["ACTIVITY_SAMPLES"])
+        self.assertIn("primary sync profile should attempt", report["supporting_lane_interpretation"]["SKIN_TEMPERATURE"])
+        self.assertIn("primary sync profile should attempt", report["supporting_lane_interpretation"]["DAILY_SUMMARY"])
+        self.assertIn("primary sync profile should attempt", report["supporting_lane_interpretation"]["ACTIVITY_SAMPLES"])
         json.dumps(report)
 
     def test_full_sync_result_without_rows_is_reported_as_gap(self) -> None:

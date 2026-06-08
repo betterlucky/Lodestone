@@ -17,8 +17,10 @@ Statuses:
 **Subjective Function (SF)** - Active:
 The user's lived report and outcome: how the day felt, how usable they felt,
 and whether symptoms felt manageable. End-of-day journal outcome reports are SF
-by default.
-_Avoid_: treating ordinary journal outcome labels as PF.
+by default. Journal-sourced activity flags are not automatically SF just because
+they are captured in the same flow.
+_Avoid_: treating ordinary journal outcome labels as PF; treating `left_house`
+or similar activity/load markers as symptoms or lived-outcome labels.
 
 **Perceived Function (PF)** - Reserved:
 The user's own estimate of capacity, if explicitly captured: what they think
@@ -42,10 +44,18 @@ The possible future cost of spending capacity. It belongs beside OF in planning,
 but it is not OF itself.
 _Avoid_: objective function, current capacity.
 
+**Exertional Load (EL)** - Active:
+What load the user actually incurred: steps, MET minutes, active time, site
+visits, work, leaving the house, grip-test burden, and other exertional or
+participation demands. EL is most useful as trigger/context evidence for
+delayed PEM or recovery debt. It can help infer OF only when paired with later
+outcomes.
+_Avoid_: OF proxy, Actual Function, safe capacity.
+
 **Planning State** - Active:
 Lodestone's derived user-facing guidance assembled from SF history, any explicit
-PF field if one exists, autonomic data, sleep/rest evidence, grip, context, and
-history. It should support pacing, not claim certainty.
+PF field if one exists, autonomic data, sleep/rest evidence, EL/context, grip,
+and history. It should support pacing, not claim certainty.
 _Avoid_: PF, diagnosis, readiness.
 
 **Current-State Read** - Active:
@@ -56,10 +66,17 @@ _Avoid_: morning readiness, PF.
 ## Evidence Lanes
 
 **Functional Lane** - Active:
-Evidence about function and outcomes: SF history, PEM/payback markers, day
-shape, major tasks, mostly-horizontal/left-house anchors, grip sessions, and
-future objective probes.
+Evidence about function, load, and outcomes: SF history, PEM/payback markers,
+day shape, major tasks, reported activity markers, grip sessions, and future
+objective probes.
 _Avoid_: subjective-only lane.
+
+**Reported Activity Marker** - Active:
+A low-friction user-reported activity/load flag captured through journal or
+check-in UI. Its source is the journal, but its construct is usually EL/context,
+not SF. Examples: `left_house`, `site_visit`, `worked_from_home`, errands, or
+mostly-horizontal/rest markers.
+_Avoid_: assuming journal source means SF semantics.
 
 **Autonomic Lane** - Active:
 PPI/HRV/HR and related context for strain, possible recovery conditions, and

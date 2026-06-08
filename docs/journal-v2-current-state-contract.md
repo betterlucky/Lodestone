@@ -114,19 +114,22 @@ Current conceptual terms:
 | Subjective function (SF) | Lived day state and outcome. Primary because Lodestone is trying to explain how the user feels. End-of-day journal outcome reports are SF by default. |
 | Perceived function (PF) | User-estimated capacity, if explicitly captured. PF is what the user thinks they can or could do, not Lodestone's derived forecast. Current journal outcome reports do not automatically create a PF lane. |
 | Objective function (OF) | What the user can actually produce or tolerate now. Treat OF, stability/brittleness, and PEM/payback risk as related but separate planning concepts, not one simple score. |
+| Exertional load (EL) | What load the user actually incurred. Sensor activity, site visits, leaving the house, work, and grip-test burden are EL/context, not safe capacity. |
 
 | Lane | Meaning |
 | --- | --- |
 | Autonomic lane | PPI, HRV, HR, sleep/window evidence, Nightly Recharge support. |
-| Functional lane | Recent outcomes, day-shape chips, PEM markers, task context, grip sessions, and future objective-function probes. |
+| Functional lane | Recent outcomes, day-shape chips, PEM markers, reported activity/load markers, grip sessions, and future objective-function probes. |
 | Planning state | Conservative user-facing guidance that combines the lanes. |
 
 The app's derived forecast is `planning state` or `current-state read`, not PF.
 Use PF only for user-perceived capacity fields or labels.
 
 For the current Journal V2 shape, assume the functional lane is mostly SF
-history, PEM/payback markers, day-shape context, and objective probes. PF is a
-reserved concept unless the UI explicitly captures a capacity estimate.
+history, PEM/payback markers, EL/context, and objective probes. PF is a
+reserved concept unless the UI explicitly captures a capacity estimate. A flag
+can be journal-sourced without being SF-semantic; for example `left_house` is a
+reported activity/load marker.
 
 The planning state must not be `GOOD` solely because HRV looks good when recent
 function says the user is in a poor-function spell.

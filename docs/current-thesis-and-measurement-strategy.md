@@ -31,9 +31,10 @@ Use these concepts consistently:
 | Subjective function (SF) | The user's lived report and outcome: how the day felt, how usable they felt, and whether symptoms felt manageable. End-of-day journal outcome reports are SF by default. |
 | Perceived function (PF) | The user's own estimate of capacity, if explicitly captured: what they think they can or could do. PF is user-perceived capacity, not Lodestone's derived forecast. It may be momentary or retrospective, but it is distinct from the model output. Current journal outcome reports do not automatically create a PF lane. |
 | Objective function (OF) | What the user can actually produce or tolerate now. This is the action target, but it is hard to measure directly and should not be treated as one simple score. |
+| Exertional load (EL) | What load the user actually incurred: steps, MET minutes, active time, site visits, work, leaving the house, grip-test burden, and other exertional or participation demands. EL is trigger/context evidence, not safe capacity. |
 | Autonomic state | PPI/HRV/HR context: useful evidence about strain or possible recovery conditions, not a direct measure of usable function. |
 | Recovery debt | The delayed and asymmetric cost of exertion. Exertion can be brief, while recovery can take days. |
-| Planning state | Lodestone's derived user-facing current-state guidance assembled from SF history, any explicit PF field if one exists, autonomic data, sleep/rest evidence, grip, context, and history. It should support pacing, not claim certainty. |
+| Planning state | Lodestone's derived user-facing current-state guidance assembled from SF history, any explicit PF field if one exists, autonomic data, sleep/rest evidence, EL/context, grip, and history. It should support pacing, not claim certainty. |
 
 SF stays primary because Lodestone is trying to explain and support the user's
 lived state. OF is the practical target because the user wants to know whether
@@ -49,6 +50,14 @@ state` or `current-state read`.
 At the moment, Lodestone mostly uses SF history and functional context rather
 than a separate PF data channel. Do not infer PF from ordinary end-of-day
 outcome labels unless the UI explicitly asked the user to estimate capacity.
+Do not infer SF semantics from every journal-sourced flag either: `left_house`,
+`site_visit`, and similar low-friction markers are reported activity/load
+markers, so their model role is EL/context and possible PEM-trigger evidence.
+Use `scripts/exertional_load_report.py` and
+`docs/exertional-load-analysis.md` for the current exploratory EL analysis.
+As of the first durable pass, EL is not promoted into production planning-state
+status changes; it remains load/context evidence while D+2 and load-spike
+signals accumulate.
 
 Treat functional planning as a bundle of related questions:
 

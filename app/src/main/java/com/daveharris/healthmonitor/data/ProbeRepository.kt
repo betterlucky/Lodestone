@@ -670,23 +670,27 @@ class ProbeRepository(
             )
         }
 
-        when (profile) {
-            SyncRunProfile.MORNING_PPI_RETRY -> addPpiTask()
-            SyncRunProfile.MORNING_SLEEP_RETRY -> {
-                addSleepTask()
-                addNightlyRechargeTask()
-            }
-            SyncRunProfile.CHECK_IN,
-            SyncRunProfile.MORNING_CORE,
-            SyncRunProfile.FULL -> {
-                addSleepTask()
-                addNightlyRechargeTask()
-                addPpiTask()
-                addHrTask()
-            }
+        fun addActivitySamplesTask(lookbackDays: Long) {
+            if (!ENABLE_ACTIVITY_SAMPLE_SYNC) return
+            add(
+                SyncDomainTask(
+                    domain = ProbeDomain.ACTIVITY_SAMPLES,
+                    from = now.minusDays(lookbackDays),
+                    to = now,
+                    timeoutMs = ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS
+                ) {
+                    val data = polarManager.fetchActivitySamples(deviceId, it.first, it.second)
+                    persistActivitySamples(deviceId, data, "${it.first}..${it.second}")
+                    DomainPersistenceResult(data.size, shapeForActivitySamples(data))
+                }
+            )
         }
 
-        if (profile == SyncRunProfile.FULL) {
+        fun addPrimaryDataTasks() {
+            addSleepTask()
+            addNightlyRechargeTask()
+            addPpiTask()
+            addHrTask()
             add(
                 SyncDomainTask(
                     domain = ProbeDomain.SKIN_TEMPERATURE,
@@ -711,20 +715,18 @@ class ProbeRepository(
                     DomainPersistenceResult(data.size, shapeForDailySummary(data))
                 }
             )
-            if (ENABLE_ACTIVITY_SAMPLE_SYNC) {
-                add(
-                    SyncDomainTask(
-                        domain = ProbeDomain.ACTIVITY_SAMPLES,
-                        from = now.minusDays(config.hrDays.toLong()),
-                        to = now,
-                        timeoutMs = ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS
-                    ) {
-                        val data = polarManager.fetchActivitySamples(deviceId, it.first, it.second)
-                        persistActivitySamples(deviceId, data, "${it.first}..${it.second}")
-                        DomainPersistenceResult(data.size, shapeForActivitySamples(data))
-                    }
-                )
+            addActivitySamplesTask(config.sleepDays.toLong())
+        }
+
+        when (profile) {
+            SyncRunProfile.MORNING_SLEEP_RETRY -> {
+                addSleepTask()
+                addNightlyRechargeTask()
             }
+            SyncRunProfile.MORNING_PPI_RETRY,
+            SyncRunProfile.CHECK_IN,
+            SyncRunProfile.MORNING_CORE,
+            SyncRunProfile.FULL -> addPrimaryDataTasks()
         }
     }
 
@@ -1069,6 +1071,92 @@ class ProbeRepository(
                     endedAtEpochMs = System.currentTimeMillis(),
                     errorCode = null,
                     errorMessage = null
+                )
+            )
+            syncRunId
+        }
+    }
+
+    suspend fun runDeviceDateFileListProbe(deviceId: String, from: LocalDate, to: LocalDate): Result<Long> = withContext(Dispatchers.IO) {
+        require(!to.isBefore(from)) { "Device file list probe end must be on or after start" }
+        runCatching {
+            val startedAt = System.currentTimeMillis()
+            val dates = mutableListOf<LocalDate>()
+            var date = from
+            while (!date.isAfter(to)) {
+                require(dates.size < DEVICE_FILE_LIST_PROBE_MAX_DAYS) {
+                    "Device file list probe is limited to $DEVICE_FILE_LIST_PROBE_MAX_DAYS days"
+                }
+                dates += date
+                date = date.plusDays(1)
+            }
+
+            val dayResults = withTimeout(DEVICE_FILE_LIST_PROBE_TIMEOUT_MS) {
+                runWithinSyncSession(deviceId, "device_file_list_probe") {
+                    dates.map { probeDate ->
+                        val path = deviceDateDirectoryPath(probeDate)
+                        val result = runCatching {
+                            polarManager.listDeviceFiles(deviceId, path, recursive = true).sorted()
+                        }
+                        val entries = result.getOrDefault(emptyList())
+                        val activityEntries = entries.filter(::isActivityDeviceFileEntry)
+                        val dailySummaryEntries = entries.filter(::isDailySummaryDeviceFileEntry)
+                        DeviceFileListProbeDay(
+                            date = probeDate.toString(),
+                            path = path,
+                            listed = result.isSuccess,
+                            entryCount = entries.size,
+                            activityEntryCount = activityEntries.size,
+                            dailySummaryEntryCount = dailySummaryEntries.size,
+                            activityEntries = activityEntries.take(DEVICE_FILE_LIST_PROBE_ENTRY_LIMIT),
+                            dailySummaryEntries = dailySummaryEntries.take(DEVICE_FILE_LIST_PROBE_ENTRY_LIMIT),
+                            entries = entries.take(DEVICE_FILE_LIST_PROBE_ENTRY_LIMIT),
+                            entriesTruncated = entries.size > DEVICE_FILE_LIST_PROBE_ENTRY_LIMIT,
+                            error = result.exceptionOrNull()?.message ?: result.exceptionOrNull()?.javaClass?.simpleName
+                        )
+                    }
+                }
+            }
+            val errorCount = dayResults.count { !it.listed }
+            val activityDays = dayResults.count { it.activityEntryCount > 0 }
+            val dailySummaryDays = dayResults.count { it.dailySummaryEntryCount > 0 }
+            val payload = mapOf(
+                "purpose" to "read_only_device_date_file_list_probe",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to startedAt,
+                "from" to from.toString(),
+                "to" to to.toString(),
+                "dateRoot" to DEVICE_DATE_ROOT_PATH,
+                "days" to dayResults
+            )
+            val syncRunId = dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    status = if (errorCount == 0) "success" else "partial_failure",
+                    notes = "read-only device date file list probe"
+                )
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.ACTIVITY_SAMPLES.name,
+                    requestedRange = "device_file_list:$from..$to",
+                    status = if (errorCount == 0) ProbeStatus.SUPPORTED.name else ProbeStatus.PARTIAL.name,
+                    recordCount = dayResults.sumOf { it.entryCount },
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "days=${dayResults.size}, activityFileDays=$activityDays, dailySummaryFileDays=$dailySummaryDays, listErrors=$errorCount",
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = "read-only Loop date-directory listing; filenames only",
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = if (errorCount == 0) null else "DEVICE_FILE_LIST_PARTIAL",
+                    errorMessage = if (errorCount == 0) null else "$errorCount date directories could not be listed"
                 )
             )
             syncRunId
@@ -2098,6 +2186,15 @@ class ProbeRepository(
 
     private fun shapeForActivitySamples(data: List<PolarActivitySamplesDayData>): String =
         "list(size=${data.size}, metSamples=${data.sumOf { day -> day.polarActivitySamplesDataList.orEmpty().sumOf { it.metSamples.size } }}, stepSamples=${data.sumOf { day -> day.polarActivitySamplesDataList.orEmpty().sumOf { it.stepSamples.size } }})"
+
+    private fun deviceDateDirectoryPath(date: LocalDate): String =
+        "$DEVICE_DATE_ROOT_PATH${date.format(DateTimeFormatter.BASIC_ISO_DATE)}/"
+
+    private fun isActivityDeviceFileEntry(entry: String): Boolean =
+        entry.contains("/ACT/", ignoreCase = true) || entry.contains("ASAMPL", ignoreCase = true)
+
+    private fun isDailySummaryDeviceFileEntry(entry: String): Boolean =
+        entry.contains("/DSUM/", ignoreCase = true) || entry.endsWith("DSUM.BPB", ignoreCase = true)
 
     private fun offlineEntrySummary(entry: PolarOfflineRecordingEntry): Map<String, Any?> =
         mapOf(
@@ -3256,6 +3353,20 @@ private data class SyncDomainFailure(
     val error: Throwable
 )
 
+private data class DeviceFileListProbeDay(
+    val date: String,
+    val path: String,
+    val listed: Boolean,
+    val entryCount: Int,
+    val activityEntryCount: Int,
+    val dailySummaryEntryCount: Int,
+    val activityEntries: List<String>,
+    val dailySummaryEntries: List<String>,
+    val entries: List<String>,
+    val entriesTruncated: Boolean,
+    val error: String?
+)
+
 private class DeviceDisconnectedDuringSyncException(domain: ProbeDomain) :
     IllegalStateException("${domain.name} sync interrupted: Loop connection was lost. Keep the phone near the Loop; Lodestone will retry.")
 
@@ -3273,7 +3384,10 @@ private const val SYNC_NOTIFICATION_START_ATTEMPTS = 5
 private const val SYNC_NOTIFICATION_START_RETRY_DELAY_MS = 1_500L
 private const val SYNC_NOTIFICATION_STOP_TIMEOUT_MS = 5_000L
 private const val DATABASE_COMPACTION_THRESHOLD_BYTES = 300L * 1024L * 1024L
-private const val ENABLE_ACTIVITY_SAMPLE_SYNC = false
+private const val ENABLE_ACTIVITY_SAMPLE_SYNC = true
+private const val DEVICE_DATE_ROOT_PATH = "/U/0/"
+private const val DEVICE_FILE_LIST_PROBE_MAX_DAYS = 31
+private const val DEVICE_FILE_LIST_PROBE_ENTRY_LIMIT = 80
 private const val SLEEP_SYNC_TIMEOUT_MS = 45_000L
 private const val NIGHTLY_RECHARGE_SYNC_TIMEOUT_MS = 45_000L
 private const val PPI_SYNC_TIMEOUT_MS = 4 * 60 * 1000L
@@ -3281,6 +3395,7 @@ private const val HR_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
 private const val SKIN_TEMPERATURE_SYNC_TIMEOUT_MS = 60_000L
 private const val DAILY_SUMMARY_SYNC_TIMEOUT_MS = 60_000L
 private const val ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
+private const val DEVICE_FILE_LIST_PROBE_TIMEOUT_MS = 2 * 60 * 1000L
 private const val MANUAL_WAKE_BACKDATE_MS = 5 * 60_000L
 private const val SLEEP_ONSET_WINDOW_EPOCHS = 4
 private const val SLEEP_ONSET_MIN_HR_DROP_BPM = 3.0

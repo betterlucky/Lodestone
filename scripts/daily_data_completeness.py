@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-ACTIVITY_SAMPLE_SYNC_ENABLED = False
+ACTIVITY_SAMPLE_SYNC_ENABLED = True
 
 
 def parse_args() -> argparse.Namespace:
@@ -256,7 +256,7 @@ def domain_sync_results(conn: sqlite3.Connection, source_date: str) -> dict[str,
         "profiles": dict(profiles),
         "domains": latest_by_domain,
         "has_full_run": profiles.get("FULL", 0) > 0,
-        "has_core_run": any(profiles.get(profile, 0) > 0 for profile in ("CHECK_IN", "MORNING_CORE", "FULL")),
+        "has_core_run": any(profiles.get(profile, 0) > 0 for profile in ("CHECK_IN", "MORNING_CORE", "MORNING_PPI_RETRY", "FULL")),
     }
 
 
@@ -315,10 +315,10 @@ def interpret_supporting_lanes(polar: dict[str, Any], sync: dict[str, Any]) -> d
             interpretations["SKIN_TEMPERATURE"] = "reporting gap: sync recorded rows but raw/derived skin tables are empty"
         else:
             interpretations["SKIN_TEMPERATURE"] = f"not populated after attempted sync ({skin_sync.get('status')})"
-    elif not has_full_run:
-        interpretations["SKIN_TEMPERATURE"] = "expected for Check in/morning-core: only FULL manual sync attempts skin temperature"
+    elif not has_core_run:
+        interpretations["SKIN_TEMPERATURE"] = "expected for sleep-report retry: only sleep and Nightly Recharge are attempted"
     else:
-        interpretations["SKIN_TEMPERATURE"] = "sync/reporting gap: FULL sync was seen but no skin-temperature domain result was recorded"
+        interpretations["SKIN_TEMPERATURE"] = "sync/reporting gap: primary sync profile should attempt skin temperature but no domain result was recorded"
 
     daily = polar["daily_summary"]
     daily_sync = domains.get("DAILY_SUMMARY")
@@ -333,10 +333,10 @@ def interpret_supporting_lanes(polar: dict[str, Any], sync: dict[str, Any]) -> d
             interpretations["DAILY_SUMMARY"] = "reporting gap: sync recorded rows but daily_summary_raw is empty"
         else:
             interpretations["DAILY_SUMMARY"] = f"not populated after attempted sync ({daily_sync.get('status')})"
-    elif not has_full_run:
-        interpretations["DAILY_SUMMARY"] = "expected for Check in/morning-core: only FULL manual sync attempts daily summary"
+    elif not has_core_run:
+        interpretations["DAILY_SUMMARY"] = "expected for sleep-report retry: only sleep and Nightly Recharge are attempted"
     else:
-        interpretations["DAILY_SUMMARY"] = "sync/reporting gap: FULL sync was seen but no daily-summary domain result was recorded"
+        interpretations["DAILY_SUMMARY"] = "sync/reporting gap: primary sync profile should attempt daily summary but no domain result was recorded"
 
     activity = polar["activity_samples"]
     activity_sync = domains.get("ACTIVITY_SAMPLES")
@@ -355,10 +355,10 @@ def interpret_supporting_lanes(polar: dict[str, Any], sync: dict[str, Any]) -> d
             interpretations["ACTIVITY_SAMPLES"] = f"not populated after attempted sync ({activity_sync.get('status')})"
     elif not ACTIVITY_SAMPLE_SYNC_ENABLED:
         interpretations["ACTIVITY_SAMPLES"] = "expected: activity sample sync is disabled in the current app build"
-    elif not has_full_run:
-        interpretations["ACTIVITY_SAMPLES"] = "expected for Check in/morning-core: activity samples are FULL-only when enabled"
+    elif not has_core_run:
+        interpretations["ACTIVITY_SAMPLES"] = "expected for sleep-report retry: only sleep and Nightly Recharge are attempted"
     else:
-        interpretations["ACTIVITY_SAMPLES"] = "sync/reporting gap: FULL sync was seen but no activity domain result was recorded"
+        interpretations["ACTIVITY_SAMPLES"] = "sync/reporting gap: primary sync profile should attempt activity samples but no domain result was recorded"
 
     return interpretations
 

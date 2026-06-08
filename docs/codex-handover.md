@@ -11,6 +11,9 @@ exhaustive history. Prefer current code, explicit user instructions, and
   journal, sleep/rest, or UI wording.
 - `docs/current-thesis-and-measurement-strategy.md` for the current modelling
   and measurement strategy.
+- `docs/exertional-load-analysis.md` for the exploratory EL report, current EL
+  findings, and why EL remains analysis-layer evidence rather than a production
+  status input.
 - `docs/journal-v2-current-state-contract.md` for the functional lane,
   low-friction journal, day-shape chips, PEM/payback handling, and current-state
   model split.
@@ -59,6 +62,9 @@ erase recent PEM, poor function, or low objective-function probes by itself.
 - **Functional lane:** subjective outcome, PEM/payback markers, day-shape chips,
   major-task context, mostly-horizontal/left-house anchors, grip sessions, and
   future objective-function probes.
+- **Exertional load:** activity and reported load context. Use
+  `scripts/exertional_load_report.py` to explore EL -> later SF/PEM and
+  state -> actual activity; do not treat EL as OF or a load budget yet.
 - **Planning state:** conservative user-facing guidance combining the lanes.
 
 Functional inertia is the current planning anchor. Recovery should climb slowly
