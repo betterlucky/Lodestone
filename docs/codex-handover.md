@@ -137,8 +137,9 @@ Those notes live under `docs/archive/`.
 
 - Finish UI polish around the current-state framing.
 - Keep collecting paired SF/outcome, autonomic, grip, and day-shape data.
-- Watch whether `check_2` grip is sustainable and whether it reflects local
-  recovery, systemic state, or both.
+- Watch whether `check_2` grip is sustainable. If recorder setup remains too
+  cognitively costly in the morning, prefer the single-pull grip fallback over
+  abandoning grip entirely.
 - Try cognitive probes only if they remain low burden and do not threaten the
   core data channels. Two weeks is enough to judge sustainability and obvious
   signal, not subtle long-term utility.

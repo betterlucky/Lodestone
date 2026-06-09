@@ -150,16 +150,23 @@ may reflect:
 - systemic recovery state
 - recent physical measurement cost
 
-`check_2` means the low-friction daily grip protocol: two recorded repetitions
-from the Grip Recorder flow, currently treated as the sustainable default unless
-the user deliberately runs a longer protocol. It is not a two-second hold, a
-2 kg threshold, or a diagnostic test.
+`check_2` means the two-repetition Grip Recorder protocol. It remains useful
+when the recorder flow is manageable, but it is no longer assumed to be the
+sustainable default. If setting up the phone/recorder creates too much morning
+cognitive load, a single manual pull is the lower-burden tracking fallback.
+
+The single-pull protocol is deliberately approximate: pick up the device, turn
+it on, squeeze when ready, and record the value. A 2.5-3.5 second squeeze is
+good enough if the alternative is abandoning the measure. Repeatability matters,
+but the priority is a small meaningful task that can be done on bad mornings.
 
 Important interpretation rules:
 
 - A low grip day after a longer grip protocol may reflect measurement-induced
   local or systemic recovery debt, not spontaneous capacity loss.
-- A two-rep daily check is the sustainable default.
+- A two-rep daily check is a candidate protocol, not a requirement.
+- A single-pull tracking check is acceptable when the recorder workflow becomes
+  a chore or fails under brain fog.
 - Longer evidence protocols should be rare and explicitly marked as exertion
   events.
 - The model should be allowed to learn that grip testing itself can affect later
@@ -167,6 +174,23 @@ Important interpretation rules:
 
 Grip may become one anchor for OF, but it cannot represent cognitive,
 orthostatic, sensory, pain, or whole-body endurance limits by itself.
+
+## Recovery Shape Hypotheses
+
+The current asymmetry could be explained by at least two overlapping shapes:
+
+- **Temporal lag:** exertion creates a delayed PEM/payback spell. OF may recover
+  enough for work after a few days, while stability/brittleness remains reduced
+  for longer.
+- **Functional inertia / reserve refill:** capacity behaves more like a slowly
+  refilling reserve. Rest may improve the refill conditions, but the user may
+  not feel meaningfully better until enough reserve is restored.
+
+Do not assume either shape is proven. The first fits the familiar "overdo it,
+feel bad for days, then resume" mental model. The second fits the slow-recovery
+model, but the user does not strongly feel that better rest reliably accelerates
+recovery. Treat OF, stability, and PEM risk as separate until the data suggest
+which shape explains the pattern better.
 
 ## Cognitive Probes
 
