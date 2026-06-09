@@ -140,14 +140,20 @@ _Avoid_: using as new product language.
 ## Measurements And Probes
 
 **Grip Check** - Active:
-A narrow physical OF probe using the separate Grip Recorder flow. It can be both
-a measurement and a small exertion event.
+A narrow physical OF probe using either the separate Grip Recorder flow or a
+single manual pull. It can be both a measurement and a small exertion event.
 _Avoid_: whole-body capacity test, diagnostic strength test.
 
 **check_2** - Active:
-The low-friction daily grip protocol: two recorded repetitions from Grip
-Recorder.
-_Avoid_: two-second hold, 2 kg threshold.
+The two-repetition Grip Recorder protocol. Useful when manageable, but not a
+required daily default if recorder setup becomes too cognitively expensive.
+_Avoid_: two-second hold, 2 kg threshold, mandatory morning task.
+
+**Single-Pull Grip Check** - Active:
+The lowest-burden grip tracking fallback: turn on the device, squeeze once when
+ready, and record the value. It is approximate by design and prioritises
+sustainability over protocol neatness.
+_Avoid_: treating small timing variation as invalidating the measure.
 
 **FoodLog Import** - Active:
 Imported food and weight evidence from the separate FoodLog workflow. It remains

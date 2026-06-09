@@ -190,11 +190,12 @@ field remains a fallback for a single reading; timed protocol sessions should be
 imported from Grip Recorder session CSVs and stored separately as sessions plus
 reps. Treat the source CSVs as disposable once Lodestone has imported them.
 
-`check_2` means the low-friction daily grip protocol: two recorded repetitions
-from the Grip Recorder flow. It is not a two-second hold, a 2 kg threshold, or a
-diagnostic category.
+`check_2` means the two-repetition Grip Recorder protocol. It is not a two-second
+hold, a 2 kg threshold, or a diagnostic category. It should remain available,
+but the lower-burden fallback is a single manual pull when recorder setup is too
+hard in the morning.
 
-Grip is both a measurement and a small exertion event. Daily `check_2` readings
+Grip is both a measurement and a small exertion event. Daily grip readings
 should be interpreted as a narrow physical OF probe, not a complete measure of
 whole-body, cognitive, orthostatic, or sensory capacity. Longer grip protocols
 should be marked as evidence/exertion events because they can affect later
