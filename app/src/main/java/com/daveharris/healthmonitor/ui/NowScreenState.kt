@@ -353,13 +353,13 @@ private fun readyCurrentState(
         kind = NowCurrentStateKind.READY,
         availability = NowDataAvailability.PRESENT,
         status = planningStatus,
-        label = "Planning state: ${planningStatus.readinessLabel()}",
+        label = planningStatus.forecastLabel(),
         qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
             "Mixed autonomic/function evidence"
         } else if (hasFinalSleep) {
-            "Loop sleep report attached"
+            "Ready"
         } else {
-            "PPI/window signal ready"
+            "Ready"
         },
         message = currentStateMessage(
             autonomicStatus = morningRead?.status,
@@ -405,11 +405,11 @@ private fun lowConfidenceCurrentState(
         kind = NowCurrentStateKind.LOW_CONFIDENCE_READ,
         availability = NowDataAvailability.PARTIAL,
         status = planningStatus,
-        label = "Limited planning state: ${planningStatus.readinessLabel()}",
+        label = planningStatus.forecastLabel(),
         qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
             "Mixed autonomic/function evidence"
         } else {
-            "Thin PPI/window evidence"
+            "Limited confidence"
         },
         message = currentStateMessage(
             autonomicStatus = morningRead?.status,
@@ -1195,8 +1195,14 @@ private fun SyncRunEntity.isReadinessSync(): Boolean =
 private fun List<SyncRunEntity>.latestReadinessSync(): SyncRunEntity? =
     filter { it.isReadinessSync() }.maxByOrNull { it.startedAtEpochMs }
 
-private fun TrafficLightStatus?.readinessLabel(): String =
-    this?.name?.lowercase()?.replaceFirstChar { it.titlecase() } ?: "TBC"
+private fun TrafficLightStatus?.forecastLabel(): String =
+    when (this) {
+        TrafficLightStatus.GOOD -> "Likely Good"
+        TrafficLightStatus.OK -> "Likely OK"
+        TrafficLightStatus.UNSTEADY -> "Likely Unsteady"
+        TrafficLightStatus.CRASH -> "Likely Crash"
+        null -> "Forecast TBC"
+    }
 
 private fun planningStatus(
     autonomicStatus: TrafficLightStatus?,

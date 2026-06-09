@@ -48,8 +48,8 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Planning state:"))
-        assertEquals("PPI/window signal ready", state.currentState.qualifier)
+        assertEquals("Likely OK", state.currentState.label)
+        assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.currentState.message.contains("pending for comparison"))
         assertEquals(NowDataAvailability.PRESENT, state.currentState.availability)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
@@ -95,9 +95,9 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.LOW_CONFIDENCE_READ, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Limited planning state:"))
+        assertEquals("Likely OK", state.currentState.label)
         assertTrue(state.currentState.message.contains("coverage is thin"))
-        assertEquals("Thin PPI/window evidence", state.currentState.qualifier)
+        assertEquals("Limited confidence", state.currentState.qualifier)
         assertEquals("Brittle", state.stateStability.label)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
@@ -115,14 +115,87 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Planning state:"))
-        assertEquals("Loop sleep report attached", state.currentState.qualifier)
+        assertEquals("Likely OK", state.currentState.label)
+        assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.currentState.message.contains("pacing context"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
         assertEquals("Stable", state.stateStability.label)
         assertEquals(NowAnalysisWindowSourceType.LOOP_REPORT, state.activeAnalysisWindow.sourceType)
         assertEquals("Loop sleep report window", state.activeAnalysisWindow.label)
+    }
+
+    @Test
+    fun dailyForecastHeroFactsExposeConfidenceFreshnessAndSleepTotal() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 48.0
+            ),
+            syncRuns = listOf(
+                SyncRunEntity(
+                    deviceId = "loop-1",
+                    firmwareVersion = null,
+                    appVersion = "test",
+                    startedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    endedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    status = "success",
+                    notes = "check-in"
+                )
+            )
+        )
+
+        val facts = dailyForecastHeroFacts(state)
+
+        assertFalse("Ready" in facts)
+        assertTrue("Stability: Stable" in facts)
+        assertTrue("Confidence: Well supported" in facts)
+        assertTrue("Last sync: 2h ago" in facts)
+        assertTrue("Sleep/rest: 7h" in facts)
+        assertTrue(facts.size <= 5)
+        assertFalse(facts.any { it.contains("Planning", ignoreCase = true) })
+    }
+
+    @Test
+    fun dailyForecastHeroFactsKeepDeviceAttentionWhenDense() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 48.0,
+                status = TrafficLightStatus.GOOD
+            ),
+            syncRuns = listOf(
+                SyncRunEntity(
+                    deviceId = "loop-1",
+                    firmwareVersion = null,
+                    appVersion = "test",
+                    startedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    endedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    status = "success",
+                    notes = "check-in"
+                )
+            ),
+            dailyCheckIns = listOf(
+                checkIn(
+                    sourceDate = "2026-05-30",
+                    outcome = TrafficLightStatus.UNSTEADY,
+                    mostlyHorizontal = true
+                )
+            ),
+            runtime = DeviceRuntimeState(bluetoothPowered = false)
+        )
+
+        val facts = dailyForecastHeroFacts(state)
+
+        assertTrue("Bluetooth off" in facts)
+        assertTrue("Mixed autonomic/function evidence" in facts)
+        assertTrue(facts.size <= 5)
     }
 
     @Test
@@ -207,7 +280,7 @@ class NowScreenStateTest {
         assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
         assertEquals(TrafficLightStatus.OK, state.functionalContext.status)
         assertEquals(TrafficLightStatus.OK, state.currentState.status)
-        assertEquals("Loop sleep report attached", state.currentState.qualifier)
+        assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.functionalContext.detail.contains("cautious recovery"))
         assertTrue(state.functionalContext.detail.contains("recent Unsteady"))
     }
