@@ -56,7 +56,11 @@ _Avoid_: OF proxy, Actual Function, safe capacity.
 Lodestone's derived user-facing guidance assembled from SF history, any explicit
 PF field if one exists, autonomic data, sleep/rest evidence, EL/context, grip,
 and history. It should support pacing, not claim certainty.
-_Avoid_: PF, diagnosis, readiness.
+Treat this as an internal modelling/product term rather than the final
+top-level UI label. The hero should use a more natural capacity-forecast label
+once copy is settled.
+_Avoid_: PF, diagnosis, readiness, exposing `Planning State` as polished hero
+copy.
 
 **Current-State Read** - Active:
 Synonym for the model output shown to the user at check-in time. Prefer this

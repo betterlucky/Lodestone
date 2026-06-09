@@ -28,7 +28,7 @@ Use this app shell:
 
 | Surface | Purpose |
 | --- | --- |
-| `Now` | Current state, signal robustness, freshness, provenance, and low-friction check-in. |
+| `Now` | Capacity forecast, stability/payback context when available, confidence, freshness, estimated sleep total, and low-friction check-in. |
 | `Journal` | Evening outcome, approach to day, notes, food import, and weight for a selected date. |
 | `History` | Past days, paired prediction/outcome reporting, data completeness, stability, and per-day detail. |
 | `Settings` | Device, Flow handoff, daily-flow preferences, calibration imports, sync windows, and diagnostics. |
@@ -44,7 +44,8 @@ The normal happy path is:
 
 1. Open `Now`.
 2. Tap `Check in`.
-3. Read current state, freshness, signal robustness, and provenance.
+3. Read the capacity forecast, stability/payback context when available,
+   confidence, freshness, and estimated sleep total.
 4. Optionally open `Journal` later to save the day-end label.
 
 Normal use must not require reviewing sleep windows, confirming candidates, or
@@ -55,13 +56,62 @@ material enough to call out.
 This is the main design boundary: the model may choose and display an analysis
 window, but the user should not feel they must audit that choice every day.
 
+## Hero And Adaptive Focus
+
+The `Now` hero is the app's primary daily surface. A user should usually be able
+to open the app, understand the current read, perform at most one obvious
+action, and leave.
+
+The default hero order is:
+
+1. derived capacity forecast
+2. stability, when supported
+3. PEM/payback risk, when supported
+4. confidence or robustness for the displayed read
+5. last sync/check-in timestamp
+6. estimated sleep/rest total used by the current read
+
+`Planning State` and `Current-State Read` are internal model terms. They should
+not be the top-level user-facing hero label. Use `Daily Forecast` as the hero
+label: it is familiar, implies uncertainty without apology, and keeps the app
+approachable while the supporting copy carries the pacing purpose.
+
+The top-level read estimates capacity. It should not present SF as if SF were
+the forecast: SF is user-reported outcome/history and may appear as supporting
+context, confirmation, or recovery-inertia evidence. OF is the practical target,
+but Lodestone estimates it rather than observing it directly. If stability or
+payback risk are shown separately, each may need its own confidence treatment.
+
+The hero can mention the sleep/rest total in plain language, such as
+`Sleep/rest: 6h 40m`. It does not need to name the source at top level. Source,
+window choice, disagreement, and quality details belong in the drill-down unless
+they materially change confidence or make the read unusable. A qualitative sleep
+summary, such as low/neutral/good, can live in the sleep/rest detail rather than
+competing with the capacity forecast.
+
+The app should adapt its focus across the day. At the start of a cycle, `Now`
+should foreground the forecast/check-in flow. Later in the cycle, the default
+focus may shift toward Journal capture or a Journal CTA. This is a focus shift,
+not a navigation trap: tabs and manual navigation remain available.
+
+Journal focus timing should have two modes:
+
+- `Auto from wake`: default. Shift toward Journal around six hours after the
+  selected wake estimate for the active read. The selected wake estimate may
+  come from the model-selected sleep/rest window, a marker, or the active source
+  for the current session. If no usable wake estimate is available within 12
+  hours, fall back to 18:00 local time.
+- `Fixed time`: use the user's chosen local time as the primary Journal focus
+  gate, regardless of wake estimate. The time picker can default to 18:00, but
+  the explicit mode toggle is what makes it a fixed-time preference.
+
 ## Current-State Language
 
 Separate these concepts in UI state and copy:
 
 | Concept | Meaning |
 | --- | --- |
-| Current state | The pacing/planning status Lodestone can currently infer. |
+| Current state | The derived capacity forecast or pacing status Lodestone can currently infer. |
 | Signal robustness | Whether the read is well supported by data coverage, quality, freshness, and baseline history. |
 | State stability | Whether the current inferred state appears steady, mixed, improving, or degrading. |
 | Freshness | How recently relevant data and sync attempts were updated. |
@@ -70,18 +120,20 @@ Separate these concepts in UI state and copy:
 Avoid presenting a brittle or partial read as a confident verdict. Missing data
 should be explicit, but not alarming when it is expected or not applicable.
 
-## Check-In Intents
+## Check-In And Marker Intents
 
-All front-page marker actions are check-ins: they should sync data and update
-the current read where possible. `Info` is always the default, safest intent.
+Check-in and marker capture are separate concepts. `Check in` syncs data and
+updates the current read where possible. Bedtime and waking markers are
+annotations/calibration aids. The UI should not require a marker action to sync,
+and it should not require sync to save a marker.
 
 Supported marker visibility modes:
 
 | Mode | Front-page actions |
 | --- | --- |
 | `No markers` | `Check in` only. |
-| `Bedtime` | `Check in` and `Bedtime & sync`. |
-| `Bedtime + waking` | `Check in`, `Bedtime & sync`, and `Waking & sync`. |
+| `Bedtime` | `Check in` and `Bedtime marker`. |
+| `Bedtime + waking` | `Check in`, `Bedtime marker`, and `Waking marker`. |
 
 The mode controls which marker actions appear on `Now`; it must not change
 whether the user can open the evidence sheet and edit markers/windows manually.
@@ -91,10 +143,10 @@ Intent reset rules:
 - Default to `Info` on app open or resume.
 - Reset to `Info` after any action.
 - Reset to `Info` after a short inactivity timeout.
-- If an action fails, make it clear whether the marker was saved, whether sync
-  failed, or both.
+- If an action fails, make it clear whether the marker was saved and whether
+  the current read was refreshed.
 
-Do not force a `Waking & sync` action on users who selected `Bedtime` mode.
+Do not force a `Waking marker` action on users who selected `Bedtime` mode.
 Bedtime-only use is valid: the bedtime marker is primarily a sleep-latency and
 provenance note.
 
@@ -107,7 +159,7 @@ Markers are annotations and calibration aids, not obligations.
 
 For `Bedtime` mode:
 
-- After `Bedtime & sync`, show a short confirmation such as
+- After `Bedtime marker`, show a short confirmation such as
   `Bedtime marker saved: 01:42`.
 - After a brief cooldown, collapse it to a quieter line such as
   `Last bedtime marker: 01:42`.
