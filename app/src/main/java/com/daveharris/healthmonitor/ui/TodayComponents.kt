@@ -343,11 +343,10 @@ fun TodayHeroCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        formatHeroDate(nowState.today).uppercase(),
+                        formatHeroDate(nowState.today),
                         color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f),
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.2.sp
+                        fontWeight = FontWeight.Bold
                     )
                     TextButton(onClick = onOpenSettings) {
                         Icon(
@@ -358,6 +357,12 @@ fun TodayHeroCard(
                     }
                 }
                 Text(
+                    "Daily Forecast",
+                    color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.82f),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
                     nowState.currentState.label,
                     color = MaterialTheme.colorScheme.onPrimary,
                     style = MaterialTheme.typography.headlineSmall,
@@ -367,7 +372,7 @@ fun TodayHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    heroPills(nowState).forEach { HeroPill(it) }
+                    dailyForecastHeroFacts(nowState).forEach { HeroPill(it) }
                 }
                 Text(
                     nowState.currentState.message,
@@ -379,21 +384,56 @@ fun TodayHeroCard(
     }
 }
 
-private fun heroPills(nowState: NowScreenState): List<String> =
+internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
     buildList {
-        add(nowState.currentState.qualifier)
-        add("Signal: ${nowState.signalRobustness.label}")
-        val needsDeviceContext = nowState.readinessStatus.connectionPrompt != null ||
-            nowState.deviceConnection.availability in setOf(
-                NowDataAvailability.MISSING,
-                NowDataAvailability.PENDING
-            )
-        if (needsDeviceContext) {
-            add(nowState.deviceConnection.detail)
-        } else {
-            nowState.readinessStatus.heroPrompt?.let { add(it) }
-        }
-    }.distinct().take(3)
+        heroAttentionFact(nowState)?.let { add(it) }
+        heroQualifierFact(nowState)?.let { add(it) }
+        heroStabilityFact(nowState)?.let { add(it) }
+        add("Confidence: ${nowState.signalRobustness.label}")
+        add(heroFreshnessFact(nowState))
+        add(heroSleepRestFact(nowState))
+    }.distinct().take(MAX_DAILY_FORECAST_FACTS)
+
+private const val MAX_DAILY_FORECAST_FACTS = 5
+private const val DEFAULT_DAILY_FORECAST_QUALIFIER = "Ready"
+
+private fun heroQualifierFact(nowState: NowScreenState): String? =
+    nowState.currentState.qualifier.takeUnless { it == DEFAULT_DAILY_FORECAST_QUALIFIER }
+
+private fun heroAttentionFact(nowState: NowScreenState): String? {
+    val needsDeviceContext = nowState.readinessStatus.connectionPrompt != null ||
+        nowState.deviceConnection.availability in setOf(
+            NowDataAvailability.MISSING,
+            NowDataAvailability.PENDING
+        )
+    return if (needsDeviceContext) {
+        nowState.deviceConnection.detail
+    } else {
+        nowState.readinessStatus.heroPrompt
+    }
+}
+
+private fun heroStabilityFact(nowState: NowScreenState): String? =
+    if (nowState.stateStability.availability == NowDataAvailability.PRESENT) {
+        "Stability: ${nowState.stateStability.label}"
+    } else {
+        null
+    }
+
+private fun heroFreshnessFact(nowState: NowScreenState): String =
+    "Last sync: ${nowState.freshness.loopSync.detail}"
+
+private fun heroSleepRestFact(nowState: NowScreenState): String =
+    when {
+        nowState.activeAnalysisWindow.sourceType == NowAnalysisWindowSourceType.NO_MAIN_SLEEP ->
+            "Sleep/rest: no primary"
+        nowState.activeAnalysisWindow.durationLabel == "Duration unknown" ->
+            "Sleep/rest: TBC"
+        nowState.activeAnalysisWindow.durationLabel == "Not applicable" ->
+            "Sleep/rest: n/a"
+        else ->
+            "Sleep/rest: ${nowState.activeAnalysisWindow.durationLabel}"
+    }
 
 @Composable
 private fun HeroPill(label: String) {
@@ -460,7 +500,7 @@ fun MorningSignalSection(
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Planning state", nowState.currentState.status?.let { labelForStatus(it.name) } ?: "TBC")
+                    DetailRow("Daily forecast", nowState.currentState.status?.let { labelForStatus(it.name) } ?: "TBC")
                     DetailRow("Autonomic signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
                     DetailRow("Autonomic context", nowState.autonomicContext.label)
                     DetailRow("Functional context", nowState.functionalContext.label)

@@ -101,6 +101,10 @@ class ProbeViewModel(
         private set
     var markerMode by mutableStateOf(NowMarkerMode.BEDTIME_AND_WAKING)
         private set
+    var journalFocusMode by mutableStateOf(NowJournalFocusMode.AUTO_FROM_WAKE)
+        private set
+    var journalFocusFixedTimeMinutes by mutableStateOf(18 * 60)
+        private set
     var checkInIntent by mutableStateOf(NowCheckInIntent.INFO)
         private set
     var firmwareRediscoveryNeeded by mutableStateOf(false)
@@ -161,6 +165,8 @@ class ProbeViewModel(
                     ppiDays = settings.ppiDays
                 )
                 markerMode = settings.markerMode.toNowMarkerMode()
+                journalFocusMode = settings.journalFocusMode.toNowJournalFocusMode()
+                journalFocusFixedTimeMinutes = settings.journalFocusFixedTimeMinutes.coerceIn(0, 23 * 60 + 59)
                 checkInIntent = normalizeCheckInIntent(checkInIntent, markerMode)
             }
         }
@@ -242,6 +248,19 @@ class ProbeViewModel(
         resetCheckInIntent()
         persistAppSettings()
         statusMessage = "Marker mode set to ${mode.settingsLabel()}."
+    }
+
+    fun updateJournalFocusMode(mode: NowJournalFocusMode) {
+        journalFocusMode = mode
+        persistAppSettings()
+        statusMessage = "Journal focus set to ${mode.settingsLabel()}."
+    }
+
+    fun updateJournalFocusFixedTime(hour: Int, minute: Int) {
+        journalFocusFixedTimeMinutes = (hour.coerceIn(0, 23) * 60) + minute.coerceIn(0, 59)
+        journalFocusMode = NowJournalFocusMode.FIXED_TIME
+        persistAppSettings()
+        statusMessage = "Journal focus time set to ${journalFocusFixedTimeMinutes.timeOfDayLabel()}."
     }
 
     fun resetCheckInIntent() {
@@ -377,40 +396,36 @@ class ProbeViewModel(
         }
     }
 
-    fun markAwakeAndSync(markerEpochMs: Long = System.currentTimeMillis()) {
-        runMarkerCheckIn(
+    fun markAwake(markerEpochMs: Long = System.currentTimeMillis()) {
+        recordMarker(
             intent = NowCheckInIntent.WAKING,
             markerSource = WakeMarkerSources.IM_AWAKE,
-            markerNotes = "Waking & sync",
-            workingMessage = "Recording wake time and checking in…",
-            successMessage = "Wake marker saved. Check-in sync completed.",
-            recoveredMessage = "Wake marker saved. PPI recovered after reconnecting to the Loop.",
+            markerNotes = "Waking marker",
+            workingMessage = "Saving wake marker…",
+            successMessage = "Wake marker saved locally. Run Check in when you want to refresh current data.",
             markerEpochMs = markerEpochMs
         )
     }
 
     fun markGoingToBed(markerEpochMs: Long = System.currentTimeMillis()) {
-        runMarkerCheckIn(
+        recordMarker(
             intent = NowCheckInIntent.BEDTIME,
             markerSource = WakeMarkerSources.GOING_TO_BED,
-            markerNotes = "Bedtime & sync",
-            workingMessage = "Recording bedtime marker and checking in…",
-            successMessage = "Bedtime marker saved. Check-in sync completed.",
-            recoveredMessage = "Bedtime marker saved. PPI recovered after reconnecting to the Loop.",
+            markerNotes = "Bedtime marker",
+            workingMessage = "Saving bedtime marker…",
+            successMessage = "Bedtime marker saved locally. Run Check in when you want to refresh current data.",
             markerEpochMs = markerEpochMs
         )
     }
 
-    private fun runMarkerCheckIn(
+    private fun recordMarker(
         intent: NowCheckInIntent,
         markerSource: String,
         markerNotes: String,
         workingMessage: String,
         successMessage: String,
-        recoveredMessage: String,
         markerEpochMs: Long = System.currentTimeMillis()
     ) {
-        val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         selectCheckInIntent(intent)
         val targetDate = if (intent == NowCheckInIntent.BEDTIME) {
             sleepTargetDateForBedtime(markerEpochMs).toString()
@@ -421,54 +436,19 @@ class ProbeViewModel(
         viewModelScope.launch {
             isBusy = true
             statusMessage = workingMessage
-            var syncCompleted = false
             try {
-                SyncCommandWorker.cancelBulkWork(getApplication())
-                val result = syncCoordinator.runSync(
-                    deviceId = deviceId,
-                    config = syncWindowConfig,
-                    profile = SyncRunProfile.CHECK_IN,
-                    scheduleMorningRetryIfNeeded = true,
-                    cancelMorningRetryFirst = intent == NowCheckInIntent.WAKING,
-                    lodestoneTargetDate = targetDate
-                )
-                selectedDeviceId = result.connectedDeviceId
-                persistAppSettings()
-                firmwareRediscoveryNeeded = false
-                syncCompleted = true
                 repository.recordWakeMarker(
                     sourceDate = targetDate,
                     markerEpochMs = markerEpochMs,
                     markerSource = markerSource,
-                    deviceId = result.connectedDeviceId,
+                    deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId,
                     notes = markerNotes
                 )
                 val candidateCount = refreshInferredSleepEpisodeCandidates(listOf(targetDate))
-                statusMessage = if (result.recoveredMorningPpi) {
-                    "$recoveredMessage${candidateCount.sleepCandidateSuffix()}"
-                } else {
-                    "$successMessage${candidateCount.sleepCandidateSuffix()}"
-                }
+                statusMessage = "$successMessage${candidateCount.sleepCandidateSuffix()}"
             } catch (error: Throwable) {
-                val markerSaved = if (syncCompleted) {
-                    false
-                } else {
-                    runCatching {
-                        repository.recordWakeMarker(
-                            sourceDate = targetDate,
-                            markerEpochMs = markerEpochMs,
-                            markerSource = markerSource,
-                            deviceId = selectedDeviceId,
-                            notes = markerNotes
-                        )
-                    }.isSuccess
-                }
                 val message = error.message ?: error.javaClass.simpleName
-                statusMessage = when {
-                    syncCompleted -> "Check-in sync completed, but the marker was not saved: $message"
-                    markerSaved -> "${intent.markerSavedLabel()} saved, but check-in sync failed: $message"
-                    else -> "${intent.markerSavedLabel()} was not saved; check-in sync failed: $message"
-                }
+                statusMessage = "${intent.markerSavedLabel()} could not be saved locally: $message"
             } finally {
                 isBusy = false
                 resetCheckInIntent()
@@ -1044,7 +1024,7 @@ class ProbeViewModel(
             "disconnect" -> disconnectSelectedDevice()
             "discover" -> discoverCapabilities()
             "sync" -> runManualSync()
-            "awake_sync" -> markAwakeAndSync()
+            "awake_sync" -> markAwake()
             "health_connect_export" -> exportHealthConnectSleepAnalysis()
         }
     }
@@ -1112,7 +1092,9 @@ class ProbeViewModel(
                 selectedDeviceId = selectedDeviceId,
                 syncWindowConfig = syncWindowConfig,
                 lastKnownFirmwareBySelectedDevice = runtimeState.value.firmwareVersion,
-                markerMode = markerMode.name
+                markerMode = markerMode.name,
+                journalFocusMode = journalFocusMode.name,
+                journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes
             )
         }
     }
@@ -1329,12 +1311,26 @@ internal fun gripStrengthKgOrNull(value: String): Double? =
 private fun String?.toNowMarkerMode(): NowMarkerMode =
     runCatching { NowMarkerMode.valueOf(this ?: "") }.getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING)
 
+private fun String?.toNowJournalFocusMode(): NowJournalFocusMode =
+    runCatching { NowJournalFocusMode.valueOf(this ?: "") }.getOrDefault(NowJournalFocusMode.AUTO_FROM_WAKE)
+
 fun NowMarkerMode.settingsLabel(): String =
     when (this) {
         NowMarkerMode.NO_MARKERS -> "No markers"
         NowMarkerMode.BEDTIME -> "Bedtime"
         NowMarkerMode.BEDTIME_AND_WAKING -> "Bedtime + waking"
     }
+
+fun NowJournalFocusMode.settingsLabel(): String =
+    when (this) {
+        NowJournalFocusMode.AUTO_FROM_WAKE -> "Auto from wake"
+        NowJournalFocusMode.FIXED_TIME -> "Fixed time"
+    }
+
+fun Int.timeOfDayLabel(): String {
+    val clamped = coerceIn(0, 23 * 60 + 59)
+    return "%02d:%02d".format(java.util.Locale.UK, clamped / 60, clamped % 60)
+}
 
 private fun NowCheckInIntent.markerSavedLabel(): String =
     when (this) {

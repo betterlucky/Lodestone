@@ -203,6 +203,11 @@ fun ProbeApp(
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
+                                            onOpenJournal = {
+                                                pagerScope.launch {
+                                                    pagerState.animateScrollToPage(ProbeTab.JOURNAL.ordinal)
+                                                }
+                                            },
                                             onOpenSettings = { showSettings = true }
                                         )
                                         ProbeTab.JOURNAL -> JournalScreen(

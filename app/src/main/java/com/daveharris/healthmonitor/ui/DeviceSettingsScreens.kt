@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,11 +29,15 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -182,6 +187,35 @@ fun SettingsScreen(
     val ppiPresent = todayMorningRead?.rawPpiGoodEpochCount != null ||
         todayMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
     val sleepRetryCooldown = viewModel.sleepReportRetryCooldownLabel()
+    var showJournalFocusTimePicker by remember { mutableStateOf(false) }
+    if (showJournalFocusTimePicker) {
+        val focusMinutes = viewModel.journalFocusFixedTimeMinutes.coerceIn(0, 23 * 60 + 59)
+        val pickerState = rememberTimePickerState(
+            initialHour = focusMinutes / 60,
+            initialMinute = focusMinutes % 60,
+            is24Hour = true
+        )
+        AlertDialog(
+            onDismissRequest = { showJournalFocusTimePicker = false },
+            title = { Text("Journal focus time") },
+            text = { TimePicker(state = pickerState) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.updateJournalFocusFixedTime(pickerState.hour, pickerState.minute)
+                        showJournalFocusTimePicker = false
+                    }
+                ) {
+                    Text("Set")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showJournalFocusTimePicker = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -218,6 +252,31 @@ fun SettingsScreen(
                         ) {
                             Text(mode.shortSettingsLabel())
                         }
+                    }
+                }
+                DetailRow("Journal focus", viewModel.journalFocusMode.settingsLabel())
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    NowJournalFocusMode.entries.forEachIndexed { index, mode ->
+                        SegmentedButton(
+                            selected = viewModel.journalFocusMode == mode,
+                            onClick = { viewModel.updateJournalFocusMode(mode) },
+                            shape = SegmentedButtonDefaults.itemShape(
+                                index = index,
+                                count = NowJournalFocusMode.entries.size
+                            ),
+                            enabled = !viewModel.isBusy
+                        ) {
+                            Text(mode.settingsLabel())
+                        }
+                    }
+                }
+                if (viewModel.journalFocusMode == NowJournalFocusMode.FIXED_TIME) {
+                    DetailRow("Focus time", viewModel.journalFocusFixedTimeMinutes.timeOfDayLabel())
+                    OutlinedButton(
+                        onClick = { showJournalFocusTimePicker = true },
+                        enabled = !viewModel.isBusy
+                    ) {
+                        Text("Choose focus time")
                     }
                 }
                 ButtonRow {

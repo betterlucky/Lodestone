@@ -38,6 +38,7 @@ fun DataScreen(
     sleepEpisodeReviewState: SleepEpisodeReviewState,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
+    onOpenJournal: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val today = resolveLodestoneDisplayDate(
@@ -55,7 +56,9 @@ fun DataScreen(
         selectedDeviceId = viewModel.selectedDeviceId,
         isBusy = viewModel.isBusy,
         markerMode = viewModel.markerMode,
-        checkInIntent = viewModel.checkInIntent
+        checkInIntent = viewModel.checkInIntent,
+        journalFocusMode = viewModel.journalFocusMode,
+        journalFocusFixedTimeMinutes = viewModel.journalFocusFixedTimeMinutes
     )
     val todayStatus = nowState.readinessStatus
     val activeMorningRead = nowState.activeMorningRead
@@ -73,7 +76,7 @@ fun DataScreen(
             onSave = { markerEpochMs ->
                 when (kind) {
                     MarkerTimeEditorKind.BEDTIME -> viewModel.markGoingToBed(markerEpochMs)
-                    MarkerTimeEditorKind.WAKING -> viewModel.markAwakeAndSync(markerEpochMs)
+                    MarkerTimeEditorKind.WAKING -> viewModel.markAwake(markerEpochMs)
                 }
                 markerEditor = null
             },
@@ -111,6 +114,14 @@ fun DataScreen(
                     )
                 }
                 ButtonRow {
+                    if (nowState.journalFocus.shouldFocusJournal) {
+                        OutlinedButton(
+                            onClick = { if (actionsEnabled) onOpenJournal() },
+                            enabled = actionsEnabled
+                        ) {
+                            Text("Open Journal")
+                        }
+                    }
                     Button(
                         onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
                         enabled = actionsEnabled && nowState.primaryActions.checkIn.enabled
@@ -130,7 +141,7 @@ fun DataScreen(
                             onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.BEDTIME },
                             enabled = actionsEnabled && nowState.primaryActions.bedtime.enabled
                         ) {
-                            Text("Bedtime & sync")
+                            Text("Bedtime marker")
                         }
                     }
                     if (nowState.primaryActions.waking.visible) {
@@ -138,9 +149,12 @@ fun DataScreen(
                             onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.WAKING },
                             enabled = actionsEnabled && nowState.primaryActions.waking.enabled
                         ) {
-                            Text("Waking & sync")
+                            Text("Waking marker")
                         }
                     }
+                }
+                if (nowState.journalFocus.shouldFocusJournal) {
+                    SupportText(nowState.journalFocus.detail)
                 }
             }
         }

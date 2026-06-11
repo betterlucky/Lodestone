@@ -48,8 +48,8 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Planning state:"))
-        assertEquals("PPI/window signal ready", state.currentState.qualifier)
+        assertEquals("Likely OK", state.currentState.label)
+        assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.currentState.message.contains("pending for comparison"))
         assertEquals(NowDataAvailability.PRESENT, state.currentState.availability)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
@@ -95,9 +95,9 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.LOW_CONFIDENCE_READ, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Limited planning state:"))
+        assertEquals("Likely OK", state.currentState.label)
         assertTrue(state.currentState.message.contains("coverage is thin"))
-        assertEquals("Thin PPI/window evidence", state.currentState.qualifier)
+        assertEquals("Limited confidence", state.currentState.qualifier)
         assertEquals("Brittle", state.stateStability.label)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
@@ -115,14 +115,87 @@ class NowScreenStateTest {
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
-        assertTrue(state.currentState.label.startsWith("Planning state:"))
-        assertEquals("Loop sleep report attached", state.currentState.qualifier)
+        assertEquals("Likely OK", state.currentState.label)
+        assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.currentState.message.contains("pacing context"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
         assertEquals("Stable", state.stateStability.label)
         assertEquals(NowAnalysisWindowSourceType.LOOP_REPORT, state.activeAnalysisWindow.sourceType)
         assertEquals("Loop sleep report window", state.activeAnalysisWindow.label)
+    }
+
+    @Test
+    fun dailyForecastHeroFactsExposeConfidenceFreshnessAndSleepTotal() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 48.0
+            ),
+            syncRuns = listOf(
+                SyncRunEntity(
+                    deviceId = "loop-1",
+                    firmwareVersion = null,
+                    appVersion = "test",
+                    startedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    endedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    status = "success",
+                    notes = "check-in"
+                )
+            )
+        )
+
+        val facts = dailyForecastHeroFacts(state)
+
+        assertFalse("Ready" in facts)
+        assertTrue("Stability: Stable" in facts)
+        assertTrue("Confidence: Well supported" in facts)
+        assertTrue("Last sync: 2h ago" in facts)
+        assertTrue("Sleep/rest: 7h" in facts)
+        assertTrue(facts.size <= 5)
+        assertFalse(facts.any { it.contains("Planning", ignoreCase = true) })
+    }
+
+    @Test
+    fun dailyForecastHeroFactsKeepDeviceAttentionWhenDense() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 48.0,
+                status = TrafficLightStatus.GOOD
+            ),
+            syncRuns = listOf(
+                SyncRunEntity(
+                    deviceId = "loop-1",
+                    firmwareVersion = null,
+                    appVersion = "test",
+                    startedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    endedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    status = "success",
+                    notes = "check-in"
+                )
+            ),
+            dailyCheckIns = listOf(
+                checkIn(
+                    sourceDate = "2026-05-30",
+                    outcome = TrafficLightStatus.UNSTEADY,
+                    mostlyHorizontal = true
+                )
+            ),
+            runtime = DeviceRuntimeState(bluetoothPowered = false)
+        )
+
+        val facts = dailyForecastHeroFacts(state)
+
+        assertTrue("Bluetooth off" in facts)
+        assertTrue("Mixed autonomic/function evidence" in facts)
+        assertTrue(facts.size <= 5)
     }
 
     @Test
@@ -207,7 +280,7 @@ class NowScreenStateTest {
         assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
         assertEquals(TrafficLightStatus.OK, state.functionalContext.status)
         assertEquals(TrafficLightStatus.OK, state.currentState.status)
-        assertEquals("Loop sleep report attached", state.currentState.qualifier)
+        assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.functionalContext.detail.contains("cautious recovery"))
         assertTrue(state.functionalContext.detail.contains("recent Unsteady"))
     }
@@ -358,6 +431,8 @@ class NowScreenStateTest {
         assertEquals(NowCurrentStateKind.WAITING_FOR_DATA, state.currentState.kind)
         assertEquals(NowDataAvailability.STALE, state.markerStatus.availability)
         assertEquals(NowDataAvailability.STALE, state.markerStatus.bedtime.availability)
+        assertTrue(state.currentState.message.contains("Missing or stale markers do not block this"))
+        assertTrue(state.markerStatus.detail.contains("Check in still works normally"))
         assertEquals(null, state.activeMorningRead)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
@@ -372,6 +447,28 @@ class NowScreenStateTest {
         assertFalse(state.primaryActions.waking.visible)
         assertTrue(state.primaryActions.checkIn.visible)
         assertTrue(state.primaryActions.checkIn.enabled)
+    }
+
+    @Test
+    fun markerActionsDoNotRequireSelectedLoop() {
+        val state = nowState(selectedDeviceId = null)
+
+        assertFalse(state.primaryActions.checkIn.enabled)
+        assertTrue(state.primaryActions.bedtime.visible)
+        assertTrue(state.primaryActions.bedtime.enabled)
+        assertTrue(state.primaryActions.waking.visible)
+        assertTrue(state.primaryActions.waking.enabled)
+    }
+
+    @Test
+    fun markerActionsAreDisabledWhileBusy() {
+        val state = nowState(isBusy = true)
+
+        assertFalse(state.primaryActions.checkIn.enabled)
+        assertFalse(state.primaryActions.bedtime.enabled)
+        assertEquals("Action already running", state.primaryActions.bedtime.unavailableReason)
+        assertFalse(state.primaryActions.waking.enabled)
+        assertEquals("Action already running", state.primaryActions.waking.unavailableReason)
     }
 
     @Test
@@ -422,6 +519,92 @@ class NowScreenStateTest {
         assertTrue(state.primaryActions.checkIn.enabled)
     }
 
+    @Test
+    fun autoJournalFocusWaitsUntilSixHoursAfterSelectedWake() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T13:30:00")
+        )
+
+        assertEquals(NowJournalFocusMode.AUTO_FROM_WAKE, state.journalFocus.mode)
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T14:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("6h after wake"))
+    }
+
+    @Test
+    fun autoJournalFocusOpensAfterSixHoursFromSelectedWake() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T14:10:00")
+        )
+
+        assertTrue(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T14:00:00"), state.journalFocus.gateEpochMs)
+    }
+
+    @Test
+    fun autoJournalFocusDoesNotDisappearAfterEarlyWake() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_manual_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 40,
+                rawPpiCoverageHours = 5.0
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(
+                    primarySleepEpisode(
+                        startEpochMs = epoch("2026-05-30T22:30:00"),
+                        endEpochMs = epoch("2026-05-31T04:00:00")
+                    )
+                ),
+                zoneId = zone
+            ),
+            nowEpochMs = epoch("2026-05-31T16:30:00")
+        )
+
+        assertTrue(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T10:00:00"), state.journalFocus.gateEpochMs)
+    }
+
+    @Test
+    fun autoJournalFocusFallsBackToFixedTimeWhenWakeIsNotUsable() {
+        val state = nowState(
+            journalFocusFixedTimeMinutes = 20 * 60,
+            nowEpochMs = epoch("2026-05-31T17:30:00")
+        )
+
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T18:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("18:00"))
+    }
+
+    @Test
+    fun autoJournalFocusIgnoresFutureWakeEstimate() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T07:30:00")
+        )
+
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T18:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("18:00"))
+    }
+
+    @Test
+    fun fixedJournalFocusIgnoresWakeEstimate() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T16:45:00"),
+            journalFocusMode = NowJournalFocusMode.FIXED_TIME,
+            journalFocusFixedTimeMinutes = 17 * 60
+        )
+
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T17:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("17:00"))
+    }
+
     private fun nowState(
         morningRead: MorningReadSnapshot? = null,
         syncRuns: List<SyncRunEntity> = emptyList(),
@@ -430,8 +613,12 @@ class NowScreenStateTest {
         sleepEpisodeReviewState: SleepEpisodeReviewState = SleepEpisodeReviewState.empty("2026-05-31"),
         markerMode: NowMarkerMode = NowMarkerMode.BEDTIME_AND_WAKING,
         checkInIntent: NowCheckInIntent = NowCheckInIntent.INFO,
+        journalFocusMode: NowJournalFocusMode = NowJournalFocusMode.AUTO_FROM_WAKE,
+        journalFocusFixedTimeMinutes: Int = 18 * 60,
         selectedDeviceId: String? = "loop-1",
-        runtime: DeviceRuntimeState = DeviceRuntimeState(bluetoothPowered = true)
+        runtime: DeviceRuntimeState = DeviceRuntimeState(bluetoothPowered = true),
+        isBusy: Boolean = false,
+        nowEpochMs: Long = now
     ): NowScreenState =
         buildNowScreenState(
             today = "2026-05-31",
@@ -442,11 +629,42 @@ class NowScreenStateTest {
             sleepEpisodeReviewState = sleepEpisodeReviewState,
             runtime = runtime,
             selectedDeviceId = selectedDeviceId,
-            isBusy = false,
+            isBusy = isBusy,
             markerMode = markerMode,
             checkInIntent = checkInIntent,
-            nowEpochMs = now,
+            journalFocusMode = journalFocusMode,
+            journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes,
+            nowEpochMs = nowEpochMs,
             zoneId = zone
+        )
+
+    private fun stateWithSelectedWake(
+        nowEpochMs: Long,
+        journalFocusMode: NowJournalFocusMode = NowJournalFocusMode.AUTO_FROM_WAKE,
+        journalFocusFixedTimeMinutes: Int = 18 * 60
+    ): NowScreenState =
+        nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_manual_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 40,
+                rawPpiCoverageHours = 5.0
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(
+                    primarySleepEpisode(
+                        startEpochMs = epoch("2026-05-31T00:30:00"),
+                        endEpochMs = epoch("2026-05-31T08:00:00")
+                    )
+                ),
+                zoneId = zone
+            ),
+            journalFocusMode = journalFocusMode,
+            journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes,
+            nowEpochMs = nowEpochMs
         )
 
     private fun morningRead(
