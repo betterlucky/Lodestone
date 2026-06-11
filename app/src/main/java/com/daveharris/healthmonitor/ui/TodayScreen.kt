@@ -11,10 +11,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -106,27 +104,22 @@ fun DataScreen(
         )
     }
     if (showSleepWindowEvidence) {
-        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        ModalBottomSheet(
-            onDismissRequest = { showSleepWindowEvidence = false },
-            sheetState = sheetState
-        ) {
-            CandidateReviewSection(
-                state = sleepEpisodeReviewState,
-                wakeMarkers = wakeMarkers,
-                activeAnalysisWindow = nowState.activeAnalysisWindow,
-                actionsEnabled = actionsEnabled && !viewModel.isBusy,
-                onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
-                onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
-                onMarkRest = viewModel::markSleepEpisodeAsRest,
-                onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
-                onClearDecision = viewModel::clearSleepEpisodeDecision,
-                onAddManualWindow = viewModel::addManualSleepWindow,
-                onEditWindow = viewModel::editSleepEpisodeWindow,
-                onEditMarker = viewModel::editWakeMarker,
-                onMarkNoMainSleep = viewModel::markNoMainSleep
-            )
-        }
+        CandidateReviewSheet(
+            state = sleepEpisodeReviewState,
+            wakeMarkers = wakeMarkers,
+            activeAnalysisWindow = nowState.activeAnalysisWindow,
+            actionsEnabled = actionsEnabled && !viewModel.isBusy,
+            onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
+            onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
+            onMarkRest = viewModel::markSleepEpisodeAsRest,
+            onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
+            onClearDecision = viewModel::clearSleepEpisodeDecision,
+            onAddManualWindow = viewModel::addManualSleepWindow,
+            onEditWindow = viewModel::editSleepEpisodeWindow,
+            onEditMarker = viewModel::editWakeMarker,
+            onMarkNoMainSleep = viewModel::markNoMainSleep,
+            onDismiss = { showSleepWindowEvidence = false }
+        )
     }
     LazyColumn(
         modifier = Modifier
@@ -200,26 +193,14 @@ fun DataScreen(
         item {
             MorningSignalSection(
                 nowState = nowState,
-                onOpenEvidence = { detail -> evidenceDetail = detail }
-            )
-        }
-        item {
-            val activeGroup = sleepEpisodeReviewState.activeDateGroup
-            SectionCard(title = "Sleep/rest evidence", subtitle = "Window review and overrides") {
-                DetailRow("Active window", nowState.activeAnalysisWindow.label)
-                DetailRow("Status", activeGroup?.repairStatusLabel ?: "No candidates")
-                if (activeGroup?.needsAttention == true) {
-                    SupportText(sleepEpisodeReviewState.surfaceMessage)
-                }
-                ButtonRow {
-                    OutlinedButton(
-                        onClick = { showSleepWindowEvidence = true },
-                        enabled = sleepEpisodeReviewState.dateGroups.isNotEmpty()
-                    ) {
-                        Text("Open evidence")
+                onOpenEvidence = { detail ->
+                    if (detail == NowEvidenceDetail.SLEEP_REST) {
+                        showSleepWindowEvidence = true
+                    } else {
+                        evidenceDetail = detail
                     }
                 }
-            }
+            )
         }
     }
 }

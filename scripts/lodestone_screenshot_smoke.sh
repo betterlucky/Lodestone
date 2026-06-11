@@ -6,10 +6,30 @@ APP_ID="${APP_ID:-com.daveharris.healthmonitor}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/build/qa-screenshots/$(date +%Y%m%d-%H%M%S)}"
 ADB_BIN="${ADB:-adb}"
 ADB_SERIAL="${ADB_SERIAL:-}"
+LODESTONE_STOP_GRADLE="${LODESTONE_STOP_GRADLE:-1}"
+LODESTONE_KILL_ADB_SERVER="${LODESTONE_KILL_ADB_SERVER:-0}"
 ADB_CMD=("$ADB_BIN")
 if [[ -n "$ADB_SERIAL" ]]; then
   ADB_CMD+=(-s "$ADB_SERIAL")
 fi
+
+cleanup() {
+  if [[ "$LODESTONE_STOP_GRADLE" == "1" ]]; then
+    (cd "$ROOT_DIR" && ./gradlew --stop >/dev/null 2>&1) || true
+  fi
+  if [[ "$LODESTONE_KILL_ADB_SERVER" == "1" ]]; then
+    "$ADB_BIN" kill-server >/dev/null 2>&1 || true
+  fi
+}
+
+on_exit() {
+  local exit_code=$?
+  trap - EXIT INT TERM
+  cleanup
+  exit "$exit_code"
+}
+
+trap on_exit EXIT INT TERM
 
 mkdir -p "$OUT_DIR"
 
