@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 
 package com.daveharris.healthmonitor.ui
 
@@ -9,9 +9,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +67,8 @@ fun DataScreen(
     val activeMorningRead = nowState.activeMorningRead
     var showHrvTrajectory by remember { mutableStateOf(false) }
     var markerEditor by remember { mutableStateOf<MarkerTimeEditorKind?>(null) }
+    var evidenceDetail by remember { mutableStateOf<NowEvidenceDetail?>(null) }
+    var showSleepWindowEvidence by remember { mutableStateOf(false) }
     LaunchedEffect(activeMorningRead == null) {
         if (activeMorningRead == null) {
             showHrvTrajectory = false
@@ -88,6 +93,40 @@ fun DataScreen(
             morningRead = activeMorningRead,
             onDismiss = { showHrvTrajectory = false }
         )
+    }
+    evidenceDetail?.let { detail ->
+        NowEvidenceDetailSheet(
+            detail = detail,
+            nowState = nowState,
+            onDismiss = { evidenceDetail = null },
+            onOpenHrvTrajectory = {
+                evidenceDetail = null
+                showHrvTrajectory = true
+            }
+        )
+    }
+    if (showSleepWindowEvidence) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showSleepWindowEvidence = false },
+            sheetState = sheetState
+        ) {
+            CandidateReviewSection(
+                state = sleepEpisodeReviewState,
+                wakeMarkers = wakeMarkers,
+                activeAnalysisWindow = nowState.activeAnalysisWindow,
+                actionsEnabled = actionsEnabled && !viewModel.isBusy,
+                onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
+                onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
+                onMarkRest = viewModel::markSleepEpisodeAsRest,
+                onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
+                onClearDecision = viewModel::clearSleepEpisodeDecision,
+                onAddManualWindow = viewModel::addManualSleepWindow,
+                onEditWindow = viewModel::editSleepEpisodeWindow,
+                onEditMarker = viewModel::editWakeMarker,
+                onMarkNoMainSleep = viewModel::markNoMainSleep
+            )
+        }
     }
     LazyColumn(
         modifier = Modifier
@@ -159,57 +198,27 @@ fun DataScreen(
             }
         }
         item {
-            MorningSignalSection(nowState)
-        }
-        item {
-            CandidateReviewSection(
-                state = sleepEpisodeReviewState,
-                wakeMarkers = wakeMarkers,
-                activeAnalysisWindow = nowState.activeAnalysisWindow,
-                actionsEnabled = actionsEnabled && !viewModel.isBusy,
-                onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
-                onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
-                onMarkRest = viewModel::markSleepEpisodeAsRest,
-                onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
-                onClearDecision = viewModel::clearSleepEpisodeDecision,
-                onAddManualWindow = viewModel::addManualSleepWindow,
-                onEditWindow = viewModel::editSleepEpisodeWindow,
-                onEditMarker = viewModel::editWakeMarker,
-                onMarkNoMainSleep = viewModel::markNoMainSleep
+            MorningSignalSection(
+                nowState = nowState,
+                onOpenEvidence = { detail -> evidenceDetail = detail }
             )
         }
         item {
-            SectionCard(title = "Overnight HRV detail", subtitle = "Signal coverage from normal Loop sync") {
-                val goodEpochs = activeMorningRead?.rawPpiGoodEpochCount
-                if (goodEpochs == null) {
-                    SupportText(todayStatus.hrvDetail)
-                } else {
-                    DetailRow("Signal basis", morningReadBasisLabel(activeMorningRead, todayStatus))
-                    DetailRow("Window", activeMorningRead.analysisWindowLabel())
-                    DetailRow("Usable windows", goodEpochs.toString())
-                    DetailRow("Coverage", activeMorningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a")
-                    if ((activeMorningRead.rawPpiPoorEpochCount ?: 0) > 0) {
-                        DetailRow("Flagged windows", activeMorningRead.rawPpiPoorEpochCount.toString())
-                    }
+            val activeGroup = sleepEpisodeReviewState.activeDateGroup
+            SectionCard(title = "Sleep/rest evidence", subtitle = "Window review and overrides") {
+                DetailRow("Active window", nowState.activeAnalysisWindow.label)
+                DetailRow("Status", activeGroup?.repairStatusLabel ?: "No candidates")
+                if (activeGroup?.needsAttention == true) {
+                    SupportText(sleepEpisodeReviewState.surfaceMessage)
                 }
                 ButtonRow {
                     OutlinedButton(
-                        onClick = { showHrvTrajectory = true },
-                        enabled = activeMorningRead?.hrvTrajectory?.isNotEmpty() == true
+                        onClick = { showSleepWindowEvidence = true },
+                        enabled = sleepEpisodeReviewState.dateGroups.isNotEmpty()
                     ) {
-                        Text("View HRV trajectory")
+                        Text("Open evidence")
                     }
                 }
-            }
-        }
-        item {
-            SectionCard(title = "Data quality", subtitle = "Morning-read inputs") {
-                DetailRow("State", nowState.signalRobustness.label)
-                DetailRow("Basis", nowState.signalRobustness.basisLabel)
-                DetailRow("Sleep report", nowState.signalRobustness.sleepReport.detail)
-                DetailRow("PPI", nowState.signalRobustness.ppi.detail)
-                DetailRow("Baseline", nowState.signalRobustness.baseline.detail)
-                DetailRow("Nightly Recharge", nowState.signalRobustness.nightlyRecharge.detail)
             }
         }
     }

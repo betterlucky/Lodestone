@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 
 package com.daveharris.healthmonitor.ui
 
@@ -21,10 +21,14 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +90,13 @@ data class TodayReadinessStatus(
     val lastUsedLabel: String? = null,
     val lastLoopSyncLabel: String? = null
 )
+
+enum class NowEvidenceDetail {
+    SIGNAL,
+    SLEEP_REST,
+    DATA_QUALITY,
+    HRV
+}
 
 fun todayReadinessStatus(
     today: String,
@@ -472,7 +483,8 @@ private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
 
 @Composable
 fun MorningSignalSection(
-    nowState: NowScreenState
+    nowState: NowScreenState,
+    onOpenEvidence: (NowEvidenceDetail) -> Unit
 ) {
     val morningRead = nowState.activeMorningRead
     val todayStatus = nowState.readinessStatus
@@ -487,28 +499,22 @@ fun MorningSignalSection(
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("Current signal", fontWeight = FontWeight.SemiBold)
             if (morningRead == null) {
-                Text(todayStatus.hrvDetail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Current state", nowState.currentState.label)
-                    if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
-                        DetailRow("Functional context", nowState.functionalContext.label)
-                    }
-                    DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
-                    DetailRow("Report state", todayStatus.sleepReport)
-                    DetailRow("PPI", todayStatus.ppiReceipt)
-                    DetailRow("Marker", nowState.markerStatus.detail)
+                Text(nowState.currentState.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (todayStatus.dataQuality.missingInputs.isNotEmpty()) {
+                    DetailRow("Needed", todayStatus.dataQuality.missingInputs.joinToString())
                 }
+                DetailRow("Sleep/rest", nowState.activeAnalysisWindow.label)
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     DetailRow("Daily forecast", nowState.currentState.status?.let { labelForStatus(it.name) } ?: "TBC")
-                    DetailRow("Autonomic signal", morningRead.status?.let { labelForStatus(it.name) } ?: "TBC")
-                    DetailRow("Autonomic context", nowState.autonomicContext.label)
                     DetailRow("Functional context", nowState.functionalContext.label)
-                    DetailRow("Stability", nowState.stateStability.label)
-                    DetailRow("Report state", morningReadReportStateLabel(morningRead))
-                    DetailRow("Analysis window", nowState.activeAnalysisWindow.label)
-                    DetailRow("Basis", nowState.signalRobustness.basisLabel)
-                    DetailRow("Confidence", morningRead.confidence.replaceFirstChar { it.titlecase() })
+                    DetailRow("Autonomic context", nowState.autonomicContext.label)
+                    if (nowState.stateStability.availability == NowDataAvailability.PRESENT) {
+                        DetailRow("Stability", nowState.stateStability.label)
+                    }
+                    if (nowState.signalRobustness.missingInputs.isNotEmpty()) {
+                        DetailRow("Needed", nowState.signalRobustness.missingInputs.joinToString())
+                    }
                 }
                 morningRead.reasons.take(3).forEach { reason ->
                     Text("* $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -516,17 +522,149 @@ fun MorningSignalSection(
                 if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
                     Text(nowState.functionalContext.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                if (nowState.autonomicContext.availability == NowDataAvailability.PRESENT) {
-                    Text(nowState.autonomicContext.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Date", morningRead.sourceDate ?: "unknown")
-                    DetailRow("Window reason", nowState.activeAnalysisWindow.reason)
-                    DetailRow("Autonomic source", autonomicSourceDisplayLabel(morningRead.overnightAutonomicSource))
-                    DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
-                    DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
-                    DetailRow("Raw PPI", "${morningRead.rawPpiGoodEpochCount ?: 0} good epochs")
-                }
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                EvidenceChip("Signal", { onOpenEvidence(NowEvidenceDetail.SIGNAL) })
+                EvidenceChip("Sleep/rest", { onOpenEvidence(NowEvidenceDetail.SLEEP_REST) })
+                EvidenceChip("Data quality", { onOpenEvidence(NowEvidenceDetail.DATA_QUALITY) })
+                EvidenceChip("HRV detail", { onOpenEvidence(NowEvidenceDetail.HRV) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun EvidenceChip(
+    label: String,
+    onClick: () -> Unit
+) {
+    FilterChip(
+        selected = false,
+        onClick = onClick,
+        label = { Text(label) }
+    )
+}
+
+@Composable
+fun NowEvidenceDetailSheet(
+    detail: NowEvidenceDetail,
+    nowState: NowScreenState,
+    onDismiss: () -> Unit,
+    onOpenHrvTrajectory: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(detail.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            when (detail) {
+                NowEvidenceDetail.SIGNAL -> SignalEvidenceContent(nowState)
+                NowEvidenceDetail.SLEEP_REST -> SleepRestEvidenceContent(nowState)
+                NowEvidenceDetail.DATA_QUALITY -> DataQualityEvidenceContent(nowState)
+                NowEvidenceDetail.HRV -> HrvEvidenceContent(nowState, onOpenHrvTrajectory)
+            }
+        }
+    }
+}
+
+private val NowEvidenceDetail.title: String
+    get() = when (this) {
+        NowEvidenceDetail.SIGNAL -> "Signal detail"
+        NowEvidenceDetail.SLEEP_REST -> "Sleep/rest evidence"
+        NowEvidenceDetail.DATA_QUALITY -> "Data quality"
+        NowEvidenceDetail.HRV -> "Overnight HRV detail"
+    }
+
+@Composable
+private fun SignalEvidenceContent(nowState: NowScreenState) {
+    val morningRead = nowState.activeMorningRead
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        DetailRow("Forecast", nowState.currentState.label)
+        DetailRow("Confidence", nowState.signalRobustness.label)
+        DetailRow("Basis", nowState.signalRobustness.basisLabel)
+        DetailRow("Functional", nowState.functionalContext.detail)
+        DetailRow("Autonomic", nowState.autonomicContext.detail)
+        DetailRow("Stability", nowState.stateStability.detail)
+        morningRead?.let {
+            DetailRow("Date", it.sourceDate ?: "unknown")
+            DetailRow("Autonomic signal", it.status?.let { status -> labelForStatus(status.name) } ?: "TBC")
+            DetailRow("Signal source", autonomicSourceDisplayLabel(it.overnightAutonomicSource))
+            DetailRow("Model confidence", it.confidence.replaceFirstChar { char -> char.titlecase() })
+            DetailRow("RMSSD", it.nightlyRmssd?.toInt()?.toString() ?: "n/a")
+        }
+    }
+}
+
+@Composable
+private fun SleepRestEvidenceContent(nowState: NowScreenState) {
+    val window = nowState.activeAnalysisWindow
+    val morningRead = nowState.activeMorningRead
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        DetailRow("Window", window.label)
+        DetailRow("Reason", window.reason)
+        DetailRow("Time", window.timeRangeLabel)
+        DetailRow("Duration", window.durationLabel)
+        DetailRow("Confidence", window.confidenceLabel)
+        DetailRow("Selected by user", if (window.selectedByUser) "Yes" else "No")
+        DetailRow("Marker", nowState.markerStatus.detail)
+        morningRead?.let {
+            DetailRow("Loop report", morningReadReportStateLabel(it))
+            DetailRow("Sleep total", formatDurationMinutes(it.sleepDurationMinutes))
+        }
+    }
+}
+
+@Composable
+private fun DataQualityEvidenceContent(nowState: NowScreenState) {
+    val robustness = nowState.signalRobustness
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        DetailRow("State", robustness.label)
+        DetailRow("Missing", robustness.missingInputs.joinToString().ifBlank { "None" })
+        DetailRow("Supporting gaps", robustness.supportingGaps.joinToString().ifBlank { "None" })
+        DetailRow("Sleep report", robustness.sleepReport.detail)
+        DetailRow("PPI", robustness.ppi.detail)
+        DetailRow("Baseline", robustness.baseline.detail)
+        DetailRow("Nightly Recharge", robustness.nightlyRecharge.detail)
+        DetailRow("Last sync", nowState.freshness.loopSync.detail)
+        DetailRow("Marker", nowState.markerStatus.detail)
+    }
+}
+
+@Composable
+private fun HrvEvidenceContent(
+    nowState: NowScreenState,
+    onOpenHrvTrajectory: () -> Unit
+) {
+    val morningRead = nowState.activeMorningRead
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (morningRead == null) {
+            SupportText(nowState.readinessStatus.hrvDetail)
+        } else {
+            DetailRow("Signal basis", morningReadBasisLabel(morningRead, nowState.readinessStatus))
+            DetailRow("Window", morningRead.analysisWindowLabel())
+            DetailRow("Usable windows", (morningRead.rawPpiGoodEpochCount ?: 0).toString())
+            DetailRow(
+                "Coverage",
+                morningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a"
+            )
+            if ((morningRead.rawPpiPoorEpochCount ?: 0) > 0) {
+                DetailRow("Flagged windows", morningRead.rawPpiPoorEpochCount.toString())
+            }
+            TextButton(
+                onClick = onOpenHrvTrajectory,
+                enabled = morningRead.hrvTrajectory.isNotEmpty()
+            ) {
+                Text("View trajectory")
             }
         }
     }
