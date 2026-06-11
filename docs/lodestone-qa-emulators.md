@@ -80,6 +80,12 @@ ADB_SERIAL=emulator-5556 scripts/lodestone_screenshot_smoke.sh
 
 Host requirements: `adb`, `python3`, and a connected authorised emulator/device. The script builds and installs the debug APK before capture.
 
+By default the smoke script stops Gradle daemons on exit so Codex-run QA does
+not leave multi-GB Java processes behind. Set `LODESTONE_STOP_GRADLE=0` only
+when you deliberately want a warm Gradle daemon. The script does not kill the
+global ADB server by default; set `LODESTONE_KILL_ADB_SERVER=1` for a fully
+self-cleaning run when Android Studio or another shell is not depending on ADB.
+
 Artifacts are written to `build/qa-screenshots/<timestamp>/`:
 
 - `00-launch.png/xml`
