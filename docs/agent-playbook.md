@@ -85,6 +85,20 @@ Prefer one worker per file or one worker per clearly independent slice.
 7. Verify with compile/tests/scripts.
 8. Summarise outcome, verification, and remaining risks.
 
+## PR Workflow Default
+
+This project is a two-person workflow: the user and the agent. Do not open PRs
+as parking places for unfinished work. When the user asks for a PR, treat that
+as a request to publish work that is complete enough to review and merge.
+
+- Open a ready-for-review PR by default.
+- Use a draft PR only when the user explicitly asks for a draft/WIP PR, or when
+  the agent is deliberately signalling that the work is not complete.
+- If the work is not ready, say so directly before opening a PR instead of
+  quietly encoding that uncertainty as draft status.
+- Prefer getting the feature finished, verified, and ready to land before PR
+  creation.
+
 ## Recommended Subagent Templates
 
 Use the templates in `docs/agent-tasks/`:
