@@ -109,6 +109,16 @@ Do not build an impressive data stack that the user cannot sustain when unwell.
   handoff, retry, and user messaging practical, but do not treat Flow sleep
   reports as the daily gate.
 
+## Agent Collaboration Workflow
+
+- The working team is the user and the agent; do not design process around
+  extra reviewers unless the user asks for that.
+- When the user asks for a PR, assume the work should already be complete,
+  verified, and ready to merge. Open a ready-for-review PR by default.
+- Use draft PRs only when explicitly requested or when the agent needs to signal
+  that the work is not finished. If work is not ready, say so directly before
+  opening the PR.
+
 ## Archived Or Stale Topics
 
 The following are not current direction unless explicitly reopened:
