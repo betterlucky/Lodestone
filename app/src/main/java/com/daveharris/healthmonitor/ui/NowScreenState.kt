@@ -14,6 +14,7 @@ import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
@@ -46,6 +47,11 @@ enum class NowCheckInIntent {
     INFO,
     BEDTIME,
     WAKING
+}
+
+enum class NowJournalFocusMode {
+    AUTO_FROM_WAKE,
+    FIXED_TIME
 }
 
 enum class NowMarkerState {
@@ -153,6 +159,14 @@ data class NowPrimaryActions(
     val waking: NowActionAvailability
 )
 
+data class NowJournalFocus(
+    val mode: NowJournalFocusMode,
+    val shouldFocusJournal: Boolean,
+    val gateEpochMs: Long,
+    val label: String,
+    val detail: String
+)
+
 data class NowAnalysisWindowProvenance(
     val sourceDate: String,
     val startEpochMs: Long?,
@@ -179,7 +193,8 @@ data class NowScreenState(
     val markerStatus: NowMarkerStatus,
     val primaryActions: NowPrimaryActions,
     val deviceConnection: NowDataPoint,
-    val readinessStatus: TodayReadinessStatus
+    val readinessStatus: TodayReadinessStatus,
+    val journalFocus: NowJournalFocus
 )
 
 fun buildNowScreenState(
@@ -194,6 +209,8 @@ fun buildNowScreenState(
     isBusy: Boolean,
     markerMode: NowMarkerMode = NowMarkerMode.BEDTIME_AND_WAKING,
     checkInIntent: NowCheckInIntent = NowCheckInIntent.INFO,
+    journalFocusMode: NowJournalFocusMode = NowJournalFocusMode.AUTO_FROM_WAKE,
+    journalFocusFixedTimeMinutes: Int = 18 * 60,
     nowEpochMs: Long = System.currentTimeMillis(),
     zoneId: ZoneId = ZoneId.systemDefault()
 ): NowScreenState {
@@ -273,6 +290,14 @@ fun buildNowScreenState(
         noMainSleep = noMainSleep,
         analysisWindow = activeAnalysisWindow
     )
+    val journalFocus = buildJournalFocus(
+        today = today,
+        analysisWindow = activeAnalysisWindow,
+        mode = journalFocusMode,
+        fixedTimeMinutes = journalFocusFixedTimeMinutes,
+        nowEpochMs = nowEpochMs,
+        zoneId = zoneId
+    )
     return NowScreenState(
         today = today,
         activeMorningRead = activeMorningRead,
@@ -286,7 +311,8 @@ fun buildNowScreenState(
         markerStatus = markerStatus,
         primaryActions = primaryActions,
         deviceConnection = deviceConnection,
-        readinessStatus = readinessStatus
+        readinessStatus = readinessStatus,
+        journalFocus = journalFocus
     )
 }
 
@@ -1004,6 +1030,57 @@ private fun buildPrimaryActions(
     )
 }
 
+private fun buildJournalFocus(
+    today: String,
+    analysisWindow: NowAnalysisWindowProvenance,
+    mode: NowJournalFocusMode,
+    fixedTimeMinutes: Int,
+    nowEpochMs: Long,
+    zoneId: ZoneId
+): NowJournalFocus {
+    val todayDate = runCatching { LocalDate.parse(today) }.getOrElse {
+        Instant.ofEpochMilli(nowEpochMs).atZone(zoneId).toLocalDate()
+    }
+    val clampedFixedMinutes = fixedTimeMinutes.coerceIn(0, 23 * 60 + 59)
+    val fixedGate = todayDate
+        .atTime(LocalTime.of(clampedFixedMinutes / 60, clampedFixedMinutes % 60))
+        .atZone(zoneId)
+        .toInstant()
+        .toEpochMilli()
+    val autoFallbackGate = todayDate
+        .atTime(LocalTime.of(18, 0))
+        .atZone(zoneId)
+        .toInstant()
+        .toEpochMilli()
+    val wakeEpochMs = analysisWindow.endEpochMs?.takeIf {
+        analysisWindow.sourceType != NowAnalysisWindowSourceType.NO_MAIN_SLEEP &&
+            analysisWindow.sourceType != NowAnalysisWindowSourceType.PENDING
+    }
+    val recentWakeEpochMs = wakeEpochMs?.takeIf {
+        nowEpochMs >= it && nowEpochMs - it <= JOURNAL_AUTO_WAKE_USABLE_WINDOW_MS
+    }
+    val gate = if (mode == NowJournalFocusMode.FIXED_TIME) {
+        fixedGate
+    } else {
+        recentWakeEpochMs?.plus(JOURNAL_AUTO_DELAY_AFTER_WAKE_MS) ?: autoFallbackGate
+    }
+    val label = if (mode == NowJournalFocusMode.FIXED_TIME) {
+        "Journal focus at ${clampedFixedMinutes.timeOfDayLabel()}"
+    } else if (recentWakeEpochMs != null) {
+        "Journal focus about 6h after wake"
+    } else {
+        "Journal focus at 18:00"
+    }
+    val detail = "Journal is ready when you want to capture how the day is going."
+    return NowJournalFocus(
+        mode = mode,
+        shouldFocusJournal = nowEpochMs >= gate,
+        gateEpochMs = gate,
+        label = label,
+        detail = detail
+    )
+}
+
 fun normalizeCheckInIntent(intent: NowCheckInIntent, markerMode: NowMarkerMode): NowCheckInIntent =
     when (intent) {
         NowCheckInIntent.INFO -> NowCheckInIntent.INFO
@@ -1414,3 +1491,7 @@ private fun relativeAgeLabel(age: Duration): String {
 }
 
 private val STALE_FRESHNESS_DURATION: Duration = Duration.ofHours(36)
+private const val JOURNAL_AUTO_DELAY_AFTER_WAKE_MS = 6 * 60 * 60 * 1000L
+private const val JOURNAL_AUTO_WAKE_FALLBACK_WINDOW_MS = 12 * 60 * 60 * 1000L
+private const val JOURNAL_AUTO_WAKE_USABLE_WINDOW_MS =
+    JOURNAL_AUTO_DELAY_AFTER_WAKE_MS + JOURNAL_AUTO_WAKE_FALLBACK_WINDOW_MS

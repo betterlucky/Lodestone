@@ -38,6 +38,7 @@ fun DataScreen(
     sleepEpisodeReviewState: SleepEpisodeReviewState,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
+    onOpenJournal: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val today = resolveLodestoneDisplayDate(
@@ -55,7 +56,9 @@ fun DataScreen(
         selectedDeviceId = viewModel.selectedDeviceId,
         isBusy = viewModel.isBusy,
         markerMode = viewModel.markerMode,
-        checkInIntent = viewModel.checkInIntent
+        checkInIntent = viewModel.checkInIntent,
+        journalFocusMode = viewModel.journalFocusMode,
+        journalFocusFixedTimeMinutes = viewModel.journalFocusFixedTimeMinutes
     )
     val todayStatus = nowState.readinessStatus
     val activeMorningRead = nowState.activeMorningRead
@@ -111,6 +114,14 @@ fun DataScreen(
                     )
                 }
                 ButtonRow {
+                    if (nowState.journalFocus.shouldFocusJournal) {
+                        OutlinedButton(
+                            onClick = { if (actionsEnabled) onOpenJournal() },
+                            enabled = actionsEnabled
+                        ) {
+                            Text("Open Journal")
+                        }
+                    }
                     Button(
                         onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
                         enabled = actionsEnabled && nowState.primaryActions.checkIn.enabled
@@ -141,6 +152,9 @@ fun DataScreen(
                             Text("Waking marker")
                         }
                     }
+                }
+                if (nowState.journalFocus.shouldFocusJournal) {
+                    SupportText(nowState.journalFocus.detail)
                 }
             }
         }

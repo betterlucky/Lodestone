@@ -109,7 +109,9 @@ class ProbeRepository(
         selectedDeviceId: String?,
         syncWindowConfig: SyncWindowConfig,
         lastKnownFirmwareBySelectedDevice: String?,
-        markerMode: String = "BEDTIME_AND_WAKING"
+        markerMode: String = "BEDTIME_AND_WAKING",
+        journalFocusMode: String = "AUTO_FROM_WAKE",
+        journalFocusFixedTimeMinutes: Int = 18 * 60
     ) {
         val normalizedConfig = syncWindowConfig.normalized()
         dao.upsertAppSettings(
@@ -120,6 +122,8 @@ class ProbeRepository(
                 hrDays = normalizedConfig.hrDays,
                 ppiDays = normalizedConfig.ppiDays,
                 markerMode = markerMode,
+                journalFocusMode = journalFocusMode,
+                journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes.coerceIn(0, 23 * 60 + 59),
                 lastKnownFirmwareBySelectedDevice = lastKnownFirmwareBySelectedDevice
             )
         )

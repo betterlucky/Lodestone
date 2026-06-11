@@ -519,6 +519,92 @@ class NowScreenStateTest {
         assertTrue(state.primaryActions.checkIn.enabled)
     }
 
+    @Test
+    fun autoJournalFocusWaitsUntilSixHoursAfterSelectedWake() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T13:30:00")
+        )
+
+        assertEquals(NowJournalFocusMode.AUTO_FROM_WAKE, state.journalFocus.mode)
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T14:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("6h after wake"))
+    }
+
+    @Test
+    fun autoJournalFocusOpensAfterSixHoursFromSelectedWake() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T14:10:00")
+        )
+
+        assertTrue(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T14:00:00"), state.journalFocus.gateEpochMs)
+    }
+
+    @Test
+    fun autoJournalFocusDoesNotDisappearAfterEarlyWake() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_manual_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 40,
+                rawPpiCoverageHours = 5.0
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(
+                    primarySleepEpisode(
+                        startEpochMs = epoch("2026-05-30T22:30:00"),
+                        endEpochMs = epoch("2026-05-31T04:00:00")
+                    )
+                ),
+                zoneId = zone
+            ),
+            nowEpochMs = epoch("2026-05-31T16:30:00")
+        )
+
+        assertTrue(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T10:00:00"), state.journalFocus.gateEpochMs)
+    }
+
+    @Test
+    fun autoJournalFocusFallsBackToFixedTimeWhenWakeIsNotUsable() {
+        val state = nowState(
+            journalFocusFixedTimeMinutes = 20 * 60,
+            nowEpochMs = epoch("2026-05-31T17:30:00")
+        )
+
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T18:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("18:00"))
+    }
+
+    @Test
+    fun autoJournalFocusIgnoresFutureWakeEstimate() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T07:30:00")
+        )
+
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T18:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("18:00"))
+    }
+
+    @Test
+    fun fixedJournalFocusIgnoresWakeEstimate() {
+        val state = stateWithSelectedWake(
+            nowEpochMs = epoch("2026-05-31T16:45:00"),
+            journalFocusMode = NowJournalFocusMode.FIXED_TIME,
+            journalFocusFixedTimeMinutes = 17 * 60
+        )
+
+        assertFalse(state.journalFocus.shouldFocusJournal)
+        assertEquals(epoch("2026-05-31T17:00:00"), state.journalFocus.gateEpochMs)
+        assertTrue(state.journalFocus.label.contains("17:00"))
+    }
+
     private fun nowState(
         morningRead: MorningReadSnapshot? = null,
         syncRuns: List<SyncRunEntity> = emptyList(),
@@ -527,9 +613,12 @@ class NowScreenStateTest {
         sleepEpisodeReviewState: SleepEpisodeReviewState = SleepEpisodeReviewState.empty("2026-05-31"),
         markerMode: NowMarkerMode = NowMarkerMode.BEDTIME_AND_WAKING,
         checkInIntent: NowCheckInIntent = NowCheckInIntent.INFO,
+        journalFocusMode: NowJournalFocusMode = NowJournalFocusMode.AUTO_FROM_WAKE,
+        journalFocusFixedTimeMinutes: Int = 18 * 60,
         selectedDeviceId: String? = "loop-1",
         runtime: DeviceRuntimeState = DeviceRuntimeState(bluetoothPowered = true),
-        isBusy: Boolean = false
+        isBusy: Boolean = false,
+        nowEpochMs: Long = now
     ): NowScreenState =
         buildNowScreenState(
             today = "2026-05-31",
@@ -543,8 +632,39 @@ class NowScreenStateTest {
             isBusy = isBusy,
             markerMode = markerMode,
             checkInIntent = checkInIntent,
-            nowEpochMs = now,
+            journalFocusMode = journalFocusMode,
+            journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes,
+            nowEpochMs = nowEpochMs,
             zoneId = zone
+        )
+
+    private fun stateWithSelectedWake(
+        nowEpochMs: Long,
+        journalFocusMode: NowJournalFocusMode = NowJournalFocusMode.AUTO_FROM_WAKE,
+        journalFocusFixedTimeMinutes: Int = 18 * 60
+    ): NowScreenState =
+        nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_manual_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 40,
+                rawPpiCoverageHours = 5.0
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(
+                    primarySleepEpisode(
+                        startEpochMs = epoch("2026-05-31T00:30:00"),
+                        endEpochMs = epoch("2026-05-31T08:00:00")
+                    )
+                ),
+                zoneId = zone
+            ),
+            journalFocusMode = journalFocusMode,
+            journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes,
+            nowEpochMs = nowEpochMs
         )
 
     private fun morningRead(

@@ -101,6 +101,10 @@ class ProbeViewModel(
         private set
     var markerMode by mutableStateOf(NowMarkerMode.BEDTIME_AND_WAKING)
         private set
+    var journalFocusMode by mutableStateOf(NowJournalFocusMode.AUTO_FROM_WAKE)
+        private set
+    var journalFocusFixedTimeMinutes by mutableStateOf(18 * 60)
+        private set
     var checkInIntent by mutableStateOf(NowCheckInIntent.INFO)
         private set
     var firmwareRediscoveryNeeded by mutableStateOf(false)
@@ -161,6 +165,8 @@ class ProbeViewModel(
                     ppiDays = settings.ppiDays
                 )
                 markerMode = settings.markerMode.toNowMarkerMode()
+                journalFocusMode = settings.journalFocusMode.toNowJournalFocusMode()
+                journalFocusFixedTimeMinutes = settings.journalFocusFixedTimeMinutes.coerceIn(0, 23 * 60 + 59)
                 checkInIntent = normalizeCheckInIntent(checkInIntent, markerMode)
             }
         }
@@ -242,6 +248,19 @@ class ProbeViewModel(
         resetCheckInIntent()
         persistAppSettings()
         statusMessage = "Marker mode set to ${mode.settingsLabel()}."
+    }
+
+    fun updateJournalFocusMode(mode: NowJournalFocusMode) {
+        journalFocusMode = mode
+        persistAppSettings()
+        statusMessage = "Journal focus set to ${mode.settingsLabel()}."
+    }
+
+    fun updateJournalFocusFixedTime(hour: Int, minute: Int) {
+        journalFocusFixedTimeMinutes = (hour.coerceIn(0, 23) * 60) + minute.coerceIn(0, 59)
+        journalFocusMode = NowJournalFocusMode.FIXED_TIME
+        persistAppSettings()
+        statusMessage = "Journal focus time set to ${journalFocusFixedTimeMinutes.timeOfDayLabel()}."
     }
 
     fun resetCheckInIntent() {
@@ -1073,7 +1092,9 @@ class ProbeViewModel(
                 selectedDeviceId = selectedDeviceId,
                 syncWindowConfig = syncWindowConfig,
                 lastKnownFirmwareBySelectedDevice = runtimeState.value.firmwareVersion,
-                markerMode = markerMode.name
+                markerMode = markerMode.name,
+                journalFocusMode = journalFocusMode.name,
+                journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes
             )
         }
     }
@@ -1290,12 +1311,26 @@ internal fun gripStrengthKgOrNull(value: String): Double? =
 private fun String?.toNowMarkerMode(): NowMarkerMode =
     runCatching { NowMarkerMode.valueOf(this ?: "") }.getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING)
 
+private fun String?.toNowJournalFocusMode(): NowJournalFocusMode =
+    runCatching { NowJournalFocusMode.valueOf(this ?: "") }.getOrDefault(NowJournalFocusMode.AUTO_FROM_WAKE)
+
 fun NowMarkerMode.settingsLabel(): String =
     when (this) {
         NowMarkerMode.NO_MARKERS -> "No markers"
         NowMarkerMode.BEDTIME -> "Bedtime"
         NowMarkerMode.BEDTIME_AND_WAKING -> "Bedtime + waking"
     }
+
+fun NowJournalFocusMode.settingsLabel(): String =
+    when (this) {
+        NowJournalFocusMode.AUTO_FROM_WAKE -> "Auto from wake"
+        NowJournalFocusMode.FIXED_TIME -> "Fixed time"
+    }
+
+fun Int.timeOfDayLabel(): String {
+    val clamped = coerceIn(0, 23 * 60 + 59)
+    return "%02d:%02d".format(java.util.Locale.UK, clamped / 60, clamped % 60)
+}
 
 private fun NowCheckInIntent.markerSavedLabel(): String =
     when (this) {

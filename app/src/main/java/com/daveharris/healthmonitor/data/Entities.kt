@@ -282,6 +282,8 @@ data class AppSettingsEntity(
     val hrDays: Int,
     val ppiDays: Int,
     @ColumnInfo(defaultValue = "'BEDTIME_AND_WAKING'") val markerMode: String,
+    @ColumnInfo(defaultValue = "'AUTO_FROM_WAKE'") val journalFocusMode: String,
+    @ColumnInfo(defaultValue = "1080") val journalFocusFixedTimeMinutes: Int,
     val lastKnownFirmwareBySelectedDevice: String?
 )
 
