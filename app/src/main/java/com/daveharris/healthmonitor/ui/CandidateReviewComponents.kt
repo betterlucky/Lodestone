@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 
 package com.daveharris.healthmonitor.ui
 
@@ -19,10 +19,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -164,18 +167,139 @@ fun CandidateReviewSection(
 }
 
 @Composable
+fun CandidateReviewSheet(
+    state: SleepEpisodeReviewState,
+    wakeMarkers: List<WakeMarkerEntity>,
+    activeAnalysisWindow: NowAnalysisWindowProvenance?,
+    actionsEnabled: Boolean,
+    onAcceptMainSleep: (Long) -> Unit,
+    onAcceptNap: (Long) -> Unit,
+    onMarkRest: (Long) -> Unit,
+    onRejectCandidate: (Long) -> Unit,
+    onClearDecision: (Long) -> Unit,
+    onAddManualWindow: (String, Long, Long) -> Unit,
+    onEditWindow: (Long, Long, Long) -> Unit,
+    onEditMarker: (Long, String, Long, String) -> Unit,
+    onMarkNoMainSleep: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var showEvidenceSheet by remember { mutableStateOf(true) }
+    var editingItem by remember { mutableStateOf<SleepEpisodeDisplayItem?>(null) }
+    var addingWindowDate by remember { mutableStateOf<String?>(null) }
+    var editingMarker by remember { mutableStateOf<MarkerEvidenceItem?>(null) }
+
+    if (showEvidenceSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = onDismiss,
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Sleep/rest evidence", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                SupportText(state.surfaceMessage)
+                activeAnalysisWindow?.let { window ->
+                    SleepWindowActiveSummary(window = window, onOpenEvidence = null)
+                }
+                state.dateGroups.forEach { group ->
+                    CandidateReviewDateGroup(
+                        group = group,
+                        markers = wakeMarkers.markerEvidenceFor(group.sourceDate),
+                        activeAnalysisWindow = activeAnalysisWindow?.takeIf { it.sourceDate == group.sourceDate },
+                        actionsEnabled = actionsEnabled,
+                        onAcceptMainSleep = onAcceptMainSleep,
+                        onAcceptNap = onAcceptNap,
+                        onMarkRest = onMarkRest,
+                        onRejectCandidate = onRejectCandidate,
+                        onClearDecision = onClearDecision,
+                        onAddWindowRequested = {
+                            addingWindowDate = it
+                            showEvidenceSheet = false
+                        },
+                        onEditRequested = {
+                            editingItem = it
+                            showEvidenceSheet = false
+                        },
+                        onEditMarkerRequested = {
+                            editingMarker = it
+                            showEvidenceSheet = false
+                        },
+                        onMarkNoMainSleep = onMarkNoMainSleep
+                    )
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Done")
+                }
+            }
+        }
+    }
+
+    addingWindowDate?.let { sourceDate ->
+        ManualSleepWindowTimeEditorSheet(
+            sourceDate = sourceDate,
+            onSave = { start, end ->
+                onAddManualWindow(sourceDateForEpoch(end), start, end)
+                addingWindowDate = null
+                showEvidenceSheet = true
+            },
+            onDismiss = {
+                addingWindowDate = null
+                showEvidenceSheet = true
+            }
+        )
+    }
+
+    editingItem?.let { item ->
+        SleepWindowTimeEditorSheet(
+            item = item,
+            onSave = { start, end ->
+                onEditWindow(item.id, start, end)
+                editingItem = null
+                showEvidenceSheet = true
+            },
+            onDismiss = {
+                editingItem = null
+                showEvidenceSheet = true
+            }
+        )
+    }
+
+    editingMarker?.let { marker ->
+        MarkerTimeEditorSheet(
+            kind = marker.editorKind,
+            initialEpochMs = marker.markerEpochMs,
+            onSave = { markerEpochMs ->
+                onEditMarker(marker.id, sourceDateForEpoch(markerEpochMs), markerEpochMs, marker.markerSource)
+                editingMarker = null
+                showEvidenceSheet = true
+            },
+            onDismiss = {
+                editingMarker = null
+                showEvidenceSheet = true
+            }
+        )
+    }
+}
+
+@Composable
 private fun SleepWindowActiveSummary(
     window: NowAnalysisWindowProvenance,
-    onOpenEvidence: () -> Unit
+    onOpenEvidence: (() -> Unit)?
 ) {
+    val modifier = Modifier
+        .fillMaxWidth()
+        .clip(RoundedCornerShape(18.dp))
+        .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f))
+        .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), RoundedCornerShape(18.dp))
+        .let { base -> onOpenEvidence?.let { base.clickable(onClick = it) } ?: base }
+        .padding(12.dp)
     Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.42f))
-            .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f), RoundedCornerShape(18.dp))
-            .clickable(onClick = onOpenEvidence)
-            .padding(12.dp)
+        modifier = modifier
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(
