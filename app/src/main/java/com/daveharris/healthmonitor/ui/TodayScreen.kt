@@ -73,7 +73,7 @@ fun DataScreen(
             onSave = { markerEpochMs ->
                 when (kind) {
                     MarkerTimeEditorKind.BEDTIME -> viewModel.markGoingToBed(markerEpochMs)
-                    MarkerTimeEditorKind.WAKING -> viewModel.markAwakeAndSync(markerEpochMs)
+                    MarkerTimeEditorKind.WAKING -> viewModel.markAwake(markerEpochMs)
                 }
                 markerEditor = null
             },
@@ -130,7 +130,7 @@ fun DataScreen(
                             onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.BEDTIME },
                             enabled = actionsEnabled && nowState.primaryActions.bedtime.enabled
                         ) {
-                            Text("Bedtime & sync")
+                            Text("Bedtime marker")
                         }
                     }
                     if (nowState.primaryActions.waking.visible) {
@@ -138,7 +138,7 @@ fun DataScreen(
                             onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.WAKING },
                             enabled = actionsEnabled && nowState.primaryActions.waking.enabled
                         ) {
-                            Text("Waking & sync")
+                            Text("Waking marker")
                         }
                     }
                 }

@@ -431,6 +431,8 @@ class NowScreenStateTest {
         assertEquals(NowCurrentStateKind.WAITING_FOR_DATA, state.currentState.kind)
         assertEquals(NowDataAvailability.STALE, state.markerStatus.availability)
         assertEquals(NowDataAvailability.STALE, state.markerStatus.bedtime.availability)
+        assertTrue(state.currentState.message.contains("Missing or stale markers do not block this"))
+        assertTrue(state.markerStatus.detail.contains("Check in still works normally"))
         assertEquals(null, state.activeMorningRead)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
@@ -445,6 +447,28 @@ class NowScreenStateTest {
         assertFalse(state.primaryActions.waking.visible)
         assertTrue(state.primaryActions.checkIn.visible)
         assertTrue(state.primaryActions.checkIn.enabled)
+    }
+
+    @Test
+    fun markerActionsDoNotRequireSelectedLoop() {
+        val state = nowState(selectedDeviceId = null)
+
+        assertFalse(state.primaryActions.checkIn.enabled)
+        assertTrue(state.primaryActions.bedtime.visible)
+        assertTrue(state.primaryActions.bedtime.enabled)
+        assertTrue(state.primaryActions.waking.visible)
+        assertTrue(state.primaryActions.waking.enabled)
+    }
+
+    @Test
+    fun markerActionsAreDisabledWhileBusy() {
+        val state = nowState(isBusy = true)
+
+        assertFalse(state.primaryActions.checkIn.enabled)
+        assertFalse(state.primaryActions.bedtime.enabled)
+        assertEquals("Action already running", state.primaryActions.bedtime.unavailableReason)
+        assertFalse(state.primaryActions.waking.enabled)
+        assertEquals("Action already running", state.primaryActions.waking.unavailableReason)
     }
 
     @Test
@@ -504,7 +528,8 @@ class NowScreenStateTest {
         markerMode: NowMarkerMode = NowMarkerMode.BEDTIME_AND_WAKING,
         checkInIntent: NowCheckInIntent = NowCheckInIntent.INFO,
         selectedDeviceId: String? = "loop-1",
-        runtime: DeviceRuntimeState = DeviceRuntimeState(bluetoothPowered = true)
+        runtime: DeviceRuntimeState = DeviceRuntimeState(bluetoothPowered = true),
+        isBusy: Boolean = false
     ): NowScreenState =
         buildNowScreenState(
             today = "2026-05-31",
@@ -515,7 +540,7 @@ class NowScreenStateTest {
             sleepEpisodeReviewState = sleepEpisodeReviewState,
             runtime = runtime,
             selectedDeviceId = selectedDeviceId,
-            isBusy = false,
+            isBusy = isBusy,
             markerMode = markerMode,
             checkInIntent = checkInIntent,
             nowEpochMs = now,

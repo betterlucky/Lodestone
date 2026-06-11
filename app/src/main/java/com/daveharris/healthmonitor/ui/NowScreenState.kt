@@ -993,13 +993,13 @@ private fun buildPrimaryActions(
         ),
         bedtime = NowActionAvailability(
             visible = markerMode != NowMarkerMode.NO_MARKERS,
-            enabled = syncEnabled,
-            unavailableReason = syncUnavailable
+            enabled = !isBusy,
+            unavailableReason = if (isBusy) "Action already running" else null
         ),
         waking = NowActionAvailability(
             visible = markerMode == NowMarkerMode.BEDTIME_AND_WAKING,
-            enabled = syncEnabled,
-            unavailableReason = syncUnavailable
+            enabled = !isBusy,
+            unavailableReason = if (isBusy) "Action already running" else null
         )
     )
 }
