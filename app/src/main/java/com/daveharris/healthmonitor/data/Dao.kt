@@ -247,6 +247,46 @@ interface ProbeDao {
     @Query("SELECT sourceDate || '|' || keySummary FROM ppi247_day_raw WHERE deviceId = :deviceId")
     suspend fun getExistingPpiRecordKeys(deviceId: String): List<String>
 
+    @Query(
+        """
+        SELECT sourceDate || '|' || keySummary
+        FROM ppi247_day_raw
+        WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)
+        """
+    )
+    suspend fun getExistingPpiRecordKeysForDates(deviceId: String, sourceDates: List<String>): List<String>
+
+    @Query(
+        """
+        SELECT MAX(sourceDate) FROM sleep_night_raw
+        WHERE deviceId = :deviceId AND sourceDate IS NOT NULL AND sourceDate != ''
+        """
+    )
+    suspend fun getLatestSleepSourceDate(deviceId: String): String?
+
+    @Query(
+        """
+        SELECT MAX(sourceDate) FROM nightly_recharge_raw
+        WHERE deviceId = :deviceId AND sourceDate IS NOT NULL AND sourceDate != ''
+        """
+    )
+    suspend fun getLatestNightlyRechargeSourceDate(deviceId: String): String?
+
+    @Query("SELECT MAX(sourceDate) FROM ppi247_epoch WHERE deviceId = :deviceId")
+    suspend fun getLatestPpiEpochSourceDate(deviceId: String): String?
+
+    @Query("SELECT MAX(sourceDate) FROM hr247_epoch WHERE deviceId = :deviceId")
+    suspend fun getLatestHrEpochSourceDate(deviceId: String): String?
+
+    @Query("SELECT MAX(sourceDate) FROM skin_temperature_raw WHERE deviceId = :deviceId")
+    suspend fun getLatestSkinTemperatureSourceDate(deviceId: String): String?
+
+    @Query("SELECT MAX(sourceDate) FROM daily_summary_raw WHERE deviceId = :deviceId")
+    suspend fun getLatestDailySummarySourceDate(deviceId: String): String?
+
+    @Query("SELECT MAX(sourceDate) FROM activity_samples_raw WHERE deviceId = :deviceId")
+    suspend fun getLatestActivitySamplesSourceDate(deviceId: String): String?
+
     @Query("SELECT rawPayloadJson FROM skin_temperature_raw WHERE deviceId = :deviceId")
     suspend fun getExistingSkinTemperaturePayloads(deviceId: String): List<String>
 

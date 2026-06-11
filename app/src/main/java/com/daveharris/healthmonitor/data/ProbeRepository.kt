@@ -540,7 +540,8 @@ class ProbeRepository(
                 withTimeout(MANUAL_SYNC_TIMEOUT_MS) {
                     runWithinSyncSession(deviceId, "manual_sync") {
                         val now = LocalDate.now(ZoneOffset.UTC)
-                        buildSyncTasks(deviceId, normalizedConfig, profile, now).forEach { task ->
+                        val coverage = loadDomainCoverage(deviceId)
+                        buildSyncTasks(deviceId, normalizedConfig, profile, now, coverage).forEach { task ->
                             syncDomain(
                                 syncRunId = syncRunId,
                                 deviceId = deviceId,
@@ -548,6 +549,7 @@ class ProbeRepository(
                                 from = task.from,
                                 to = task.to,
                                 timeoutMs = task.timeoutMs,
+                                rangeNotes = task.rangeNotes,
                                 block = task.block
                             )?.let { error ->
                                 domainFailures += SyncDomainFailure(task.domain, error)
@@ -606,133 +608,203 @@ class ProbeRepository(
         return dao.countRecentRunningSyncRuns(cutoff) > 0
     }
 
+    private suspend fun loadDomainCoverage(deviceId: String): SyncDomainCoverage =
+        SyncDomainCoverage(
+            sleepLatest = dao.getLatestSleepSourceDate(deviceId),
+            nightlyRechargeLatest = dao.getLatestNightlyRechargeSourceDate(deviceId),
+            ppiLatest = dao.getLatestPpiEpochSourceDate(deviceId),
+            hrLatest = dao.getLatestHrEpochSourceDate(deviceId),
+            skinTemperatureLatest = dao.getLatestSkinTemperatureSourceDate(deviceId),
+            dailySummaryLatest = dao.getLatestDailySummarySourceDate(deviceId),
+            activitySamplesLatest = dao.getLatestActivitySamplesSourceDate(deviceId)
+        )
+
     private fun buildSyncTasks(
         deviceId: String,
         config: SyncWindowConfig,
         profile: SyncRunProfile,
-        now: LocalDate
+        now: LocalDate,
+        coverage: SyncDomainCoverage
     ): List<SyncDomainTask> = buildList {
-        fun addSleepTask() {
+        fun plannedRange(
+            maxLookbackDays: Int,
+            latestStoredDate: String?,
+            overlapDays: Int = SyncRangePlanner.DEFAULT_OVERLAP_DAYS
+        ): SyncRangePlanner.PlannedRange =
+            SyncRangePlanner.planRange(
+                today = now,
+                maxLookbackDays = maxLookbackDays,
+                latestStoredDate = latestStoredDate,
+                overlapDays = overlapDays
+            )
+
+        fun addDomainTask(
+            domain: ProbeDomain,
+            range: SyncRangePlanner.PlannedRange,
+            timeoutMs: Long,
+            block: suspend (Pair<LocalDate, LocalDate>) -> DomainPersistenceResult
+        ) {
+            if (range.isEmpty()) return
             add(
                 SyncDomainTask(
-                    domain = ProbeDomain.SLEEP,
-                    from = now.minusDays(config.sleepDays.toLong()),
-                    to = now,
-                    timeoutMs = SLEEP_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetchSleep(deviceId, it.first, it.second)
-                    persistSleep(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForSleep(data))
-                }
+                    domain = domain,
+                    from = range.from,
+                    to = range.to,
+                    timeoutMs = timeoutMs,
+                    rangeNotes = syncRangeNotes(range),
+                    block = block
+                )
             )
         }
 
-        fun addNightlyRechargeTask() {
-            add(
-                SyncDomainTask(
-                    domain = ProbeDomain.NIGHTLY_RECHARGE,
-                    from = now.minusDays(config.nightlyRechargeDays.toLong()),
-                    to = now,
-                    timeoutMs = NIGHTLY_RECHARGE_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetchNightlyRecharge(deviceId, it.first, it.second)
-                    persistNightlyRecharge(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForNightlyRecharge(data))
-                }
-            )
+        fun addSleepTask(maxLookbackDays: Int = config.sleepDays) {
+            addDomainTask(
+                domain = ProbeDomain.SLEEP,
+                range = plannedRange(
+                    maxLookbackDays = maxLookbackDays,
+                    latestStoredDate = coverage.sleepLatest,
+                    overlapDays = SyncRangePlanner.SLEEP_OVERLAP_DAYS
+                ),
+                timeoutMs = SLEEP_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetchSleep(deviceId, it.first, it.second)
+                persistSleep(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForSleep(data))
+            }
+        }
+
+        fun addNightlyRechargeTask(maxLookbackDays: Int = config.nightlyRechargeDays) {
+            addDomainTask(
+                domain = ProbeDomain.NIGHTLY_RECHARGE,
+                range = plannedRange(
+                    maxLookbackDays = maxLookbackDays,
+                    latestStoredDate = coverage.nightlyRechargeLatest,
+                    overlapDays = SyncRangePlanner.SLEEP_OVERLAP_DAYS
+                ),
+                timeoutMs = NIGHTLY_RECHARGE_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetchNightlyRecharge(deviceId, it.first, it.second)
+                persistNightlyRecharge(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForNightlyRecharge(data))
+            }
         }
 
         fun addPpiTask() {
             // PPI is the most valuable morning trajectory lane, so it runs before
             // less critical background HR. A flaky HR fetch must not block PPI.
-            add(
-                SyncDomainTask(
-                    domain = ProbeDomain.PPI_247,
-                    from = now.minusDays(config.ppiDays.toLong()),
-                    to = now,
-                    timeoutMs = PPI_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetch247Ppi(deviceId, it.first, it.second)
-                    persistPpi(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForPpi(data))
-                }
-            )
+            addDomainTask(
+                domain = ProbeDomain.PPI_247,
+                range = plannedRange(
+                    maxLookbackDays = config.ppiDays,
+                    latestStoredDate = coverage.ppiLatest
+                ),
+                timeoutMs = PPI_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetch247Ppi(deviceId, it.first, it.second)
+                persistPpi(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForPpi(data))
+            }
         }
 
         fun addHrTask() {
-            add(
-                SyncDomainTask(
-                    domain = ProbeDomain.HR_247,
-                    from = now.minusDays(config.hrDays.toLong()),
-                    to = now,
-                    timeoutMs = HR_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetch247Hr(deviceId, it.first, it.second)
-                    persistHr(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForHr(data))
-                }
-            )
+            addDomainTask(
+                domain = ProbeDomain.HR_247,
+                range = plannedRange(
+                    maxLookbackDays = config.hrDays,
+                    latestStoredDate = coverage.hrLatest
+                ),
+                timeoutMs = HR_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetch247Hr(deviceId, it.first, it.second)
+                persistHr(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForHr(data))
+            }
         }
 
-        fun addActivitySamplesTask(lookbackDays: Long) {
+        fun addSkinTemperatureTask() {
+            addDomainTask(
+                domain = ProbeDomain.SKIN_TEMPERATURE,
+                range = plannedRange(
+                    maxLookbackDays = config.hrDays,
+                    latestStoredDate = coverage.skinTemperatureLatest
+                ),
+                timeoutMs = SKIN_TEMPERATURE_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetchSkinTemperature(deviceId, it.first, it.second)
+                persistSkinTemperature(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForSkinTemperature(data))
+            }
+        }
+
+        fun addDailySummaryTask() {
+            addDomainTask(
+                domain = ProbeDomain.DAILY_SUMMARY,
+                range = plannedRange(
+                    maxLookbackDays = config.sleepDays,
+                    latestStoredDate = coverage.dailySummaryLatest
+                ),
+                timeoutMs = DAILY_SUMMARY_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetchDailySummary(deviceId, it.first, it.second)
+                persistDailySummary(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForDailySummary(data))
+            }
+        }
+
+        fun addActivitySamplesTask(maxLookbackDays: Int) {
             if (!ENABLE_ACTIVITY_SAMPLE_SYNC) return
-            add(
-                SyncDomainTask(
-                    domain = ProbeDomain.ACTIVITY_SAMPLES,
-                    from = now.minusDays(lookbackDays),
-                    to = now,
-                    timeoutMs = ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetchActivitySamples(deviceId, it.first, it.second)
-                    persistActivitySamples(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForActivitySamples(data))
-                }
-            )
+            addDomainTask(
+                domain = ProbeDomain.ACTIVITY_SAMPLES,
+                range = plannedRange(
+                    maxLookbackDays = maxLookbackDays,
+                    latestStoredDate = coverage.activitySamplesLatest
+                ),
+                timeoutMs = ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS
+            ) {
+                val data = polarManager.fetchActivitySamples(deviceId, it.first, it.second)
+                persistActivitySamples(deviceId, data, "${it.first}..${it.second}")
+                DomainPersistenceResult(data.size, shapeForActivitySamples(data))
+            }
         }
 
-        fun addPrimaryDataTasks() {
+        fun addPrimaryDataTasks(includeActivitySamples: Boolean, activityMaxLookbackDays: Int) {
             addSleepTask()
             addNightlyRechargeTask()
             addPpiTask()
             addHrTask()
-            add(
-                SyncDomainTask(
-                    domain = ProbeDomain.SKIN_TEMPERATURE,
-                    from = now.minusDays(config.hrDays.toLong()),
-                    to = now,
-                    timeoutMs = SKIN_TEMPERATURE_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetchSkinTemperature(deviceId, it.first, it.second)
-                    persistSkinTemperature(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForSkinTemperature(data))
-                }
-            )
-            add(
-                SyncDomainTask(
-                    domain = ProbeDomain.DAILY_SUMMARY,
-                    from = now.minusDays(config.sleepDays.toLong()),
-                    to = now,
-                    timeoutMs = DAILY_SUMMARY_SYNC_TIMEOUT_MS
-                ) {
-                    val data = polarManager.fetchDailySummary(deviceId, it.first, it.second)
-                    persistDailySummary(deviceId, data, "${it.first}..${it.second}")
-                    DomainPersistenceResult(data.size, shapeForDailySummary(data))
-                }
-            )
-            addActivitySamplesTask(config.sleepDays.toLong())
+            addSkinTemperatureTask()
+            addDailySummaryTask()
+            if (includeActivitySamples) {
+                addActivitySamplesTask(activityMaxLookbackDays)
+            }
         }
 
         when (profile) {
             SyncRunProfile.MORNING_SLEEP_RETRY -> {
-                addSleepTask()
-                addNightlyRechargeTask()
+                val retryLookback = config.sleepDays.coerceAtMost(7)
+                addSleepTask(maxLookbackDays = retryLookback)
+                addNightlyRechargeTask(maxLookbackDays = retryLookback.coerceAtMost(config.nightlyRechargeDays))
             }
-            SyncRunProfile.MORNING_PPI_RETRY,
+            SyncRunProfile.MORNING_PPI_RETRY -> addPpiTask()
             SyncRunProfile.CHECK_IN,
-            SyncRunProfile.MORNING_CORE,
-            SyncRunProfile.FULL -> addPrimaryDataTasks()
+            SyncRunProfile.MORNING_CORE -> addPrimaryDataTasks(
+                includeActivitySamples = true,
+                activityMaxLookbackDays = config.sleepDays
+                    .coerceAtMost(SyncRangePlanner.CHECK_IN_ACTIVITY_MAX_LOOKBACK_DAYS)
+            )
+            SyncRunProfile.FULL -> addPrimaryDataTasks(
+                includeActivitySamples = true,
+                activityMaxLookbackDays = config.sleepDays
+            )
         }
     }
+
+    private fun syncRangeNotes(range: SyncRangePlanner.PlannedRange): String =
+        if (range.incremental) {
+            "incremental+${range.dayCountInclusive}d"
+        } else {
+            "full+${range.dayCountInclusive}d"
+        }
 
     private fun syncCompletionNotes(
         profile: SyncRunProfile,
@@ -1548,10 +1620,20 @@ class ProbeRepository(
         from: LocalDate,
         to: LocalDate,
         timeoutMs: Long,
+        rangeNotes: String? = null,
         block: suspend (Pair<LocalDate, LocalDate>) -> DomainPersistenceResult
     ): Throwable? {
         val startedAt = System.currentTimeMillis()
-        val requestedRange = "$from..$to"
+        val requestedRange = buildString {
+            append(from)
+            append("..")
+            append(to)
+            if (!rangeNotes.isNullOrBlank()) {
+                append(" (")
+                append(rangeNotes)
+                append(')')
+            }
+        }
         try {
             val result = withTimeout(timeoutMs) {
                 if (domain == ProbeDomain.PPI_247) {
@@ -1809,7 +1891,12 @@ class ProbeRepository(
     }
 
     private suspend fun persistPpi(deviceId: String, data: List<Polar247PPiSamplesData>, requestedRange: String) {
-        val existingKeys = dao.getExistingPpiRecordKeys(deviceId).toHashSet()
+        val sourceDates = data.map { it.date.toString() }.distinct()
+        val existingKeys = if (sourceDates.isEmpty()) {
+            hashSetOf()
+        } else {
+            dao.getExistingPpiRecordKeysForDates(deviceId, sourceDates).toHashSet()
+        }
         val records = data.mapNotNull {
             val sourceDate = it.date.toString()
             val keySummary = "start=${it.samples.startTime}, samples=${it.samples.ppiValueList.size}, trigger=${it.samples.triggerType}"
@@ -3349,6 +3436,7 @@ private data class SyncDomainTask(
     val from: LocalDate,
     val to: LocalDate,
     val timeoutMs: Long,
+    val rangeNotes: String? = null,
     val block: suspend (Pair<LocalDate, LocalDate>) -> DomainPersistenceResult
 )
 
