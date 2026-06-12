@@ -225,15 +225,18 @@ fun ProbeApp(
                                         )
                                         ProbeTab.HISTORY -> HistoryScreen(
                                             padding = padding,
-                                            morningRead = morningRead,
                                             morningPredictionSnapshots = morningPredictionSnapshots,
                                             dailyCheckIns = dailyCheckIns,
                                             foodDailySummaries = foodDailySummaries,
                                             dailyWeights = dailyWeights,
                                             gripSessions = gripSessions,
-                                            wakeMarkers = recentWakeMarkers,
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
                                             viewModel = viewModel,
+                                            onOpenJournal = {
+                                                pagerScope.launch {
+                                                    pagerState.animateScrollToPage(ProbeTab.JOURNAL.ordinal)
+                                                }
+                                            },
                                             onOpenSettings = { showSettings = true }
                                         )
                                     }

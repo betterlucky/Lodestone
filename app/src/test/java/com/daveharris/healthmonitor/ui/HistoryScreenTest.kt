@@ -50,7 +50,7 @@ class HistoryScreenTest {
         assertTrue(latest.dataCompletenessLabel.contains("journal"))
         assertTrue(latest.dataCompletenessLabel.contains("food"))
         assertTrue(latest.dataCompletenessLabel.contains("weight"))
-        assertEquals("Good -> Unsteady", latest.stabilityTransitionLabel)
+        assertEquals("Good → Unsteady", latest.stabilityTransitionLabel)
         assertEquals("1800 kcal, 4 items, 1 tea, 11.0h window", latest.foodSummaryLabel)
         assertEquals("70.0 kg at 08:00", latest.weightLabel)
         assertEquals("28.5 kg", latest.gripStrengthLabel)
@@ -196,7 +196,70 @@ class HistoryScreenTest {
         assertEquals(2_000, reports.size)
         assertEquals(dates.last(), reports.first().sourceDate)
         assertEquals(dates.first(), reports.last().sourceDate)
-        assertEquals("First recorded status", reports.last().stabilityTransitionLabel)
+        assertEquals("First morning signal on record", reports.last().stabilityTransitionLabel)
+    }
+
+    @Test
+    fun coverageSummaryCountsJournalAndMorningSignalCoverage() {
+        val reports = buildHistoryDayReports(
+            predictions = listOf(prediction("2026-05-31", issuedAt = 1, status = TrafficLightStatus.OK.name)),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name)),
+            foodSummaries = emptyList(),
+            weights = emptyList()
+        )
+
+        val summary = buildHistoryCoverageSummary(reports, attentionDateCount = 2)
+        assertEquals(1, summary.dayReportCount)
+        assertEquals(1, summary.withJournalCount)
+        assertEquals(1, summary.withMorningSignalCount)
+        assertEquals(2, summary.attentionDateCount)
+    }
+
+    @Test
+    fun journalActionLabelReflectsWhetherOutcomeExists() {
+        assertEquals("Edit journal", historyJournalActionLabel(hasSavedOutcome = true))
+        assertEquals("Add journal", historyJournalActionLabel(hasSavedOutcome = false))
+    }
+
+    @Test
+    fun sleepWindowDetailRowSurfacesOnlyActionableStatuses() {
+        assertEquals(
+            "Sleep window" to "Needs review — confirm candidates on Now",
+            historySleepWindowDetailRow("Needs review")
+        )
+        assertEquals("Sleep window" to "Confirmed", historySleepWindowDetailRow("Confirmed"))
+        assertEquals(null, historySleepWindowDetailRow("No candidates"))
+    }
+
+    @Test
+    fun stabilityTransitionLabelUsesPlainLanguage() {
+        assertEquals("Unchanged from prior day", stabilityTransitionLabelForTest("OK", "OK"))
+        assertEquals("First morning signal on record", stabilityTransitionLabelForTest(null, "GOOD"))
+    }
+
+    @Test
+    fun journalOnlyDaysReportNoMorningSignalChange() {
+        val reports = buildHistoryDayReports(
+            predictions = emptyList(),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.OK.name)),
+            foodSummaries = emptyList(),
+            weights = emptyList()
+        )
+
+        assertEquals("No morning signal recorded", reports.single().stabilityTransitionLabel)
+    }
+
+    private fun stabilityTransitionLabelForTest(previousStatus: String?, currentStatus: String): String {
+        val reports = buildHistoryDayReports(
+            predictions = buildList {
+                previousStatus?.let { add(prediction("2026-05-30", issuedAt = 1, status = it)) }
+                add(prediction("2026-05-31", issuedAt = 1, status = currentStatus))
+            },
+            checkIns = emptyList(),
+            foodSummaries = emptyList(),
+            weights = emptyList()
+        )
+        return reports.first { it.sourceDate == "2026-05-31" }.stabilityTransitionLabel
     }
 
     private fun prediction(
