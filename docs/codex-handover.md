@@ -98,6 +98,11 @@ Do not build an impressive data stack that the user cannot sustain when unwell.
 
 - Keep daily use low friction: Check in, optional markers, optional imports,
   and one-tap Journal save.
+- Current UI target is `Now / Signals / History` plus Settings. `Now` is the
+  Daily Forecast/status page; `Signals` owns HRV, sleep/rest repair, provenance,
+  and data completeness; `History` owns retrospective review and selected-date
+  Journal editing. The old primary Journal tab is a migration shape, not the
+  target architecture.
 - User-selected date matters for review/import/reset behavior.
 - Grip Recorder owns timed grip measurement UX and disposable CSV export.
   Lodestone imports sessions and owns persistence/interpretation.
@@ -154,3 +159,8 @@ Those notes live under `docs/archive/`.
 - Try cognitive probes only if they remain low burden and do not threaten the
   core data channels. Two weeks is enough to judge sustainability and obvious
   signal, not subtle long-term utility.
+- Keep a wearable-optional path in mind for testing and resilience: without
+  Loop/PPI, Lodestone becomes a functional-lane pacing scaffold based on recent
+  check-ins, payback markers, day-shape/load context, and optional probes. Do
+  not let this become the main proof of the app or imply body-signal confidence
+  when wearable data is absent.

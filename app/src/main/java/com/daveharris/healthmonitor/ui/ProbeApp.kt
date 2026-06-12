@@ -13,7 +13,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.RateReview
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +45,6 @@ import kotlinx.coroutines.launch
 
 private enum class ProbeTab(val title: String) {
     NOW("Now"),
-    JOURNAL("Journal"),
     HISTORY("History")
 }
 
@@ -82,6 +80,7 @@ fun ProbeApp(
     val pagerScope = rememberCoroutineScope()
     val selectedTab = pagerState.currentPage
     var showSettings by remember { mutableStateOf(false) }
+    var showJournalCapture by remember { mutableStateOf(false) }
     var blockPostSwipeTaps by remember { mutableStateOf(false) }
     var hasInitialPagerPage by remember { mutableStateOf(false) }
     val tabFlingBehavior = PagerDefaults.flingBehavior(
@@ -148,7 +147,6 @@ fun ProbeApp(
                                     icon = {
                                         when (tab) {
                                             ProbeTab.NOW -> Icon(Icons.Outlined.FavoriteBorder, contentDescription = null)
-                                            ProbeTab.JOURNAL -> Icon(Icons.Outlined.RateReview, contentDescription = null)
                                             ProbeTab.HISTORY -> Icon(Icons.Outlined.History, contentDescription = null)
                                         }
                                     },
@@ -204,25 +202,7 @@ fun ProbeApp(
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenJournal = {
-                                                pagerScope.launch {
-                                                    pagerState.animateScrollToPage(ProbeTab.JOURNAL.ordinal)
-                                                }
-                                            },
-                                            onOpenSettings = { showSettings = true }
-                                        )
-                                        ProbeTab.JOURNAL -> JournalScreen(
-                                            padding = padding,
-                                            morningRead = morningRead,
-                                            dailyCheckIns = dailyCheckIns,
-                                            gripSessions = gripSessions,
-                                            viewModel = viewModel,
-                                            onImportFoodCsv = onImportFoodCsv,
-                                            onImportGripCsv = onImportGripCsv,
-                                            actionsEnabled = !blockPostSwipeTaps,
-                                            onOpenHistory = {
-                                                pagerScope.launch {
-                                                    pagerState.animateScrollToPage(ProbeTab.HISTORY.ordinal)
-                                                }
+                                                showJournalCapture = true
                                             },
                                             onOpenSettings = { showSettings = true }
                                         )
@@ -236,14 +216,26 @@ fun ProbeApp(
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
                                             viewModel = viewModel,
                                             onOpenJournal = {
-                                                pagerScope.launch {
-                                                    pagerState.animateScrollToPage(ProbeTab.JOURNAL.ordinal)
-                                                }
+                                                showJournalCapture = true
                                             },
                                             onOpenSettings = { showSettings = true }
                                         )
                                     }
                                 }
+                            }
+                            if (showJournalCapture) {
+                                JournalCaptureSheet(
+                                    selectedDate = viewModel.checkInDate,
+                                    dailyCheckIns = dailyCheckIns,
+                                    foodSummary = viewModel.currentFoodSummary,
+                                    weight = viewModel.currentDailyWeight,
+                                    gripSessions = gripSessions.filter { it.sourceDate == viewModel.checkInDate },
+                                    viewModel = viewModel,
+                                    actionsEnabled = !blockPostSwipeTaps,
+                                    onImportFoodCsv = onImportFoodCsv,
+                                    onImportGripCsv = onImportGripCsv,
+                                    onDismiss = { showJournalCapture = false }
+                                )
                             }
                         }
                     }
@@ -302,3 +294,5 @@ private fun MissingPermissionsScreen(padding: PaddingValues, onRequestPermission
 private fun String.toMarkerModeLabel(): String =
     runCatching { NowMarkerMode.valueOf(this).settingsLabel() }
         .getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING.settingsLabel())
+
+internal fun primaryProbeTabTitles(): List<String> = ProbeTab.entries.map { it.title }
