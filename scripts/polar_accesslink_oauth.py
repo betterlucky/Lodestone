@@ -29,6 +29,8 @@ DEFAULT_SCOPES = (
     "nightly_recharge:read",
     "devices:read",
     "continuous_samples:read",
+    "activity:read",
+    "temperature_measurement:read",
 )
 
 
