@@ -105,9 +105,10 @@ Do not build an impressive data stack that the user cannot sustain when unwell.
 - Sleep/rest candidate review remains a repair/evidence surface, not required
   homework.
 - H10/Sleep2/Health Connect are calibration routes, not normal daily workflow.
-- Polar Flow can compete with Lodestone for the device BLE connection. Keep
-  handoff, retry, and user messaging practical, but do not treat Flow sleep
-  reports as the daily gate.
+- Polar Flow is now maintenance/recovery only, not a routine daily companion.
+  The June 2026 Flow/Loop incident suggested Flow can remove or hide Loop-local
+  data and force cloud/API backfill. See
+  `docs/polar-flow-maintenance-and-data-integrity.md`.
 
 ## Agent Collaboration Workflow
 

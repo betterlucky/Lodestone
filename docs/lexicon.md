@@ -199,8 +199,14 @@ The repair flow for stale or missing dates/data. It should be driven by data
 freshness, not by app-open recency alone.
 _Avoid_: suppressing because Last used is recent.
 
-**Flow Handoff** - Active:
-The practical device-sharing problem where Polar Flow and Lodestone may compete
-for the same BLE relationship. The app should support graceful messaging and
-retry without treating Flow sleep reports as the daily gate.
-_Avoid_: assuming seamless coexistence.
+**Flow Maintenance** - Active:
+The controlled case where Lodestone releases the Loop so Polar Flow can perform
+maintenance, recovery, or explicitly chosen firmware checks. Flow is no longer
+treated as a normal daily handoff partner because it may change what data remains
+available locally on the Loop.
+_Avoid_: assuming seamless coexistence or using Flow casually during collection.
+
+**Firmware Source** - Active:
+A firmware claim tagged with where it came from, such as Loop runtime metadata,
+saved Lodestone settings, Polar Flow, or the public Polar support page.
+_Avoid_: saying "latest firmware" without source and check date.
