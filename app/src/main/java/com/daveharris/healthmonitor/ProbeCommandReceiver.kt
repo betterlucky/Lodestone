@@ -121,9 +121,9 @@ class ProbeCommandReceiver : BroadcastReceiver() {
 
         when (stage) {
             MorningRetryStage.PPI -> {
-                if (repository.hasPpiRecordForDate(targetDate)) {
+                if (repository.hasMorningPpiSignalForDate(targetDate)) {
                     MorningReadScheduler.scheduleSleepReportRetry(app.applicationContext, targetDate, deviceId)
-                    Log.i(TAG, "Morning retry advanced: PPI present, scheduled sleep report retry for $targetDate")
+                    Log.i(TAG, "Morning retry advanced: usable sleep-window PPI present, scheduled sleep report retry for $targetDate")
                     return
                 }
                 val nextRetry = MorningReadScheduler.scheduleNextAttempt(
@@ -264,9 +264,9 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                     Log.i(TAG, "Morning read check skipped: final sleep report is already present for $targetDate")
                     return
                 }
-                if (stage == MorningRetryStage.PPI && repository.hasPpiRecordForDate(targetDate)) {
+                if (stage == MorningRetryStage.PPI && repository.hasMorningPpiSignalForDate(targetDate)) {
                     MorningReadScheduler.scheduleSleepReportRetry(app.applicationContext, targetDate, id)
-                    Log.i(TAG, "Morning PPI retry skipped: PPI is already present for $targetDate")
+                    Log.i(TAG, "Morning PPI retry skipped: usable sleep-window PPI is already present for $targetDate")
                     return
                 }
                 val result = syncCoordinator.runSync(
@@ -335,6 +335,16 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                     repository.runDeviceDateFileListProbe(connectedId, from, to).getOrThrow()
                 }
                 Log.i(TAG, "Device file list probe completed: runId=$runId, range=$from..$to")
+            }
+            "autos_file_probe" -> {
+                val id = requireNotNull(selectedDeviceId) { "autos_file_probe requires automation_device_id or selected device" }
+                val from = LocalDate.parse(requireNotNull(fromDate) { "autos_file_probe requires probe_from_date" })
+                val to = LocalDate.parse(toDate ?: fromDate)
+                val runId = syncCoordinator.runExclusiveDeviceOperation(id) { connectedId ->
+                    persistSelection(connectedId)
+                    repository.runAutosFileProbe(connectedId, from, to).getOrThrow()
+                }
+                Log.i(TAG, "AUTOS file probe completed: runId=$runId, range=$from..$to")
             }
             "offline_ppg_cleanup" -> {
                 val id = requireNotNull(selectedDeviceId) { "offline_ppg_cleanup requires automation_device_id or selected device" }

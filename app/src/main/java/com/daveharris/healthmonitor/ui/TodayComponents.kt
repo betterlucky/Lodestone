@@ -120,9 +120,9 @@ fun todayReadinessStatus(
     val isSleeping = latestRealMarker?.markerSource == WakeMarkerSources.GOING_TO_BED
     val syncRunning = isBusy || latestReadinessSync?.status == "running"
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
-    val hasPpi = relevantMorningRead?.rawPpiGoodEpochCount != null ||
-        relevantMorningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
+    val hasPpi = relevantMorningRead.hasPpiSignal()
     val hasUsableWindow = relevantMorningRead.hasEstablishedSleepWindow()
+    val hasMarkerOnlyWindow = hasUsableWindow && !hasPpi && relevantMorningRead?.isInterim == true
     val hasReadyLocalSignal = hasPpi && hasUsableWindow && relevantMorningRead.hasSufficientReadyPpiCoverage()
     val analysisWindowLabel = relevantMorningRead?.analysisWindowLabel() ?: "sleep/rest window"
     val catchUpPrompt = catchUpPrompt(today, morningRead)
@@ -136,7 +136,7 @@ fun todayReadinessStatus(
         stage = when {
             isSleeping -> TodayReadinessStage.SLEEP_TIME
             syncRunning -> TodayReadinessStage.STARTING_SYNC
-            hasFinalSleep || hasReadyLocalSignal -> TodayReadinessStage.UPDATE_COMPLETE
+            hasFinalSleep || hasReadyLocalSignal || hasMarkerOnlyWindow -> TodayReadinessStage.UPDATE_COMPLETE
             hasPpi -> TodayReadinessStage.INITIAL_PPI
             else -> TodayReadinessStage.NOT_STARTED
         },
@@ -221,6 +221,17 @@ fun todayReadinessStatus(
             lastUsedLabel = lastUsedLabel,
             lastLoopSyncLabel = lastLoopSyncLabel
         )
+        hasMarkerOnlyWindow -> TodayReadinessStatus(
+            stage = TodayReadinessStage.UPDATE_COMPLETE,
+            title = "Limited current signal",
+            sleepReport = "Marker window active",
+            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
+            message = "Lodestone has a usable sleep/rest window from markers, but no overnight PPI overlapped it. Treat this as sleep timing context, not an autonomic read.",
+            hrvDetail = "The current signal is using $analysisWindowLabel. PPI detail will appear after Lodestone receives enough aligned overnight Loop data.",
+            dataQuality = dataQuality,
+            lastUsedLabel = lastUsedLabel,
+            lastLoopSyncLabel = lastLoopSyncLabel
+        )
         else -> TodayReadinessStatus(
             stage = TodayReadinessStage.NOT_STARTED,
             title = "Awaiting morning sync",
@@ -285,8 +296,7 @@ fun todayDataQualitySummary(
     stage: TodayReadinessStage,
     morningRead: MorningReadSnapshot?,
     hasFinalSleep: Boolean = morningRead?.sleepDataReady == true,
-    hasPpi: Boolean = morningRead?.rawPpiGoodEpochCount != null ||
-        morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true,
+    hasPpi: Boolean = morningRead.hasPpiSignal(),
     hasUsableWindow: Boolean = morningRead.hasEstablishedSleepWindow(),
     hasReadyLocalSignal: Boolean = hasPpi && hasUsableWindow && morningRead.hasSufficientReadyPpiCoverage()
 ): TodayDataQualitySummary {
@@ -681,6 +691,8 @@ fun morningReadBasisLabel(
             "Manual sleep window + PPI, Loop report pending"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT ->
             "PPI-inferred sleep window, Loop report pending"
+        morningRead?.morningReadSource() == MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT ->
+            "Manual sleep window, autonomic unavailable"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Calibrated sleep window + PPI, Loop report as context"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
@@ -704,6 +716,7 @@ internal fun MorningReadSnapshot.analysisWindowLabel(): String =
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
         MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred sleep window"
+        MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "calibrated primary window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "manual primary window"
         MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred primary window"
@@ -745,6 +758,7 @@ private fun autonomicSourceDisplayLabel(source: String): String =
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, calibrated sleep window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, manual sleep window"
         MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, inferred sleep window"
+        MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "Manual sleep window, no autonomic signal"
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, calibrated primary window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, manual primary window"
         MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, inferred primary window"

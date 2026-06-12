@@ -138,6 +138,9 @@ class PolarProbeManager(
     suspend fun listDeviceFiles(deviceId: String, path: String, recursive: Boolean): List<String> =
         api.getFileList(deviceId, path, recursive)
 
+    suspend fun getDeviceFile(deviceId: String, path: String): ByteArray =
+        api.getFile(deviceId, path)
+
     suspend fun getDiskSpace(deviceId: String) = api.getDiskSpace(deviceId)
 
     suspend fun deleteDeviceDateFolders(deviceId: String, from: LocalDate, to: LocalDate) =

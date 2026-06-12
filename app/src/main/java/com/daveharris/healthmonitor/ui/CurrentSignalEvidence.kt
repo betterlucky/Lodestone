@@ -8,7 +8,18 @@ internal const val MIN_READY_PPI_COVERAGE_HOURS = 3.0
 
 internal fun MorningReadSnapshot?.hasPpiSignal(): Boolean =
     this?.rawPpiGoodEpochCount != null ||
-        this?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true
+        when (MorningReadSource.fromKey(this?.overnightAutonomicSource)) {
+            MorningReadSource.PPI247_SLEEP_WINDOW,
+            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT,
+            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT,
+            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT,
+            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT,
+            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT,
+            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT,
+            MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW,
+            MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW -> true
+            else -> false
+        }
 
 internal fun MorningReadSnapshot?.hasEstablishedSleepWindow(): Boolean =
     this?.sleepDataReady == true ||

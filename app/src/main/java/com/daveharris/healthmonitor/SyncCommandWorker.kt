@@ -57,6 +57,7 @@ class SyncCommandWorker(
             "offline_ppi_start",
             "offline_ppi_stop_fetch",
             "disk_space_probe",
+            "autos_file_probe",
             "offline_ppg_cleanup"
         )
 

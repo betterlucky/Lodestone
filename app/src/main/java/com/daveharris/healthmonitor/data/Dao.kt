@@ -232,11 +232,27 @@ interface ProbeDao {
     @Query("SELECT rawPayloadJson FROM sleep_night_raw WHERE deviceId = :deviceId")
     suspend fun getExistingSleepPayloads(deviceId: String): List<String>
 
+    @Query(
+        """
+        SELECT rawPayloadJson FROM sleep_night_raw
+        WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)
+        """
+    )
+    suspend fun getExistingSleepPayloadsForDates(deviceId: String, sourceDates: List<String>): List<String>
+
     @Query("SELECT * FROM sleep_night_raw WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)")
     suspend fun getSleepRecordsForDates(deviceId: String, sourceDates: List<String>): List<SleepNightRawEntity>
 
     @Query("SELECT rawPayloadJson FROM nightly_recharge_raw WHERE deviceId = :deviceId")
     suspend fun getExistingNightlyRechargePayloads(deviceId: String): List<String>
+
+    @Query(
+        """
+        SELECT rawPayloadJson FROM nightly_recharge_raw
+        WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)
+        """
+    )
+    suspend fun getExistingNightlyRechargePayloadsForDates(deviceId: String, sourceDates: List<String>): List<String>
 
     @Query("SELECT rawPayloadJson FROM hr247_day_raw WHERE deviceId = :deviceId")
     suspend fun getExistingHrPayloads(deviceId: String): List<String>
@@ -292,6 +308,14 @@ interface ProbeDao {
 
     @Query("SELECT rawPayloadJson FROM daily_summary_raw WHERE deviceId = :deviceId")
     suspend fun getExistingDailySummaryPayloads(deviceId: String): List<String>
+
+    @Query(
+        """
+        SELECT rawPayloadJson FROM daily_summary_raw
+        WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)
+        """
+    )
+    suspend fun getExistingDailySummaryPayloadsForDates(deviceId: String, sourceDates: List<String>): List<String>
 
     @Query("SELECT rawPayloadJson FROM activity_samples_raw WHERE deviceId = :deviceId")
     suspend fun getExistingActivitySamplePayloads(deviceId: String): List<String>

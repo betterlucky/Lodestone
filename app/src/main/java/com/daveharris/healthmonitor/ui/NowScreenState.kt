@@ -354,6 +354,7 @@ private fun buildCurrentState(
         hasPpi && !morningRead.hasEstablishedSleepWindow() -> needsWindowCurrentState(morningRead, functionalContext)
         hasPpi && !morningRead.hasSufficientReadyPpiCoverage() -> lowConfidenceCurrentState(morningRead, functionalContext)
         hasPpi -> readyCurrentState(morningRead, functionalContext, hasFinalSleep = false)
+        morningRead.hasEstablishedSleepWindow() -> markerOnlyCurrentState(morningRead, functionalContext)
         else -> NowCurrentState(
             kind = NowCurrentStateKind.WAITING_FOR_DATA,
             availability = NowDataAvailability.MISSING,
@@ -441,6 +442,29 @@ private fun lowConfidenceCurrentState(
             autonomicStatus = morningRead?.status,
             functionalContext = functionalContext,
             defaultMessage = "PPI/window evidence is present, but coverage is thin. Treat this current signal as tentative context."
+        )
+    )
+}
+
+private fun markerOnlyCurrentState(
+    morningRead: MorningReadSnapshot?,
+    functionalContext: NowFunctionalContext
+): NowCurrentState {
+    val planningStatus = planningStatus(morningRead?.status, functionalContext.status)
+    return NowCurrentState(
+        kind = NowCurrentStateKind.LOW_CONFIDENCE_READ,
+        availability = NowDataAvailability.PARTIAL,
+        status = planningStatus,
+        label = planningStatus.forecastLabel(),
+        qualifier = if (functionalContext.disagreesWithAutonomic(morningRead?.status)) {
+            "Mixed sleep/function evidence"
+        } else {
+            "No autonomic signal"
+        },
+        message = currentStateMessage(
+            autonomicStatus = morningRead?.status,
+            functionalContext = functionalContext,
+            defaultMessage = "Lodestone has a usable marker-derived sleep window, but no overnight PPI overlapped it. Treat this as sleep timing context, not an autonomic read."
         )
     )
 }
@@ -1304,6 +1328,8 @@ private fun basisLabel(morningRead: MorningReadSnapshot?, noMainSleep: Boolean):
             "Manual sleep window + PPI, Loop report pending"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT ->
             "PPI-inferred sleep window, Loop report pending"
+        morningRead?.morningReadSource() == MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT ->
+            "Manual sleep window, autonomic unavailable"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Calibrated sleep window + PPI, Loop report as context"
         morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
@@ -1331,6 +1357,7 @@ private fun String.analysisWindowSourceType(): NowAnalysisWindowSourceType {
         MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY,
         MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> NowAnalysisWindowSourceType.USER_SELECTED
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT,
+        MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT,
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> NowAnalysisWindowSourceType.MARKER_DERIVED
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT,
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT,
@@ -1356,6 +1383,7 @@ private fun String.analysisWindowLabel(sleepDataReady: Boolean): String {
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
         MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred sleep window"
+        MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
         MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "calibrated primary window"
         MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "manual primary window"
         MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred primary window"

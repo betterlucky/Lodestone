@@ -116,7 +116,7 @@ class SyncCoordinator(
         currentRunId: Long,
         morningReadGuard: MorningReadGuard?
     ): SyncCoordinatorResult? {
-        if (repository.hasPpiRecordForDate(targetDate)) return null
+        if (repository.hasMorningPpiSignalForDate(targetDate)) return null
 
         var connectedId = deviceId
         var latestRunId = currentRunId
@@ -157,7 +157,7 @@ class SyncCoordinator(
             } catch (_: Throwable) {
                 return@repeat
             }
-            if (repository.hasPpiRecordForDate(targetDate)) {
+            if (repository.hasMorningPpiSignalForDate(targetDate)) {
                 return SyncCoordinatorResult(
                     connectedDeviceId = connectedId,
                     syncRunId = latestRunId,
@@ -174,7 +174,7 @@ class SyncCoordinator(
     private suspend fun scheduleMorningReadCheckIfNeeded(deviceId: String, targetDate: String) {
         if (repository.hasSleepRecordForDate(targetDate)) {
             MorningReadScheduler.cancel(appContext)
-        } else if (repository.hasPpiRecordForDate(targetDate)) {
+        } else if (repository.hasMorningPpiSignalForDate(targetDate)) {
             MorningReadScheduler.scheduleSleepReportRetry(appContext, targetDate, deviceId)
         } else {
             MorningReadScheduler.schedulePpiRetry(appContext, targetDate, deviceId)

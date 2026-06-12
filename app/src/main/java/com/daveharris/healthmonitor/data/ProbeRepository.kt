@@ -19,6 +19,9 @@ import com.polar.sdk.api.model.activity.PolarDailySummaryData
 import com.polar.sdk.api.model.sleep.PolarNightlyRechargeData
 import com.polar.sdk.api.model.sleep.PolarSleepData
 import com.polar.sdk.api.model.PolarSkinTemperatureData
+import fi.polar.remote.representation.protobuf.AutomaticSamples.PbAutomaticSampleSessions
+import fi.polar.remote.representation.protobuf.Types.PbDate
+import fi.polar.remote.representation.protobuf.Types.PbTime
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
@@ -47,6 +50,7 @@ import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.security.MessageDigest
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -136,6 +140,9 @@ class ProbeRepository(
 
     suspend fun hasPpiRecordForDate(sourceDate: String): Boolean =
         dao.countPpi247EpochsForDate(sourceDate) > 0
+
+    suspend fun hasMorningPpiSignalForDate(sourceDate: String): Boolean =
+        deriveMorningReadForDate(sourceDate, allowProvisional = true).hasUsableMorningPpiSignal()
 
     suspend fun getSleepEpisodesForDate(sourceDate: String): List<SleepEpisodeEntity> =
         dao.getSleepEpisodesForDate(sourceDate)
@@ -1239,6 +1246,100 @@ class ProbeRepository(
         }
     }
 
+    suspend fun runAutosFileProbe(deviceId: String, from: LocalDate, to: LocalDate): Result<Long> = withContext(Dispatchers.IO) {
+        require(!to.isBefore(from)) { "AUTOS file probe end must be on or after start" }
+        runCatching {
+            val startedAt = System.currentTimeMillis()
+            val probe = withTimeout(AUTOS_FILE_PROBE_TIMEOUT_MS) {
+                runWithinSyncSession(deviceId, "autos_file_probe") {
+                    val listedPaths = polarManager
+                        .listDeviceFiles(deviceId, AUTOS_FILE_ROOT_PATH, recursive = false)
+                        .sorted()
+                    val autosPaths = listedPaths
+                        .filter { AUTOS_FILE_NAME_REGEX.matches(it.substringAfterLast('/')) }
+                        .sorted()
+                    val files = autosPaths.map { path ->
+                        val readStartedAt = System.currentTimeMillis()
+                        runCatching {
+                            val bytes = polarManager.getDeviceFile(deviceId, path)
+                            autosFileSummary(
+                                path = path,
+                                bytes = bytes,
+                                requestedFrom = from,
+                                requestedTo = to,
+                                readStartedAt = readStartedAt
+                            )
+                        }.getOrElse { error ->
+                            mapOf(
+                                "path" to path,
+                                "name" to path.substringAfterLast('/'),
+                                "readSucceeded" to false,
+                                "parseSucceeded" to false,
+                                "error" to (error.message ?: error.javaClass.simpleName),
+                                "durationMs" to (System.currentTimeMillis() - readStartedAt)
+                            )
+                        }
+                    }
+                    val requestedDayFiles = files.filter { it["inRequestedRange"] == true }
+                    val requestedPpiSessions = requestedDayFiles.sumOf { (it["ppiSessionCount"] as? Int) ?: 0 }
+                    val requestedPpiSamples = requestedDayFiles.sumOf { (it["ppiSampleCount"] as? Int) ?: 0 }
+                    mapOf(
+                        "listedPaths" to listedPaths,
+                        "files" to files,
+                        "requestedDayFileCount" to requestedDayFiles.size,
+                        "requestedDayPpiSessionCount" to requestedPpiSessions,
+                        "requestedDayPpiSampleCount" to requestedPpiSamples
+                    )
+                }
+            }
+            val files = probe["files"] as? List<*> ?: emptyList<Any?>()
+            val requestedDayFileCount = (probe["requestedDayFileCount"] as? Int) ?: 0
+            val requestedDayPpiSessionCount = (probe["requestedDayPpiSessionCount"] as? Int) ?: 0
+            val requestedDayPpiSampleCount = (probe["requestedDayPpiSampleCount"] as? Int) ?: 0
+            val payload = mapOf(
+                "purpose" to "read_only_autos_file_probe",
+                "deviceId" to deviceId,
+                "startedAtEpochMs" to startedAt,
+                "from" to from.toString(),
+                "to" to to.toString(),
+                "root" to AUTOS_FILE_ROOT_PATH,
+                "listedPaths" to probe["listedPaths"],
+                "files" to files
+            )
+            val syncRunId = dao.insertSyncRun(
+                SyncRunEntity(
+                    deviceId = deviceId,
+                    firmwareVersion = runtimeState.value.firmwareVersion,
+                    appVersion = APP_VERSION,
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    status = "success",
+                    notes = "read-only AUTOS automatic samples file probe"
+                )
+            )
+            dao.insertSyncDomainResult(
+                SyncDomainResultEntity(
+                    syncRunId = syncRunId,
+                    deviceId = deviceId,
+                    domain = ProbeDomain.PPI_247.name,
+                    requestedRange = "autos_file_probe:$from..$to",
+                    status = ProbeStatus.SUPPORTED.name,
+                    recordCount = files.size,
+                    parserVersion = PARSER_VERSION,
+                    parseStatus = ProbeStatus.RAW_ONLY.name,
+                    detailSummary = "autosFiles=${files.size}, requestedDayFiles=$requestedDayFileCount, requestedPpiSessions=$requestedDayPpiSessionCount, requestedPpiSamples=$requestedDayPpiSampleCount",
+                    rawPayloadJson = GsonProvider.gson.toJson(payload),
+                    manualNotes = "read-only AUTOS file metadata; no raw automatic-sample payload bytes or values stored",
+                    startedAtEpochMs = startedAt,
+                    endedAtEpochMs = System.currentTimeMillis(),
+                    errorCode = null,
+                    errorMessage = null
+                )
+            )
+            syncRunId
+        }
+    }
+
     suspend fun removeOfflinePpgExperimentRecords(deviceId: String): Result<Long> = withContext(Dispatchers.IO) {
         runCatching {
             val startedAt = System.currentTimeMillis()
@@ -1751,7 +1852,7 @@ class ProbeRepository(
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingSleepPayloads(deviceId))
+        val filtered = filterNewRecords(records, existingSleepPayloadsForIncoming(deviceId, records))
         val safeRecords = filterSleepRecordsThatShouldReplaceExisting(deviceId, filtered)
         safeRecords.forEach { dao.deleteSleepRecordsForDate(deviceId, it.sourceDate) }
         dao.insertSleepRecords(safeRecords)
@@ -1790,7 +1891,7 @@ class ProbeRepository(
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingNightlyRechargePayloads(deviceId))
+        val filtered = filterNewRecords(records, existingNightlyRechargePayloadsForIncoming(deviceId, records))
         filtered.forEach { dao.deleteNightlyRechargeRecordsForDate(deviceId, it.sourceDate) }
         dao.insertNightlyRechargeRecords(filtered)
     }
@@ -2111,9 +2212,54 @@ class ProbeRepository(
                 parseStatus = ProbeStatus.PARSED.name
             )
         }
-        val filtered = filterNewRecords(records, dao.getExistingDailySummaryPayloads(deviceId))
+        val filtered = filterNewRecords(records, existingDailySummaryPayloadsForIncoming(deviceId, records))
         filtered.forEach { dao.deleteDailySummaryRecordsForDate(deviceId, it.sourceDate) }
         dao.insertDailySummaryRecords(filtered)
+    }
+
+    private suspend fun existingSleepPayloadsForIncoming(
+        deviceId: String,
+        records: List<SleepNightRawEntity>
+    ): List<String> = existingPayloadsForIncoming(
+        records = records,
+        sourceDate = { it.sourceDate },
+        scopedLookup = { sourceDates -> dao.getExistingSleepPayloadsForDates(deviceId, sourceDates) },
+        fullLookup = { dao.getExistingSleepPayloads(deviceId) }
+    )
+
+    private suspend fun existingNightlyRechargePayloadsForIncoming(
+        deviceId: String,
+        records: List<NightlyRechargeRawEntity>
+    ): List<String> = existingPayloadsForIncoming(
+        records = records,
+        sourceDate = { it.sourceDate },
+        scopedLookup = { sourceDates -> dao.getExistingNightlyRechargePayloadsForDates(deviceId, sourceDates) },
+        fullLookup = { dao.getExistingNightlyRechargePayloads(deviceId) }
+    )
+
+    private suspend fun existingDailySummaryPayloadsForIncoming(
+        deviceId: String,
+        records: List<DailySummaryRawEntity>
+    ): List<String> = existingPayloadsForIncoming(
+        records = records,
+        sourceDate = { it.sourceDate },
+        scopedLookup = { sourceDates -> dao.getExistingDailySummaryPayloadsForDates(deviceId, sourceDates) },
+        fullLookup = { dao.getExistingDailySummaryPayloads(deviceId) }
+    )
+
+    private suspend fun <T> existingPayloadsForIncoming(
+        records: List<T>,
+        sourceDate: (T) -> String?,
+        scopedLookup: suspend (List<String>) -> List<String>,
+        fullLookup: suspend () -> List<String>
+    ): List<String> {
+        if (records.isEmpty()) return emptyList()
+        val sourceDates = records.map { sourceDate(it)?.takeIf(String::isNotBlank) }
+        return if (sourceDates.all { it != null }) {
+            scopedLookup(sourceDates.filterNotNull().distinct())
+        } else {
+            fullLookup()
+        }
     }
 
     private suspend fun persistActivitySamples(deviceId: String, data: List<PolarActivitySamplesDayData>, requestedRange: String) {
@@ -2277,6 +2423,77 @@ class ProbeRepository(
 
     private fun shapeForActivitySamples(data: List<PolarActivitySamplesDayData>): String =
         "list(size=${data.size}, metSamples=${data.sumOf { day -> day.polarActivitySamplesDataList.orEmpty().sumOf { it.metSamples.size } }}, stepSamples=${data.sumOf { day -> day.polarActivitySamplesDataList.orEmpty().sumOf { it.stepSamples.size } }})"
+
+    private fun autosFileSummary(
+        path: String,
+        bytes: ByteArray,
+        requestedFrom: LocalDate,
+        requestedTo: LocalDate,
+        readStartedAt: Long
+    ): Map<String, Any?> {
+        val parsed = runCatching { PbAutomaticSampleSessions.parseFrom(bytes) }
+        if (parsed.isFailure) {
+            val error = parsed.exceptionOrNull()
+            return mapOf(
+                "path" to path,
+                "name" to path.substringAfterLast('/'),
+                "readSucceeded" to true,
+                "parseSucceeded" to false,
+                "byteCount" to bytes.size,
+                "sha256_12" to sha256Prefix(bytes),
+                "error" to (error?.message ?: error?.javaClass?.simpleName),
+                "durationMs" to (System.currentTimeMillis() - readStartedAt)
+            )
+        }
+
+        val sessions = parsed.getOrThrow()
+        val day = sessions.day.takeIf { sessions.hasDay() }?.toLocalDateOrNull()
+        val ppiTimes = sessions.ppiSamplesList.mapNotNull { sample ->
+            sample.recordingTime.takeIf { sample.hasRecordingTime() }?.toLocalTimeOrNull()
+        }
+        val hrTimes = sessions.samplesList.mapNotNull { sample ->
+            sample.time.takeIf { sample.hasTime() }?.toLocalTimeOrNull()
+        }
+        return mapOf(
+            "path" to path,
+            "name" to path.substringAfterLast('/'),
+            "readSucceeded" to true,
+            "parseSucceeded" to true,
+            "byteCount" to bytes.size,
+            "sha256_12" to sha256Prefix(bytes),
+            "day" to day?.toString(),
+            "inRequestedRange" to (day != null && !day.isBefore(requestedFrom) && !day.isAfter(requestedTo)),
+            "ppiSessionCount" to sessions.ppiSamplesCount,
+            "ppiSampleCount" to sessions.ppiSamplesList.sumOf { if (it.hasPpi()) it.ppi.ppiDeltaCount else 0 },
+            "ppiFirstTime" to ppiTimes.minOrNull()?.toString(),
+            "ppiLastTime" to ppiTimes.maxOrNull()?.toString(),
+            "hrSessionCount" to sessions.samplesCount,
+            "hrSampleCount" to sessions.samplesList.sumOf { it.heartRateCount },
+            "hrFirstTime" to hrTimes.minOrNull()?.toString(),
+            "hrLastTime" to hrTimes.maxOrNull()?.toString(),
+            "durationMs" to (System.currentTimeMillis() - readStartedAt)
+        )
+    }
+
+    private fun PbDate.toLocalDateOrNull(): LocalDate? =
+        if (hasYear() && hasMonth() && hasDay()) {
+            runCatching { LocalDate.of(year, month, day) }.getOrNull()
+        } else {
+            null
+        }
+
+    private fun PbTime.toLocalTimeOrNull(): LocalTime? =
+        if (hasHour() && hasMinute() && hasSeconds()) {
+            runCatching { LocalTime.of(hour, minute, seconds, (if (hasMillis()) millis else 0) * 1_000_000) }.getOrNull()
+        } else {
+            null
+        }
+
+    private fun sha256Prefix(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .take(6)
+            .joinToString("") { "%02x".format(it) }
 
     private fun deviceDateDirectoryPath(date: LocalDate): String =
         "$DEVICE_DATE_ROOT_PATH${date.format(DateTimeFormatter.BASIC_ISO_DATE)}/"
@@ -2514,12 +2731,11 @@ class ProbeRepository(
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
-            val pendingSource = when {
-                ppi247Autonomic != null -> provisionalWindow.source
-                hasRawPpi && provisionalWindow == null -> MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
-                hasRawPpi -> MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
-                else -> MorningReadSource.AWAITING_SLEEP_DATA.key
-            }
+            val pendingSource = provisionalMorningReadSource(
+                provisionalWindow = provisionalWindow,
+                ppi247Autonomic = ppi247Autonomic,
+                hasRawPpi = hasRawPpi
+            )
             val scoreResult = scoreMorningRead(
                 durationMinutes = provisionalDurationMinutes,
                 autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
@@ -2533,21 +2749,27 @@ class ProbeRepository(
                 ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
                 missingPpiReason = "No usable raw PPI is available yet."
             )
-            val provisionalStatus = scoreResult.status.takeIf { ppi247Autonomic != null }
+            val provisionalStatus = provisionalStatus(
+                scoreResult = scoreResult,
+                provisionalWindow = provisionalWindow,
+                ppi247Autonomic = ppi247Autonomic
+            )
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
                 status = provisionalStatus,
-                confidence = if (provisionalStatus != null) "interim" else "pending",
+                confidence = provisionalConfidence(provisionalStatus, ppi247Autonomic),
                 overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
-                summary = "Interim: waiting for Polar sleep data",
+                summary = provisionalSummary(provisionalStatus, ppi247Autonomic, "waiting for Polar sleep data"),
                 reasons = listOf(
                     "Today’s resolved sleep window is not available yet.",
                     if (ppi247Autonomic != null) {
                         "A provisional PPI read is available from the ${provisionalWindow.label}."
+                    } else if (provisionalWindow?.hasExplicitWakeMarker == true) {
+                        "A marker-defined sleep window is available, but no usable overnight PPI overlapped it."
                     } else if (hasRawPpi && provisionalWindow == null) {
                         "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
                     } else if (hasRawPpi) {
@@ -2597,12 +2819,11 @@ class ProbeRepository(
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
-            val pendingSource = when {
-                ppi247Autonomic != null -> provisionalWindow.source
-                hasRawPpi && provisionalWindow == null -> MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
-                hasRawPpi -> MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
-                else -> MorningReadSource.AWAITING_SLEEP_DATA.key
-            }
+            val pendingSource = provisionalMorningReadSource(
+                provisionalWindow = provisionalWindow,
+                ppi247Autonomic = ppi247Autonomic,
+                hasRawPpi = hasRawPpi
+            )
             val scoreResult = scoreMorningRead(
                 durationMinutes = provisionalDurationMinutes,
                 autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
@@ -2616,21 +2837,27 @@ class ProbeRepository(
                 ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
                 missingPpiReason = "No usable raw PPI is available yet."
             )
-            val provisionalStatus = scoreResult.status.takeIf { ppi247Autonomic != null }
+            val provisionalStatus = provisionalStatus(
+                scoreResult = scoreResult,
+                provisionalWindow = provisionalWindow,
+                ppi247Autonomic = ppi247Autonomic
+            )
             return MorningReadSnapshot(
                 sourceDate = expectedSourceDate,
                 status = provisionalStatus,
-                confidence = if (provisionalStatus != null) "interim" else "pending",
+                confidence = provisionalConfidence(provisionalStatus, ppi247Autonomic),
                 overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
                 recoveryAvailable = false,
-                summary = "Interim: waiting for resolved Polar sleep window",
+                summary = provisionalSummary(provisionalStatus, ppi247Autonomic, "waiting for resolved Polar sleep window"),
                 reasons = listOf(
                     "Polar has created today’s sleep record, but the resolved start/end times are not available yet.",
                     if (ppi247Autonomic != null) {
                         "A provisional PPI read is available from the ${provisionalWindow.label}."
+                    } else if (provisionalWindow?.hasExplicitWakeMarker == true) {
+                        "A marker-defined sleep window is available, but no usable overnight PPI overlapped it."
                     } else if (hasRawPpi && provisionalWindow == null) {
                         "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
                     } else if (hasRawPpi) {
@@ -2809,6 +3036,49 @@ class ProbeRepository(
             hrvTrajectory = emptyList()
         )
     }
+
+    private fun provisionalMorningReadSource(
+        provisionalWindow: SleepWindowEstimate?,
+        ppi247Autonomic: Ppi247WindowSummary?,
+        hasRawPpi: Boolean
+    ): String =
+        when {
+            ppi247Autonomic != null -> requireNotNull(provisionalWindow).source
+            provisionalWindow?.hasExplicitWakeMarker == true -> MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT.key
+            hasRawPpi && provisionalWindow == null -> MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
+            hasRawPpi -> MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
+            else -> MorningReadSource.AWAITING_SLEEP_DATA.key
+        }
+
+    private fun provisionalStatus(
+        scoreResult: MorningScoreResult,
+        provisionalWindow: SleepWindowEstimate?,
+        ppi247Autonomic: Ppi247WindowSummary?
+    ): TrafficLightStatus? =
+        scoreResult.status.takeIf {
+            ppi247Autonomic != null || provisionalWindow?.hasExplicitWakeMarker == true
+        }
+
+    private fun provisionalConfidence(
+        provisionalStatus: TrafficLightStatus?,
+        ppi247Autonomic: Ppi247WindowSummary?
+    ): String =
+        when {
+            provisionalStatus == null -> "pending"
+            ppi247Autonomic != null -> "interim"
+            else -> "low"
+        }
+
+    private fun provisionalSummary(
+        provisionalStatus: TrafficLightStatus?,
+        ppi247Autonomic: Ppi247WindowSummary?,
+        fallback: String
+    ): String =
+        when {
+            provisionalStatus == null -> "Interim: $fallback"
+            ppi247Autonomic == null -> "Interim: marker-defined sleep window, autonomic unavailable"
+            else -> "Interim: $fallback"
+        }
 
     private fun scoreMorningRead(
         durationMinutes: Int?,
@@ -3382,6 +3652,7 @@ class ProbeRepository(
             MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "Calibrated-window PPI"
             MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "Manual-window PPI"
             MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred-window PPI"
+            MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "Manual sleep window"
             MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Calibrated-window PPI"
             MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Manual-window PPI"
             MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred-window PPI"
@@ -3478,6 +3749,7 @@ private const val SYNC_NOTIFICATION_STOP_TIMEOUT_MS = 5_000L
 private const val DATABASE_COMPACTION_THRESHOLD_BYTES = 300L * 1024L * 1024L
 private const val ENABLE_ACTIVITY_SAMPLE_SYNC = true
 private const val DEVICE_DATE_ROOT_PATH = "/U/0/"
+private const val AUTOS_FILE_ROOT_PATH = "/U/0/AUTOS/"
 private const val DEVICE_FILE_LIST_PROBE_MAX_DAYS = 31
 private const val DEVICE_FILE_LIST_PROBE_ENTRY_LIMIT = 80
 private const val SLEEP_SYNC_TIMEOUT_MS = 45_000L
@@ -3488,6 +3760,7 @@ private const val SKIN_TEMPERATURE_SYNC_TIMEOUT_MS = 60_000L
 private const val DAILY_SUMMARY_SYNC_TIMEOUT_MS = 60_000L
 private const val ACTIVITY_SAMPLE_SYNC_TIMEOUT_MS = 2 * 60 * 1000L
 private const val DEVICE_FILE_LIST_PROBE_TIMEOUT_MS = 2 * 60 * 1000L
+private const val AUTOS_FILE_PROBE_TIMEOUT_MS = 3 * 60 * 1000L
 private const val MANUAL_WAKE_BACKDATE_MS = 5 * 60_000L
 private const val SLEEP_ONSET_WINDOW_EPOCHS = 4
 private const val SLEEP_ONSET_MIN_HR_DROP_BPM = 3.0
@@ -3503,6 +3776,7 @@ private const val RAW_PPI_REST_CANDIDATE_SOURCE = "raw_ppi_rest_candidate"
 private const val MORNING_MODEL_VERSION = "morning_v1_primary_ppi_window_2026-05-15"
 const val MORNING_PREDICTION_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
 private const val MORNING_PREDICTION_ORIGIN_BACKFILLED = "BACKFILLED_RECALCULATED"
+private val AUTOS_FILE_NAME_REGEX = Regex("""AUTOS\d{3}\.BPB""")
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")

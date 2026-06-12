@@ -237,6 +237,7 @@ private fun MorningReadSnapshot.signalContextLabel(): String =
         sleepDataReady -> "Loop sleep report attached"
         hasEstablishedSleepWindow() && hasSufficientReadyPpiCoverage() ->
             "Current signal ready; Loop report pending for comparison"
+        hasEstablishedSleepWindow() && !hasPpiSignal() -> "Current signal limited; no autonomic signal"
         hasEstablishedSleepWindow() -> "Current signal limited; thin PPI coverage"
         isInterim -> "Current signal limited; sleep window pending"
         else -> "Current signal pending; sleep context pending"

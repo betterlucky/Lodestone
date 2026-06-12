@@ -69,6 +69,9 @@ data class MorningReadSnapshot(
     val hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
 )
 
+internal fun MorningReadSnapshot?.hasUsableMorningPpiSignal(): Boolean =
+    (this?.rawPpiGoodEpochCount ?: 0) >= MIN_MORNING_PPI_GOOD_EPOCHS
+
 data class HrvTrajectoryPoint(
     val epochStartEpochMs: Long,
     val rmssdMs: Double,
@@ -88,6 +91,7 @@ enum class MorningReadSource(
     RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT("raw_ppi_calibrated_window_pending_sleep_report", hasEstablishedSleepWindow = true),
     RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT("raw_ppi_manual_window_pending_sleep_report", hasEstablishedSleepWindow = true),
     RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT("raw_ppi_inferred_window_pending_sleep_report", hasEstablishedSleepWindow = true),
+    MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT("marker_sleep_window_pending_sleep_report", hasEstablishedSleepWindow = true),
     RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT("raw_ppi_calibrated_window_primary_with_sleep_report", hasEstablishedSleepWindow = true),
     RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT("raw_ppi_manual_window_primary_with_sleep_report", hasEstablishedSleepWindow = true),
     RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT("raw_ppi_inferred_window_primary_with_sleep_report", hasEstablishedSleepWindow = true),
@@ -102,6 +106,8 @@ enum class MorningReadSource(
             entries.firstOrNull { it.key == key }
     }
 }
+
+private const val MIN_MORNING_PPI_GOOD_EPOCHS = 12
 
 enum class TrafficLightStatus {
     GOOD,
