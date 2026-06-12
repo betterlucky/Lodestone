@@ -136,6 +136,32 @@ Every data channel has a burden and may change the system being measured.
 The best measure is not simply the most objective one. It is the most useful
 objective signal with an acceptable burden on bad days.
 
+## Wearable-Optional Shape
+
+Lodestone remains Android/Loop-first for the current prototype, but the product
+should degrade gracefully when wearable data is missing. A no-Loop mode is not
+the same promise as the wearable-assisted app. It is a functional-lane pacing
+scaffold:
+
+- recent SF/outcome history
+- PEM/payback markers and peak-of-payback context
+- broad day-shape and major-task/load markers
+- optional manual sleep/rest estimate
+- optional grip or cognitive-probe imports if they prove sustainable
+
+Without passive autonomic data, Lodestone should not claim to see recovery
+conditions. It can remember sticky state, show recent patterns, encourage
+intentional pacing, and cautiously say when the recent functional pattern is no
+longer strongly arguing against a small step. It cannot honestly detect the
+hidden moment when recovery is ready to convert into usable function without a
+fresh functional observation or another objective probe.
+
+This makes no-Loop support useful for accessibility, testing, and resilience,
+but not the project's core proof. User-facing copy should distinguish
+`based on recent check-ins` from wearable-assisted reads. Missing HRV should
+lower confidence or remove body-signal claims rather than making the app feel
+broken.
+
 ## Grip Strength
 
 Grip Recorder owns the timed measurement UX and exports disposable CSVs.

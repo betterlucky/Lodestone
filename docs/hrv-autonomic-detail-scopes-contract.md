@@ -256,7 +256,7 @@ autonomic labels, trajectory charts, and evidence chips do **not** belong here.
 | **Last sync** | Fine on hero (freshness without opening Signals). |
 | **Recent sleep/rest** | Fine on hero — **hybrid 18h summary** (see below). Drill down via `Signals`. |
 | **Check in** | Stays as its own section on `Now` — main sync action. |
-| **Journal capture** | **Moving onto `Now`**. The separate Journal tab may be **retired** once capture lives here. |
+| **Journal capture** | **Moving onto `Now`**. The separate Journal tab is retired in the target architecture once capture/edit routes live on `Now` and `History`. |
 
 ### Off `Now` (Signals tab or History)
 
@@ -323,12 +323,6 @@ list section), never on `Now`.
 Tab name **`Signals`** is confirmed. Grip strength and other monitoring-app
 data may land here later. Presentation of external monitoring apps is a separate
 design pass — do not block HRV scope work on it.
-
-### Tension with `lodestone-redesign-architecture.md`
-
-The redesign doc still lists confidence, freshness, and sleep/rest totals on the
-`Now` hero. This contract follows the **stricter declutter** rule above. Update
-the redesign doc in a separate pass once surfacing decisions are confirmed.
 
 ## UI contract (HRV views — Signals + History, not Now)
 
@@ -458,7 +452,7 @@ Resolver: `AutonomicScopeResolver.resolve(...)`.
 | `usable` quality | **Included** in summary stats with `good`. |
 | 24h chart | **Sleep/rest vs wake shading** required. |
 | HRV on `Now` | **No** — `Signals` tab; model may use autonomic data without surfacing HRV on Now. |
-| HRV entry point | **`Signals` tab** (new fourth primary tab). |
+| HRV entry point | **`Signals` tab** (new primary evidence tab; Journal is no longer a primary tab). |
 | `Now` hero | Forecast + stability (if available) + PEM risk (if available) + last sync + recent sleep summary (~18h coarse). |
 | Check in | **Stays** on `Now` as its own section. |
 | Journal | **Stepped dialogue on `Now`**; **Journal tab retired** in same redesign pass (`docs/journal-v2-current-state-contract.md`). |
@@ -477,4 +471,4 @@ Resolver: `AutonomicScopeResolver.resolve(...)`.
 
 ---
 
-*Document status: agreed 2026-06-12 (Signals tab, hybrid 18h rest, journal dialogue on Now). Implementation cards still deferred.*
+*Document status: agreed 2026-06-12 (Signals tab, hybrid 18h rest, journal dialogue on Now). Implementation is progressing through the `#256` child-card pass.*

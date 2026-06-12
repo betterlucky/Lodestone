@@ -72,6 +72,12 @@ fun DataScreen(
             showHrvTrajectory = false
         }
     }
+    val openJournalForToday = {
+        if (actionsEnabled) {
+            viewModel.updateCheckInDate(nowState.today)
+            onOpenJournal()
+        }
+    }
     markerEditor?.let { kind ->
         MarkerTimeEditorSheet(
             kind = kind,
@@ -148,10 +154,10 @@ fun DataScreen(
                 ButtonRow {
                     if (nowState.journalFocus.shouldFocusJournal) {
                         OutlinedButton(
-                            onClick = { if (actionsEnabled) onOpenJournal() },
+                            onClick = openJournalForToday,
                             enabled = actionsEnabled
                         ) {
-                            Text("Open Journal")
+                            Text("Journal")
                         }
                     }
                     Button(
@@ -182,6 +188,14 @@ fun DataScreen(
                             enabled = actionsEnabled && nowState.primaryActions.waking.enabled
                         ) {
                             Text("Waking marker")
+                        }
+                    }
+                    if (!nowState.journalFocus.shouldFocusJournal) {
+                        OutlinedButton(
+                            onClick = openJournalForToday,
+                            enabled = actionsEnabled
+                        ) {
+                            Text("Journal")
                         }
                     }
                 }
