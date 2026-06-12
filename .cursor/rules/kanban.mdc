@@ -1,0 +1,12 @@
+---
+description: Kanban board tasks for HealthMonitor — use shared skills, not a local copy
+alwaysApply: true
+---
+
+# Kanban (HealthMonitor)
+
+Single source of truth: `~/.claude/skills/kanban` (`SKILL.md`, `shared.md`). Auth: `~/.claude/kanban-auth`. Project: `HealthMonitor` in `.codex/kanban.json`.
+
+Before work: fetch the card (and `parent_id` if set). Follow **Move Protocol** and **Closeout Review Gate** in `shared.md`.
+
+Do not create implementation child cards when the user assigned that to the supervising agent closing the parent.
