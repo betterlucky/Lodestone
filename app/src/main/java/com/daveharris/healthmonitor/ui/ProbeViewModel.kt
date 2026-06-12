@@ -505,9 +505,9 @@ class ProbeViewModel(
     fun prepareForPolarFlowUpdate() {
         val deviceId = selectedDeviceId ?: deviceProfile.value?.deviceId ?: return
         viewModelScope.launch {
-            runBusyAction("Releasing Loop connection for Polar Flow…") {
+            runBusyAction("Releasing Loop for Flow maintenance…") {
                 repository.disconnect(deviceId)
-                statusMessage = "Lodestone disconnected. Open Polar Flow, sync the Loop, close Flow, then return here and run sync."
+                statusMessage = "Lodestone disconnected. Use Flow only for maintenance, then close Flow and run Lodestone sync plus a data check."
             }
         }
     }

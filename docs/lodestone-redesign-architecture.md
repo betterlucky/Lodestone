@@ -31,7 +31,7 @@ Use this app shell:
 | `Now` | Capacity forecast, stability/payback context when available, confidence, freshness, estimated sleep total, and low-friction check-in. |
 | `Journal` | Evening outcome, approach to day, notes, food import, and weight for a selected date. |
 | `History` | Past days, paired prediction/outcome reporting, data completeness, stability, and per-day detail. |
-| `Settings` | Device, Flow handoff, daily-flow preferences, calibration imports, sync windows, and diagnostics. |
+| `Settings` | Device, controlled Flow maintenance, daily-flow preferences, calibration imports, sync windows, and diagnostics. |
 
 `Settings` should be opened from a gear or sheet, not be a primary daily tab.
 Device connection detail should move out of the main navigation. The `Now`
@@ -323,7 +323,7 @@ Settings should be grouped by purpose:
 | Group | Contents |
 | --- | --- |
 | Daily flow | Marker mode, sync-window preset, default behavior. |
-| Device | Selected Loop, scan/connect/disconnect, firmware, capabilities, Flow handoff. |
+| Device | Selected Loop, scan/connect/disconnect, firmware, capabilities, controlled Flow maintenance. |
 | Calibration and imports | H10/Sleep2 screenshot import, Health Connect permissions/export, FoodLogData folder if not kept in Journal. |
 | Diagnostics | Sleep-report retry, JSON export, capability refresh, rare repair/debug actions. |
 

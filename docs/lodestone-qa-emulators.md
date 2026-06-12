@@ -96,4 +96,6 @@ Artifacts are written to `build/qa-screenshots/<timestamp>/`:
 
 The script prefers uiautomator text/content-description taps for `Now`, `Journal`, `History`, and `Settings`, with screen-size coordinate fallbacks only when the hierarchy is unavailable.
 
-Check that the Settings capture exposes the Loop device card with Scan, Connect, Disconnect, selected device, connection, battery, firmware, and Flow handoff copy.
+Check that the Settings capture exposes the Loop device card with Scan, Connect,
+Disconnect, selected device, connection, battery, firmware, and controlled Flow
+maintenance copy.

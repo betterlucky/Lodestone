@@ -103,7 +103,7 @@ fun DeviceScreen(
                 DetailRow("Firmware", runtime.firmwareVersion ?: "Unknown")
                 if (runtime.connectedDevice == null || runtime.connectionPhase == "connecting") {
                     BannerNote(
-                        text = "Connection tip: Android does not let Lodestone disable Polar Flow's Bluetooth session automatically. If the Loop is missing or connection stalls, close Polar Flow or disable Flow's Bluetooth/device access, then try Connect again.",
+                        text = "Connection tip: Android does not let Lodestone disable Polar Flow's Bluetooth session automatically. Keep Flow closed during normal collection; if the Loop is missing or connection stalls, close Flow or disable Flow's Bluetooth/device access, then try Connect again.",
                         tint = MaterialTheme.colorScheme.secondaryContainer,
                         textColor = MaterialTheme.colorScheme.onSecondaryContainer
                     )
@@ -227,7 +227,7 @@ fun SettingsScreen(
         item {
             HeroCard(
                 title = "Settings & tools",
-                subtitle = "Configuration, Flow handoff, and repair controls that should not clutter the daily flow.",
+                subtitle = "Configuration, controlled maintenance, and repair controls that should not clutter the daily flow.",
                 eyebrow = "Settings",
                 actionLabel = "Done",
                 onAction = onClose
@@ -290,10 +290,10 @@ fun SettingsScreen(
                         onClick = viewModel::prepareForPolarFlowUpdate,
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null
                     ) {
-                        Text("Prepare for Flow")
+                        Text("Release to Flow")
                     }
                 }
-                SupportText("Flow remains useful for firmware and occasional sleep finalisation. Prepare disconnects Lodestone so Flow can take the Loop cleanly.")
+                SupportText("Use Flow only for controlled maintenance or recovery. It can affect what data remains available locally; after using it, run Lodestone sync and review data completeness before trusting affected days.")
             }
         }
         item {
@@ -328,7 +328,7 @@ fun SettingsScreen(
                         Text("Disconnect")
                     }
                 }
-                SupportText("If Polar Flow is holding the Loop connection, use Prepare for Flow or close Flow before connecting here.")
+                SupportText("If Polar Flow is holding the Loop connection, close Flow before connecting here. Use Release to Flow only for planned maintenance or recovery.")
             }
         }
         if (runtime.scannedDevices.isEmpty()) {
