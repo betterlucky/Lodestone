@@ -14,10 +14,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -62,16 +61,7 @@ fun DataScreen(
         journalFocusFixedTimeMinutes = viewModel.journalFocusFixedTimeMinutes
     )
     val todayStatus = nowState.readinessStatus
-    val activeMorningRead = nowState.activeMorningRead
-    var showHrvTrajectory by remember { mutableStateOf(false) }
     var markerEditor by remember { mutableStateOf<MarkerTimeEditorKind?>(null) }
-    var evidenceDetail by remember { mutableStateOf<NowEvidenceDetail?>(null) }
-    var showSleepWindowEvidence by remember { mutableStateOf(false) }
-    LaunchedEffect(activeMorningRead == null) {
-        if (activeMorningRead == null) {
-            showHrvTrajectory = false
-        }
-    }
     val openJournalForToday = {
         if (actionsEnabled) {
             viewModel.updateCheckInDate(nowState.today)
@@ -92,41 +82,6 @@ fun DataScreen(
             onDismiss = { markerEditor = null }
         )
     }
-    if (showHrvTrajectory && activeMorningRead != null) {
-        HrvTrajectoryDialog(
-            morningRead = activeMorningRead,
-            onDismiss = { showHrvTrajectory = false }
-        )
-    }
-    evidenceDetail?.let { detail ->
-        NowEvidenceDetailSheet(
-            detail = detail,
-            nowState = nowState,
-            onDismiss = { evidenceDetail = null },
-            onOpenHrvTrajectory = {
-                evidenceDetail = null
-                showHrvTrajectory = true
-            }
-        )
-    }
-    if (showSleepWindowEvidence) {
-        CandidateReviewSheet(
-            state = sleepEpisodeReviewState,
-            wakeMarkers = wakeMarkers,
-            activeAnalysisWindow = nowState.activeAnalysisWindow,
-            actionsEnabled = actionsEnabled && !viewModel.isBusy,
-            onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
-            onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
-            onMarkRest = viewModel::markSleepEpisodeAsRest,
-            onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
-            onClearDecision = viewModel::clearSleepEpisodeDecision,
-            onAddManualWindow = viewModel::addManualSleepWindow,
-            onEditWindow = viewModel::editSleepEpisodeWindow,
-            onEditMarker = viewModel::editWakeMarker,
-            onMarkNoMainSleep = viewModel::markNoMainSleep,
-            onDismiss = { showSleepWindowEvidence = false }
-        )
-    }
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -142,7 +97,7 @@ fun DataScreen(
         }
         item {
             SectionCard(title = "Check in", subtitle = "Sync current data") {
-                SupportText(todayStatus.message)
+                SupportText(dailyForecastCheckInMessage(nowState))
                 todayStatus.catchUpPrompt?.let { SupportText(it) }
                 if (shouldShowLoopAttention(nowState, runtime, viewModel.isBusy)) {
                     BannerNote(
@@ -203,18 +158,6 @@ fun DataScreen(
                     SupportText(nowState.journalFocus.detail)
                 }
             }
-        }
-        item {
-            MorningSignalSection(
-                nowState = nowState,
-                onOpenEvidence = { detail ->
-                    if (detail == NowEvidenceDetail.SLEEP_REST) {
-                        showSleepWindowEvidence = true
-                    } else {
-                        evidenceDetail = detail
-                    }
-                }
-            )
         }
     }
 }

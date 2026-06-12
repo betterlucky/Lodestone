@@ -11,6 +11,7 @@ import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.Button
@@ -45,6 +46,7 @@ import kotlinx.coroutines.launch
 
 private enum class ProbeTab(val title: String) {
     NOW("Now"),
+    SIGNALS("Signals"),
     HISTORY("History")
 }
 
@@ -147,6 +149,7 @@ fun ProbeApp(
                                     icon = {
                                         when (tab) {
                                             ProbeTab.NOW -> Icon(Icons.Outlined.FavoriteBorder, contentDescription = null)
+                                            ProbeTab.SIGNALS -> Icon(Icons.AutoMirrored.Outlined.ShowChart, contentDescription = null)
                                             ProbeTab.HISTORY -> Icon(Icons.Outlined.History, contentDescription = null)
                                         }
                                     },
@@ -204,6 +207,18 @@ fun ProbeApp(
                                             onOpenJournal = {
                                                 showJournalCapture = true
                                             },
+                                            onOpenSettings = { showSettings = true }
+                                        )
+                                        ProbeTab.SIGNALS -> SignalsScreen(
+                                            padding = padding,
+                                            runtime = runtime,
+                                            morningRead = morningRead,
+                                            syncRuns = syncRuns,
+                                            wakeMarkers = recentWakeMarkers,
+                                            dailyCheckIns = dailyCheckIns,
+                                            sleepEpisodeReviewState = sleepEpisodeReviewState,
+                                            viewModel = viewModel,
+                                            actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }
                                         )
                                         ProbeTab.HISTORY -> HistoryScreen(

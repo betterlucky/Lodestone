@@ -154,9 +154,47 @@ class NowScreenStateTest {
         assertTrue("Stability: Stable" in facts)
         assertTrue("Confidence: Well supported" in facts)
         assertTrue("Last sync: 2h ago" in facts)
-        assertTrue("Sleep/rest: 7h" in facts)
+        assertTrue("Recent rest: 7h (last 18h)" in facts)
         assertTrue(facts.size <= 5)
         assertFalse(facts.any { it.contains("Planning", ignoreCase = true) })
+    }
+
+    @Test
+    fun dailyForecastHeroCopyAvoidsSignalJargon() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = false,
+                isInterim = true,
+                source = "raw_ppi_calibrated_window_pending_sleep_report",
+                rawPpiGoodEpochCount = 36,
+                rawPpiCoverageHours = 4.5
+            )
+        )
+
+        assertNoNowJargon(dailyForecastHeroMessage(state))
+        dailyForecastHeroFacts(state).forEach(::assertNoNowJargon)
+    }
+
+    @Test
+    fun dailyForecastHeroCopyUsesCheckInOnlyCaveatWhenWearableDataMissing() {
+        val state = nowState(
+            morningRead = null,
+            dailyCheckIns = listOf(
+                checkIn(
+                    sourceDate = "2026-05-30",
+                    outcome = TrafficLightStatus.UNSTEADY,
+                    mostlyHorizontal = true
+                )
+            )
+        )
+
+        val message = dailyForecastHeroMessage(state)
+        val facts = dailyForecastHeroFacts(state)
+
+        assertTrue(message.contains("recent check-ins"))
+        assertTrue("Confidence: check-ins only" in facts)
+        assertNoNowJargon(message)
+        facts.forEach(::assertNoNowJargon)
     }
 
     @Test
@@ -194,7 +232,7 @@ class NowScreenStateTest {
         val facts = dailyForecastHeroFacts(state)
 
         assertTrue("Bluetooth off" in facts)
-        assertTrue("Mixed autonomic/function evidence" in facts)
+        assertTrue("Mixed evidence" in facts)
         assertTrue(facts.size <= 5)
     }
 
@@ -310,8 +348,64 @@ class NowScreenStateTest {
         assertEquals("confirmed sleep window", state.activeAnalysisWindow.label)
         assertEquals("23:15-06:45", state.activeAnalysisWindow.timeRangeLabel)
         assertEquals("7h 30m", state.activeAnalysisWindow.durationLabel)
+        assertEquals("7h 30m (last 18h)", state.recentRest.detail)
         assertTrue(state.activeAnalysisWindow.selectedByUser)
         assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
+    }
+
+    @Test
+    fun recentRestSummaryRoundsAfterSummingIntervals() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "raw_ppi_manual_window_primary_with_sleep_report",
+                rawPpiGoodEpochCount = 54,
+                rawPpiCoverageHours = 6.5
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(
+                    primarySleepEpisode(
+                        startEpochMs = epoch("2026-05-31T08:00:00"),
+                        endEpochMs = epoch("2026-05-31T08:00:50")
+                    ),
+                    confirmedRestEpisode(
+                        startEpochMs = epoch("2026-05-31T08:01:00"),
+                        endEpochMs = epoch("2026-05-31T08:01:50")
+                    )
+                ),
+                zoneId = zone
+            )
+        )
+
+        assertEquals("1m (last 18h)", state.recentRest.detail)
+    }
+
+    @Test
+    fun recentRestSummaryKeepsSubMinuteEvidencePresent() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "raw_ppi_manual_window_primary_with_sleep_report",
+                rawPpiGoodEpochCount = 54,
+                rawPpiCoverageHours = 6.5
+            ),
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(
+                    primarySleepEpisode(
+                        startEpochMs = epoch("2026-05-31T08:00:00"),
+                        endEpochMs = epoch("2026-05-31T08:00:30")
+                    )
+                ),
+                zoneId = zone
+            )
+        )
+
+        assertEquals(NowDataAvailability.PRESENT, state.recentRest.availability)
+        assertEquals("Under 1m (last 18h)", state.recentRest.detail)
     }
 
     @Test
@@ -782,9 +876,40 @@ class NowScreenStateTest {
             updatedAtEpochMs = 0L
         )
 
+    private fun confirmedRestEpisode(
+        startEpochMs: Long,
+        endEpochMs: Long
+    ): SleepEpisodeEntity =
+        SleepEpisodeEntity(
+            id = 3,
+            sourceDate = "2026-05-31",
+            startEpochMs = startEpochMs,
+            endEpochMs = endEpochMs,
+            episodeKind = SleepEpisodeKinds.REST_CANDIDATE,
+            source = SleepEpisodeSources.MANUAL,
+            confidence = SleepEpisodeConfidences.USER_CONFIRMED,
+            isPrimaryForReadiness = false,
+            deviceId = null,
+            linkedSleepRawId = null,
+            evidenceJson = null,
+            notes = "Confirmed rest",
+            createdAtEpochMs = 0L,
+            updatedAtEpochMs = 0L
+        )
+
     private fun epoch(localDateTime: String): Long =
         LocalDateTime.parse(localDateTime)
             .atZone(zone)
             .toInstant()
             .toEpochMilli()
+
+    private fun assertNoNowJargon(text: String) {
+        val jargon = listOf("PPI", "HRV", "RMSSD", "autonomic")
+        jargon.forEach { term ->
+            assertFalse(
+                text.contains(term, ignoreCase = true),
+                "Unexpected Now hero jargon '$term' in: $text"
+            )
+        }
+    }
 }
