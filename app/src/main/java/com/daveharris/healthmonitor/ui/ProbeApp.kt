@@ -214,13 +214,16 @@ fun ProbeApp(
                                             padding = padding,
                                             morningRead = morningRead,
                                             dailyCheckIns = dailyCheckIns,
-                                            foodDailySummaries = foodDailySummaries,
-                                            dailyWeights = dailyWeights,
                                             gripSessions = gripSessions,
                                             viewModel = viewModel,
                                             onImportFoodCsv = onImportFoodCsv,
                                             onImportGripCsv = onImportGripCsv,
                                             actionsEnabled = !blockPostSwipeTaps,
+                                            onOpenHistory = {
+                                                pagerScope.launch {
+                                                    pagerState.animateScrollToPage(ProbeTab.HISTORY.ordinal)
+                                                }
+                                            },
                                             onOpenSettings = { showSettings = true }
                                         )
                                         ProbeTab.HISTORY -> HistoryScreen(

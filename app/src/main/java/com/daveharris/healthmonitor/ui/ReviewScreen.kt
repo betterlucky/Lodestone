@@ -9,8 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -22,8 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.DailyWeightEntity
-import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 
@@ -32,21 +30,14 @@ fun JournalScreen(
     padding: PaddingValues,
     morningRead: MorningReadSnapshot?,
     dailyCheckIns: List<DailyCheckInEntity>,
-    foodDailySummaries: List<FoodDailySummaryEntity>,
-    dailyWeights: List<DailyWeightEntity>,
     gripSessions: List<GripSessionEntity>,
     viewModel: ProbeViewModel,
     onImportFoodCsv: () -> Unit,
     onImportGripCsv: () -> Unit,
     actionsEnabled: Boolean,
+    onOpenHistory: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    val foodSummariesByDate = remember(foodDailySummaries) {
-        foodDailySummaries.associateBy { it.sourceDate }
-    }
-    val weightsByDate = remember(dailyWeights) {
-        dailyWeights.associateBy { it.sourceDate }
-    }
     val gripSessionsByDate = remember(gripSessions) {
         gripSessions.groupBy { it.sourceDate }
     }
@@ -62,7 +53,7 @@ fun JournalScreen(
         item {
             HeroCard(
                 title = "Journal",
-                subtitle = "A low-friction evening check-in with the current signal nearby only as context.",
+                subtitle = "Record how today or a selected day ended. One tap to save; everything else is optional.",
                 eyebrow = "Journal",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
@@ -195,22 +186,33 @@ fun JournalScreen(
                 isBusy = viewModel.isBusy
             )
         }
-        item { SectionLabel("Recent journal entries") }
-        items(
-            items = dailyCheckIns,
-            key = { item -> "check-in-${item.sourceDate}-${item.updatedAtEpochMs}" }
-        ) { checkIn ->
-            val foodSummary = foodSummariesByDate[checkIn.sourceDate]
-            val weight = weightsByDate[checkIn.sourceDate]
-            ReviewHistoryItem(
-                checkIn = checkIn,
-                foodSummary = foodSummary,
-                weight = weight,
-                onTap = { viewModel.loadDailyCheckIn(checkIn.sourceDate) }
-            )
+        item {
+            SectionCard(title = "Prior days", subtitle = "Browse and edit on History") {
+                SupportText(journalPriorDaysHint(dailyCheckIns.size))
+                ButtonRow {
+                    TextButton(onClick = onOpenHistory) {
+                        Text("Open History")
+                    }
+                }
+            }
         }
     }
 }
+
+fun journalPriorDaysHint(savedEntryCount: Int): String =
+    if (savedEntryCount > 0) {
+        val label = if (savedEntryCount == 1) "entry" else "entries"
+        "You have $savedEntryCount saved $label. History shows paired reports and opens the journal editor for any day."
+    } else {
+        "After you save, prior days appear on History for browsing and editing."
+    }
+
+fun journalBackfillStatusMessage(date: String, hasSavedReview: Boolean): String =
+    if (hasSavedReview) {
+        "Loaded saved check-in for $date."
+    } else {
+        "No saved check-in for $date. Current draft left unchanged."
+    }
 
 @Composable
 private fun JournalContextCard(
