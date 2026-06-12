@@ -11,6 +11,17 @@ from pathlib import Path
 from typing import Any
 
 ACTIVITY_SAMPLE_SYNC_ENABLED = True
+CLOUD_BACKFILL_PREFIX = "cloud_backfill:"
+
+RAW_LANE_TABLES = {
+    "SLEEP": "sleep_night_raw",
+    "NIGHTLY_RECHARGE": "nightly_recharge_raw",
+    "PPI_247": "ppi247_day_raw",
+    "HR_247": "hr247_day_raw",
+    "SKIN_TEMPERATURE": "skin_temperature_raw",
+    "DAILY_SUMMARY": "daily_summary_raw",
+    "ACTIVITY_SAMPLES": "activity_samples_raw",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,6 +72,65 @@ def count_rows(conn: sqlite3.Connection, table: str, source_date: str) -> int:
     return int(one(conn, f"select count(*) as n from {table} where sourceDate = ?", (source_date,))["n"])
 
 
+def provenance_origin(requested_range: str | None) -> str:
+    if not requested_range:
+        return "unknown"
+    if requested_range.lower().startswith(CLOUD_BACKFILL_PREFIX):
+        return "cloud_backfill"
+    return "local_loop"
+
+
+def raw_table_provenance(conn: sqlite3.Connection, table: str, source_date: str) -> dict[str, Any]:
+    rows = conn.execute(
+        f"""
+        select requestedRange, count(*) as records
+        from {table}
+        where sourceDate = ?
+        group by requestedRange
+        order by requestedRange
+        """,
+        (source_date,),
+    ).fetchall()
+    by_origin: Counter[str] = Counter()
+    ranges: list[dict[str, Any]] = []
+    for row in rows:
+        requested_range = row["requestedRange"]
+        origin = provenance_origin(requested_range)
+        records = int(row["records"] or 0)
+        by_origin[origin] += records
+        ranges.append(
+            {
+                "requested_range": requested_range,
+                "origin": origin,
+                "records": records,
+            }
+        )
+    return {
+        "records": sum(by_origin.values()),
+        "by_origin": dict(by_origin),
+        "ranges": ranges,
+        "has_cloud_backfill": by_origin.get("cloud_backfill", 0) > 0,
+        "has_local_loop": by_origin.get("local_loop", 0) > 0,
+    }
+
+
+def provenance_text(provenance: dict[str, Any]) -> str:
+    by_origin = provenance.get("by_origin") or {}
+    if not by_origin:
+        return "none"
+    labels = {
+        "local_loop": "local Loop",
+        "cloud_backfill": "cloud/API backfill",
+        "unknown": "unknown",
+    }
+    parts = []
+    for origin in ("local_loop", "cloud_backfill", "unknown"):
+        count = by_origin.get(origin)
+        if count:
+            parts.append(f"{labels.get(origin, origin)}={count}")
+    return ", ".join(parts) if parts else "none"
+
+
 def sleep_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
     row = one(conn, "select * from sleep_night_raw where sourceDate = ? order by syncTimestampEpochMs desc limit 1", (source_date,))
     payload = fetch_json(row)
@@ -72,6 +142,7 @@ def sleep_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
         "window": f"{result.get('sleepStartTime')} -> {result.get('sleepEndTime')}" if result.get("sleepStartTime") else None,
         "duration_minutes": summary.get("durationMinutes"),
         "cycles": summary.get("cycleCount"),
+        "provenance": raw_table_provenance(conn, "sleep_night_raw", source_date),
     }
 
 
@@ -86,6 +157,7 @@ def nightly_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any
         "rri": summary.get("meanNightlyRecoveryRRI"),
         "ans": payload.get("ansStatus") if payload.get("ansStatus") is not None else summary.get("ansCharge"),
         "baseline_ready": summary.get("baselineReady"),
+        "provenance": raw_table_provenance(conn, "nightly_recharge_raw", source_date),
     }
 
 
@@ -127,6 +199,7 @@ def ppi_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
         "poor_epochs": epochs["poor"] if epochs else 0,
         "avg_epoch_rmssd": round(epochs["avg_rmssd"], 1) if epochs and epochs["avg_rmssd"] is not None else None,
         "avg_epoch_hr": round(epochs["avg_hr"], 1) if epochs and epochs["avg_hr"] is not None else None,
+        "provenance": raw_table_provenance(conn, "ppi247_day_raw", source_date),
     }
 
 
@@ -148,6 +221,7 @@ def hr_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
         "epochs": epoch_count,
         "avg_epoch_hr": round(epochs["avg_hr"], 1) if epochs and epochs["avg_hr"] is not None else None,
         "range": f"{epochs['min_hr']}..{epochs['max_hr']}" if epochs and epochs["min_hr"] is not None and epochs["max_hr"] is not None else None,
+        "provenance": raw_table_provenance(conn, "hr247_day_raw", source_date),
     }
 
 
@@ -165,12 +239,17 @@ def skin_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
         "samples": samples,
         "avg": round(row["avg_t"], 2) if row and row["avg_t"] is not None else None,
         "range": round(row["max_t"] - row["min_t"], 2) if row and row["max_t"] is not None and row["min_t"] is not None else None,
+        "provenance": raw_table_provenance(conn, "skin_temperature_raw", source_date),
     }
 
 
 def daily_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
     records = count_rows(conn, "daily_summary_raw", source_date)
-    return {"present": records > 0, "records": records}
+    return {
+        "present": records > 0,
+        "records": records,
+        "provenance": raw_table_provenance(conn, "daily_summary_raw", source_date),
+    }
 
 
 def activity_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, Any]:
@@ -187,6 +266,7 @@ def activity_summary(conn: sqlite3.Connection, source_date: str) -> dict[str, An
         "epochs": epoch_count,
         "steps": epochs["steps"] if epochs else None,
         "avg_met": round(epochs["avg_met"], 2) if epochs and epochs["avg_met"] is not None else None,
+        "provenance": raw_table_provenance(conn, "activity_samples_raw", source_date),
     }
 
 
@@ -461,6 +541,7 @@ def build_reports(health_db: str, source_dates: list[str], garmin_db: str | None
 
 def range_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
     missing_by_lane: dict[str, list[str]] = {lane: [] for lane in ("HR_247", "SKIN_TEMPERATURE", "DAILY_SUMMARY", "ACTIVITY_SAMPLES")}
+    cloud_backfilled_by_lane: dict[str, list[str]] = {lane: [] for lane in RAW_LANE_TABLES}
     interpretations: Counter[str] = Counter()
     for report in reports:
         polar = report["polar"]
@@ -474,9 +555,22 @@ def range_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
             if not is_present:
                 missing_by_lane[lane].append(report["source_date"])
                 interpretations[f"{lane}: {report['supporting_lane_interpretation'][lane]}"] += 1
+        provenance_by_lane = {
+            "SLEEP": polar["sleep"]["provenance"],
+            "NIGHTLY_RECHARGE": polar["nightly_recharge"]["provenance"],
+            "PPI_247": polar["ppi247"]["provenance"],
+            "HR_247": polar["hr247"]["provenance"],
+            "SKIN_TEMPERATURE": polar["skin_temperature"]["provenance"],
+            "DAILY_SUMMARY": polar["daily_summary"]["provenance"],
+            "ACTIVITY_SAMPLES": polar["activity_samples"]["provenance"],
+        }
+        for lane, provenance in provenance_by_lane.items():
+            if provenance.get("has_cloud_backfill"):
+                cloud_backfilled_by_lane[lane].append(report["source_date"])
     return {
         "date_count": len(reports),
         "missing_by_lane": missing_by_lane,
+        "cloud_backfilled_by_lane": cloud_backfilled_by_lane,
         "interpretation_counts": dict(interpretations),
     }
 
@@ -493,13 +587,13 @@ def print_text(report: dict[str, Any]) -> None:
     activity = polar["activity_samples"]
     journal = report["journal"]
     garmin = report["garmin"]
-    print(f"  Polar sleep: {'yes' if sleep['present'] else 'no'} records={sleep['records']} {sleep.get('window') or ''}".rstrip())
-    print(f"  Nightly Recharge: {'yes' if nightly['present'] else 'no'} records={nightly['records']} RMSSD={nightly.get('rmssd')} RRI={nightly.get('rri')} ANS={nightly.get('ans')}")
-    print(f"  PPI_247: {'yes' if ppi['present'] else 'no'} rawBatches={ppi['raw_batches']} rawSamples={ppi['raw_samples']} epochs={ppi['epochs']} good/review/poor={ppi['good_epochs']}/{ppi['review_epochs']}/{ppi['poor_epochs']} avgRMSSD={ppi['avg_epoch_rmssd']}")
-    print(f"  HR_247: {'yes' if hr['present'] else 'no'} rawRecords={hr['raw_records']} epochs={hr['epochs']} avgHR={hr['avg_epoch_hr']}")
-    print(f"  Skin temperature: {'yes' if skin['present'] else 'no'} rawRecords={skin['raw_records']} samples={skin['samples']} avg={skin['avg']}")
-    print(f"  Daily summary: {'yes' if daily['present'] else 'no'} records={daily['records']}")
-    print(f"  Activity samples: {'yes' if activity['present'] else 'no'} rawRecords={activity['raw_records']} epochs={activity['epochs']} steps={activity['steps']}")
+    print(f"  Polar sleep: {'yes' if sleep['present'] else 'no'} records={sleep['records']} provenance={provenance_text(sleep['provenance'])} {sleep.get('window') or ''}".rstrip())
+    print(f"  Nightly Recharge: {'yes' if nightly['present'] else 'no'} records={nightly['records']} provenance={provenance_text(nightly['provenance'])} RMSSD={nightly.get('rmssd')} RRI={nightly.get('rri')} ANS={nightly.get('ans')}")
+    print(f"  PPI_247: {'yes' if ppi['present'] else 'no'} rawBatches={ppi['raw_batches']} rawSamples={ppi['raw_samples']} provenance={provenance_text(ppi['provenance'])} epochs={ppi['epochs']} good/review/poor={ppi['good_epochs']}/{ppi['review_epochs']}/{ppi['poor_epochs']} avgRMSSD={ppi['avg_epoch_rmssd']}")
+    print(f"  HR_247: {'yes' if hr['present'] else 'no'} rawRecords={hr['raw_records']} provenance={provenance_text(hr['provenance'])} epochs={hr['epochs']} avgHR={hr['avg_epoch_hr']}")
+    print(f"  Skin temperature: {'yes' if skin['present'] else 'no'} rawRecords={skin['raw_records']} provenance={provenance_text(skin['provenance'])} samples={skin['samples']} avg={skin['avg']}")
+    print(f"  Daily summary: {'yes' if daily['present'] else 'no'} records={daily['records']} provenance={provenance_text(daily['provenance'])}")
+    print(f"  Activity samples: {'yes' if activity['present'] else 'no'} rawRecords={activity['raw_records']} provenance={provenance_text(activity['provenance'])} epochs={activity['epochs']} steps={activity['steps']}")
     print(f"  Journal: food={'yes' if journal['food_present'] else 'no'} calories={journal['calories']} review={'yes' if journal['review_present'] else 'no'} wakeMarker={'yes' if journal['wake_marker_present'] else 'no'}")
     if garmin.get("configured"):
         present = [key for key in ("hrv", "sleep", "stress", "body_battery", "heart_rate", "respiration", "spo2") if garmin.get(key)]
@@ -528,6 +622,9 @@ def print_range_text(reports: list[dict[str, Any]]) -> None:
         print(f"  dates: {summary['date_count']}")
         for lane, dates in summary["missing_by_lane"].items():
             print(f"  {lane} missing: {', '.join(dates) if dates else 'none'}")
+        print("  cloud/API backfilled lanes:")
+        for lane, dates in summary["cloud_backfilled_by_lane"].items():
+            print(f"    {lane}: {', '.join(dates) if dates else 'none'}")
         print("  interpretation counts:")
         for message, count in sorted(summary["interpretation_counts"].items()):
             print(f"    {count}x {message}")

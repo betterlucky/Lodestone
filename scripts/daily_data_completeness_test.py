@@ -163,6 +163,23 @@ class DailyDataCompletenessTest(unittest.TestCase):
             (sync_run_id, domain, requested_range, status, records, error),
         )
 
+    def add_raw_record(
+        self,
+        table: str,
+        source_date: str,
+        requested_range: str,
+        payload: dict | None = None,
+    ) -> None:
+        self.conn.execute(
+            f"""
+            insert into {table} (
+                deviceId, sourceDate, requestedRange, syncTimestampEpochMs,
+                keySummary, rawPayloadJson, parserVersion, parseStatus
+            ) values ('loop', ?, ?, 1, 'fixture', ?, 3, 'PARSED')
+            """,
+            (source_date, requested_range, json.dumps(payload or {"date": source_date})),
+        )
+
     def test_core_profile_reports_missing_primary_lanes_and_hr_raw_pruning(self) -> None:
         sync_run_id = self.add_sync_run("morning core sync completed")
         for domain in ("SLEEP", "NIGHTLY_RECHARGE", "PPI_247"):
@@ -217,6 +234,42 @@ class DailyDataCompletenessTest(unittest.TestCase):
         self.assertIn("Range summary", output)
         self.assertIn("PPI failure/timeout", output)
         self.assertIn("ACTIVITY_SAMPLES missing: 2026-05-18, 2026-05-19", output)
+
+    def test_cloud_backfill_provenance_is_reported(self) -> None:
+        self.add_raw_record("ppi247_day_raw", "2026-05-18", "2026-05-18..2026-05-18")
+        self.add_raw_record("ppi247_day_raw", "2026-05-18", "cloud_backfill:ppi")
+        self.add_raw_record("sleep_night_raw", "2026-05-18", "Cloud_Backfill:sleep")
+        self.conn.commit()
+
+        report = completeness.build_report_for_connection(self.conn, "2026-05-18", None)
+
+        ppi_provenance = report["polar"]["ppi247"]["provenance"]
+        self.assertTrue(ppi_provenance["has_local_loop"])
+        self.assertTrue(ppi_provenance["has_cloud_backfill"])
+        self.assertEqual(ppi_provenance["by_origin"]["local_loop"], 1)
+        self.assertEqual(ppi_provenance["by_origin"]["cloud_backfill"], 1)
+        self.assertTrue(report["polar"]["sleep"]["provenance"]["has_cloud_backfill"])
+
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            completeness.print_range_text([report])
+        output = buffer.getvalue()
+        self.assertIn("provenance=local Loop=1, cloud/API backfill=1", output)
+        self.assertIn("provenance=cloud/API backfill=1", output)
+
+    def test_range_summary_lists_cloud_backfilled_lanes(self) -> None:
+        self.add_raw_record("activity_samples_raw", "2026-05-18", "cloud_backfill:activity")
+        self.add_raw_record("daily_summary_raw", "2026-05-19", "2026-05-19..2026-05-19")
+        self.conn.commit()
+
+        reports = [
+            completeness.build_report_for_connection(self.conn, "2026-05-18", None),
+            completeness.build_report_for_connection(self.conn, "2026-05-19", None),
+        ]
+        summary = completeness.range_summary(reports)
+
+        self.assertEqual(summary["cloud_backfilled_by_lane"]["ACTIVITY_SAMPLES"], ["2026-05-18"])
+        self.assertEqual(summary["cloud_backfilled_by_lane"]["DAILY_SUMMARY"], [])
 
 
 if __name__ == "__main__":

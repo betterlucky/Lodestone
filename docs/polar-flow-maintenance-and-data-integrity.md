@@ -27,6 +27,9 @@ Operational implications:
 - Avoid Flow during normal collection.
 - If Flow is used, record the date/time and run a data completeness audit.
 - Mark cloud/API backfill as provenance, not as indistinguishable local capture.
+- Keep `cloud_backfill:` raw rows as durable provenance when maintenance
+  rebuilds raw lanes into derived tables; normal raw-retention pruning should
+  not delete them.
 - Treat any readiness/model output created during the disruption window as
   suspect until regenerated from the repaired dataset.
 
@@ -61,12 +64,59 @@ checking. The app may offer a controlled release/disconnect action, but it
 should warn that Flow can affect what data remains available locally and that
 an audit may be needed afterward.
 
+Firmware copy should name the source of the value. In-app firmware values are
+local observations, such as runtime BLE metadata or a saved selected-device
+setting. Flow-visible firmware and public support-page firmware are separate
+manual/source-tagged observations.
+
+## Incident And Provenance Reports
+
+Use the daily completeness report when checking a date or range:
+
+```bash
+python3 scripts/daily_data_completeness.py \
+  --health-db /path/to/health-monitor-probe.db \
+  --start-date 2026-06-01 \
+  --end-date 2026-06-12
+```
+
+The report labels raw lane provenance from `requestedRange`. A value beginning
+`cloud_backfill:` is reported as cloud/API backfill; ordinary sync ranges are
+reported as local Loop capture.
+
+Treat `cloud_backfill:` as a small cross-tool contract. If the backfill writer
+changes that prefix, update the Kotlin raw-retention protection and the Python
+report classifier together.
+
+Implementation note: the app's rebuild/prune maintenance preserves
+`cloud_backfill:` rows for raw PPI, HR, skin-temperature, and activity lanes.
+If a later successful local Loop sync replaces a date's raw lane before rebuild,
+that can supersede the cloud copy; use the incident report to distinguish what
+remains in the database.
+
+For Flow-specific reconstruction, use:
+
+```bash
+python3 scripts/flow_incident_provenance_report.py \
+  --health-db /path/to/health-monitor-probe.db \
+  --start-date 2026-06-01 \
+  --end-date 2026-06-12 \
+  --flow-visible-firmware 5.0.55 \
+  --flow-observed-date 2026-06-12 \
+  --public-firmware-version 6.0.57 \
+  --public-firmware-release-date 2026-05-13 \
+  --public-checked-date 2026-06-12
+```
+
+This script is read-only and does not print raw payloads. It summarises each
+date/lane as local Loop, cloud/API backfill, mixed, or unknown, then lists
+firmware observations with source labels.
+
 ## Follow-Up Work
 
 Create hardening tasks for:
 
-- data-quality provenance for cloud/API backfilled lanes
-- an incident/audit report around Flow-use windows
-- Settings copy and controls that discourage casual Flow use
-- firmware-source reporting that distinguishes runtime firmware, saved firmware,
-  Flow-visible firmware, and public support-page firmware where available
+- surface provenance in more user-facing History/Signals views if this proves
+  necessary during testing
+- decide whether Flow maintenance events should become first-class manual
+  markers rather than doc/report context

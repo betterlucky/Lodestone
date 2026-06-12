@@ -362,6 +362,23 @@ interface ProbeDao {
     @Query("DELETE FROM hr247_day_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
     suspend fun deleteHrRecordsForDates(deviceId: String?, sourceDates: List<String>)
 
+    @Query(
+        """
+        DELETE FROM hr247_day_raw
+        WHERE (:deviceId IS NULL OR deviceId = :deviceId)
+          AND sourceDate IN (:sourceDates)
+          AND (
+              requestedRange IS NULL
+              OR lower(requestedRange) NOT LIKE lower(:retainedRequestedRangePrefix || '%')
+          )
+        """
+    )
+    suspend fun deleteHrRecordsForDatesExceptRequestedRangePrefix(
+        deviceId: String?,
+        sourceDates: List<String>,
+        retainedRequestedRangePrefix: String
+    ): Int
+
     @Query("DELETE FROM hr247_epoch WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
     suspend fun deleteHr247EpochsForDates(deviceId: String?, sourceDates: List<String>)
 
@@ -374,6 +391,10 @@ interface ProbeDao {
         FROM ppi247_day_raw raw
         WHERE raw.deviceId = :deviceId
           AND raw.sourceDate < :cutoffDate
+          AND (
+              raw.requestedRange IS NULL
+              OR lower(raw.requestedRange) NOT LIKE lower(:retainedRequestedRangePrefix || '%')
+          )
           AND EXISTS (
               SELECT 1
               FROM ppi247_epoch epoch
@@ -383,10 +404,28 @@ interface ProbeDao {
         ORDER BY raw.sourceDate ASC
         """
     )
-    suspend fun getPrunablePpiRawSourceDatesBefore(deviceId: String, cutoffDate: String): List<String>
+    suspend fun getPrunablePpiRawSourceDatesBefore(
+        deviceId: String,
+        cutoffDate: String,
+        retainedRequestedRangePrefix: String
+    ): List<String>
 
-    @Query("DELETE FROM ppi247_day_raw WHERE deviceId = :deviceId AND sourceDate IN (:sourceDates)")
-    suspend fun deletePpiRawRecordsForDates(deviceId: String, sourceDates: List<String>): Int
+    @Query(
+        """
+        DELETE FROM ppi247_day_raw
+        WHERE deviceId = :deviceId
+          AND sourceDate IN (:sourceDates)
+          AND (
+              requestedRange IS NULL
+              OR lower(requestedRange) NOT LIKE lower(:retainedRequestedRangePrefix || '%')
+          )
+        """
+    )
+    suspend fun deletePpiRawRecordsForDates(
+        deviceId: String,
+        sourceDates: List<String>,
+        retainedRequestedRangePrefix: String
+    ): Int
 
     @Query("DELETE FROM ppi247_epoch WHERE sourceDate IN (:sourceDates)")
     suspend fun deletePpi247EpochsForDates(sourceDates: List<String>)
@@ -396,6 +435,23 @@ interface ProbeDao {
 
     @Query("DELETE FROM skin_temperature_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
     suspend fun deleteSkinTemperatureRecordsForDates(deviceId: String?, sourceDates: List<String>)
+
+    @Query(
+        """
+        DELETE FROM skin_temperature_raw
+        WHERE (:deviceId IS NULL OR deviceId = :deviceId)
+          AND sourceDate IN (:sourceDates)
+          AND (
+              requestedRange IS NULL
+              OR lower(requestedRange) NOT LIKE lower(:retainedRequestedRangePrefix || '%')
+          )
+        """
+    )
+    suspend fun deleteSkinTemperatureRecordsForDatesExceptRequestedRangePrefix(
+        deviceId: String?,
+        sourceDates: List<String>,
+        retainedRequestedRangePrefix: String
+    ): Int
 
     @Query("DELETE FROM skin_temperature_sample WHERE sourceDate IN (:sourceDates)")
     suspend fun deleteSkinTemperatureSamplesForDates(sourceDates: List<String>)
@@ -408,6 +464,23 @@ interface ProbeDao {
 
     @Query("DELETE FROM activity_samples_raw WHERE (:deviceId IS NULL OR deviceId = :deviceId) AND sourceDate IN (:sourceDates)")
     suspend fun deleteActivitySampleRecordsForDates(deviceId: String?, sourceDates: List<String>)
+
+    @Query(
+        """
+        DELETE FROM activity_samples_raw
+        WHERE (:deviceId IS NULL OR deviceId = :deviceId)
+          AND sourceDate IN (:sourceDates)
+          AND (
+              requestedRange IS NULL
+              OR lower(requestedRange) NOT LIKE lower(:retainedRequestedRangePrefix || '%')
+          )
+        """
+    )
+    suspend fun deleteActivitySampleRecordsForDatesExceptRequestedRangePrefix(
+        deviceId: String?,
+        sourceDates: List<String>,
+        retainedRequestedRangePrefix: String
+    ): Int
 
     @Query("DELETE FROM activity_epoch WHERE sourceDate IN (:sourceDates)")
     suspend fun deleteActivityEpochsForDates(sourceDates: List<String>)
