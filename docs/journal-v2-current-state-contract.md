@@ -20,9 +20,52 @@ motivation, brain fog, fatigue, and post-hyperfocus drop-off.
 The app should not depend on thoughtful daily journalling. A one-tap entry must
 remain valid and useful.
 
-## Journal V2
+## Placement And Shell (agreed 2026-06-12)
 
-The core Journal entry remains the evening outcome:
+Journal capture moves to **`Now`**. The separate **Journal tab is retired** as
+part of the current mid-redesign — no parallel-tab transition.
+
+Other surfaces:
+
+- **`Signals`** — body/autonomic detail, sleep/rest repair (not journal).
+- **`History`** — past days, paired forecast/outcome, edit journal for a date.
+
+See `docs/hrv-autonomic-detail-scopes-contract.md` for Now / Signals navigation.
+
+## Journal V2 — Stepped Dialogue
+
+Replace the current Journal screen with a **one-question-at-a-time dialogue**
+(modal or full-screen flow launched from `Now`).
+
+### Flow rules
+
+| Step | Rule |
+| --- | --- |
+| **First screen** | Evening outcome only — “How did the day go?” (`GOOD` / `OK` / `UNSTEADY` / `CRASH`). **Required.** Cannot skip. Saving here is a valid complete entry. |
+| **After first answer** | Show **Done** — save and exit immediately with outcome only. |
+| **Later questions** | Each optional step may be **skipped** individually. Order should feel natural, not like a form wall. |
+| **Early exit** | `Done` after any answered step saves whatever has been captured; unanswered optional fields stay **unknown**, not false. |
+
+### Question order (initial proposal)
+
+1. Evening outcome (required).
+2. Day shape chips (`Today included` — see below).
+3. Work subtype (only if `Work / major task` selected).
+4. `PEM / payback today` (if not already captured via chips).
+5. Notes, food, weight — only if the user continues; each skippable.
+
+Tune order during implementation; the invariant is **one primary question per
+screen** and **lowest burden path = one tap on outcome then Done**.
+
+### UX tone
+
+- No scrolling checklist on a single page.
+- No guilt copy for skipping.
+- After the first answer, make **Done** obvious — optional depth is opt-in.
+
+## Journal V2 — Outcome Labels
+
+The core evening outcome remains:
 
 - `GOOD`
 - `OK`
@@ -33,10 +76,10 @@ The core Journal entry remains the evening outcome:
 catch-all for any meaningful PEM. This avoids forcing the user to overuse a
 label that feels too severe.
 
-The minimum valid entry is:
+The minimum valid entry is still:
 
 1. Pick an outcome.
-2. Save.
+2. Save (via **Done** on the first screen).
 
 Everything else is optional.
 
