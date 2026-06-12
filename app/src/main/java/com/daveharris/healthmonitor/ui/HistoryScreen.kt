@@ -37,22 +37,19 @@ import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.MorningReadSource
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.TrafficLightStatus
-import com.daveharris.healthmonitor.data.WakeMarkerEntity
 
 @Composable
 fun HistoryScreen(
     padding: PaddingValues,
-    morningRead: MorningReadSnapshot?,
     morningPredictionSnapshots: List<MorningPredictionSnapshotEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
     foodDailySummaries: List<FoodDailySummaryEntity>,
     dailyWeights: List<DailyWeightEntity>,
     gripSessions: List<GripSessionEntity>,
-    wakeMarkers: List<WakeMarkerEntity>,
     sleepEpisodeReviewState: SleepEpisodeReviewState,
     viewModel: ProbeViewModel,
+    onOpenJournal: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val reports = remember(morningPredictionSnapshots, dailyCheckIns, foodDailySummaries, dailyWeights, gripSessions) {
@@ -63,6 +60,12 @@ fun HistoryScreen(
             weights = dailyWeights,
             gripSessions = gripSessions
         )
+    }
+    val coverage = remember(reports, sleepEpisodeReviewState.attentionDateCount) {
+        buildHistoryCoverageSummary(reports, sleepEpisodeReviewState.attentionDateCount)
+    }
+    val sleepRepairByDate = remember(sleepEpisodeReviewState) {
+        sleepEpisodeReviewState.dateGroups.associate { it.sourceDate to it.repairStatusLabel }
     }
     var selectedReportDate by rememberSaveable { mutableStateOf<String?>(null) }
     LazyColumn(
@@ -75,23 +78,30 @@ fun HistoryScreen(
         item {
             HeroCard(
                 title = "History",
-                subtitle = "Morning-signal/outcome pairs, evidence coverage, and repair state without pulling a database.",
+                subtitle = "Browse past days, compare morning signal with how the day ended, and edit saved journal entries.",
                 eyebrow = "History",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
             )
         }
-        item {
-            SectionCard(title = "Reporting snapshot", subtitle = "Descriptive, not proof of model accuracy") {
-                DetailRow("Latest read date", morningRead?.sourceDate ?: "None yet")
-                DetailRow("Latest morning signal", morningRead?.status?.name?.replaceFirstChar { it.titlecase() } ?: "TBC")
-                DetailRow("Morning snapshots", morningPredictionSnapshots.size.toString())
-                DetailRow("Saved journal entries", dailyCheckIns.size.toString())
-                DetailRow("Needs evidence attention", sleepEpisodeReviewState.attentionDateCount.toString())
-                SupportText("These rows show what Lodestone recorded and how complete each day looks. They do not claim a calibrated load budget.")
+        if (reports.isNotEmpty()) {
+            item {
+                SectionCard(title = "Past days at a glance", subtitle = "Coverage across saved reports") {
+                    DetailRow("Day reports", coverage.dayReportCount.toString())
+                    DetailRow("With journal outcome", coverage.withJournalCount.toString())
+                    DetailRow("With morning signal", coverage.withMorningSignalCount.toString())
+                    if (coverage.attentionDateCount > 0) {
+                        DetailRow("Sleep-window review backlog", coverage.attentionDateCount.toString())
+                        SupportText(
+                            "These past days still have unconfirmed sleep/rest windows. " +
+                                "Open a day below or use Now to repair the active read."
+                        )
+                    }
+                    SupportText("Each day report pairs forecast and outcome where both exist. Open a day to see detail or edit its journal.")
+                }
             }
         }
-        item { SectionLabel("Day reports") }
+        item { SectionLabel("Past days") }
         if (reports.isEmpty()) {
             item {
                 BannerNote(
@@ -109,67 +119,42 @@ fun HistoryScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     HistoryDayReportCard(
                         report = report,
+                        sleepWindowStatus = sleepRepairByDate[report.sourceDate],
                         selected = selected,
                         onOpenDetail = { selectedReportDate = report.sourceDate },
-                        onOpenJournal = { viewModel.loadDailyCheckIn(report.sourceDate) }
+                        onOpenJournal = {
+                            openJournalForDate(viewModel, report.sourceDate, onOpenJournal)
+                        }
                     )
                     if (selected) {
                         HistoryDayDetailCard(
                             report = report,
-                            onOpenJournal = { viewModel.loadDailyCheckIn(report.sourceDate) },
+                            sleepWindowStatus = sleepRepairByDate[report.sourceDate],
+                            onOpenJournal = {
+                                openJournalForDate(viewModel, report.sourceDate, onOpenJournal)
+                            },
                             onClose = { selectedReportDate = null }
                         )
                     }
                 }
             }
         }
-        item {
-            CandidateReviewSection(
-                state = sleepEpisodeReviewState,
-                wakeMarkers = wakeMarkers,
-                activeAnalysisWindow = null,
-                actionsEnabled = !viewModel.isBusy,
-                onAcceptMainSleep = viewModel::acceptSleepEpisodeAsMain,
-                onAcceptNap = viewModel::acceptSleepEpisodeAsNap,
-                onMarkRest = viewModel::markSleepEpisodeAsRest,
-                onRejectCandidate = viewModel::rejectSleepEpisodeCandidate,
-                onClearDecision = viewModel::clearSleepEpisodeDecision,
-                onAddManualWindow = viewModel::addManualSleepWindow,
-                onEditWindow = viewModel::editSleepEpisodeWindow,
-                onEditMarker = viewModel::editWakeMarker,
-                onMarkNoMainSleep = viewModel::markNoMainSleep
-            )
-        }
-        item { SectionLabel("Recent journal entries") }
-        if (dailyCheckIns.isEmpty()) {
-            item {
-                BannerNote(
-                    text = "No saved journal entries yet. Save an evening outcome from Journal and it will appear here.",
-                    tint = MaterialTheme.colorScheme.secondaryContainer,
-                    textColor = MaterialTheme.colorScheme.onSecondaryContainer
-                )
-            }
-        } else {
-            val foodSummariesByDate = foodDailySummaries.associateBy { it.sourceDate }
-            val weightsByDate = dailyWeights.associateBy { it.sourceDate }
-            items(
-                items = dailyCheckIns,
-                key = { item -> "history-${item.sourceDate}-${item.updatedAtEpochMs}" }
-            ) { checkIn ->
-                ReviewHistoryItem(
-                    checkIn = checkIn,
-                    foodSummary = foodSummariesByDate[checkIn.sourceDate],
-                    weight = weightsByDate[checkIn.sourceDate],
-                    onTap = { viewModel.loadDailyCheckIn(checkIn.sourceDate) }
-                )
-            }
-        }
     }
+}
+
+private fun openJournalForDate(
+    viewModel: ProbeViewModel,
+    sourceDate: String,
+    onOpenJournal: () -> Unit
+) {
+    viewModel.updateCheckInDate(sourceDate)
+    onOpenJournal()
 }
 
 @Composable
 private fun HistoryDayReportCard(
     report: HistoryDayReport,
+    sleepWindowStatus: String?,
     selected: Boolean,
     onOpenDetail: () -> Unit,
     onOpenJournal: () -> Unit
@@ -203,10 +188,13 @@ private fun HistoryDayReportCard(
             DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
             DetailRow("Functional context", report.functionalContextLabel)
             DetailRow("Robustness", report.robustnessLabel)
-            DetailRow("Data completeness", report.dataCompletenessLabel)
+            DetailRow("Evidence on file", report.dataCompletenessLabel)
             DetailRow("Window source", report.windowProvenanceLabel)
             DetailRow("Sleep bucket", report.sleepBucketLabel)
-            DetailRow("Transition", report.stabilityTransitionLabel)
+            DetailRow("Morning signal change", report.stabilityTransitionLabel)
+            historySleepWindowDetailRow(sleepWindowStatus)?.let { (label, value) ->
+                DetailRow(label, value)
+            }
             report.notes?.takeIf { it.isNotBlank() }?.let { notes ->
                 Text(
                     notes,
@@ -220,7 +208,7 @@ private fun HistoryDayReportCard(
                     Text("Details")
                 }
                 TextButton(onClick = onOpenJournal) {
-                    Text("Open Journal")
+                    Text(historyJournalActionLabel(report.outcomeStatus != null))
                 }
             }
         }
@@ -230,6 +218,7 @@ private fun HistoryDayReportCard(
 @Composable
 private fun HistoryDayDetailCard(
     report: HistoryDayReport,
+    sleepWindowStatus: String?,
     onOpenJournal: () -> Unit,
     onClose: () -> Unit
 ) {
@@ -244,11 +233,14 @@ private fun HistoryDayDetailCard(
         DetailRow("Food", report.foodSummaryLabel)
         DetailRow("Weight", report.weightLabel)
         DetailRow("Grip strength", report.gripStrengthLabel)
-        DetailRow("Transition", report.stabilityTransitionLabel)
+        DetailRow("Morning signal change", report.stabilityTransitionLabel)
+        historySleepWindowDetailRow(sleepWindowStatus)?.let { (label, value) ->
+            DetailRow(label, value)
+        }
         DetailRow("Notes", report.notes?.takeIf { it.isNotBlank() } ?: "No notes")
         ButtonRow {
             TextButton(onClick = onOpenJournal) {
-                Text("Open Journal")
+                Text(historyJournalActionLabel(report.outcomeStatus != null))
             }
             TextButton(onClick = onClose) {
                 Text("Close")
@@ -256,6 +248,35 @@ private fun HistoryDayDetailCard(
         }
     }
 }
+
+data class HistoryCoverageSummary(
+    val dayReportCount: Int,
+    val withJournalCount: Int,
+    val withMorningSignalCount: Int,
+    val attentionDateCount: Int
+)
+
+fun buildHistoryCoverageSummary(
+    reports: List<HistoryDayReport>,
+    attentionDateCount: Int
+): HistoryCoverageSummary =
+    HistoryCoverageSummary(
+        dayReportCount = reports.size,
+        withJournalCount = reports.count { it.outcomeStatus != null },
+        withMorningSignalCount = reports.count { it.predictionStatus != null },
+        attentionDateCount = attentionDateCount
+    )
+
+fun historyJournalActionLabel(hasSavedOutcome: Boolean): String =
+    if (hasSavedOutcome) "Edit journal" else "Add journal"
+
+fun historySleepWindowDetailRow(status: String?): Pair<String, String>? =
+    when (status) {
+        "Needs review" -> "Sleep window" to "Needs review — confirm candidates on Now"
+        "Confirmed" -> "Sleep window" to "Confirmed"
+        "Context saved" -> "Sleep window" to "Context saved"
+        else -> null
+    }
 
 data class HistoryDayReport(
     val sourceDate: String,
@@ -447,10 +468,10 @@ private fun sleepBucketLabel(minutes: Int?): String =
 
 private fun stabilityTransitionLabel(previousStatus: String?, currentStatus: String?): String =
     when {
-        currentStatus == null -> "No status transition"
-        previousStatus == null -> "First recorded status"
-        previousStatus == currentStatus -> "Stable from previous recorded day"
-        else -> "${labelForStatus(previousStatus)} -> ${labelForStatus(currentStatus)}"
+        currentStatus == null -> "No morning signal recorded"
+        previousStatus == null -> "First morning signal on record"
+        previousStatus == currentStatus -> "Unchanged from prior day"
+        else -> "${labelForStatus(previousStatus)} → ${labelForStatus(currentStatus)}"
     }
 
 private fun String.toTrafficLightStatusOrNull(): TrafficLightStatus? =
