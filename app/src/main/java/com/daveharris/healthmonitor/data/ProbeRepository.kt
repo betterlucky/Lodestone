@@ -829,10 +829,18 @@ class ProbeRepository(
     private suspend fun pruneRawPpiBuffer(syncRunId: Long, deviceId: String) {
         val startedAt = System.currentTimeMillis()
         val cutoffDate = LocalDate.now(ZoneOffset.UTC).minusDays(RAW_PPI_RETENTION_DAYS).toString()
-        val prunableDates = dao.getPrunablePpiRawSourceDatesBefore(deviceId, cutoffDate)
+        val prunableDates = dao.getPrunablePpiRawSourceDatesBefore(
+            deviceId = deviceId,
+            cutoffDate = cutoffDate,
+            retainedRequestedRangePrefix = CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX
+        )
         if (prunableDates.isEmpty()) return
-        val deletedRows = dao.deletePpiRawRecordsForDates(deviceId, prunableDates)
-        val detail = "raw PPI retention kept ${RAW_PPI_RETENTION_DAYS}d buffer; deletedRows=$deletedRows, dates=${prunableDates.size}, cutoff=$cutoffDate"
+        val deletedRows = dao.deletePpiRawRecordsForDates(
+            deviceId = deviceId,
+            sourceDates = prunableDates,
+            retainedRequestedRangePrefix = CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX
+        )
+        val detail = "raw PPI retention kept ${RAW_PPI_RETENTION_DAYS}d buffer; deletedRows=$deletedRows, dates=${prunableDates.size}, cutoff=$cutoffDate, retainedCloudBackfill=true"
         dao.insertSyncDomainResult(
             SyncDomainResultEntity(
                 syncRunId = syncRunId,
@@ -849,6 +857,7 @@ class ProbeRepository(
                         "purpose" to "raw_ppi_retention",
                         "retentionDays" to RAW_PPI_RETENTION_DAYS,
                         "cutoffDate" to cutoffDate,
+                        "retainedRequestedRangePrefix" to CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX,
                         "deletedRows" to deletedRows,
                         "deletedSourceDates" to prunableDates
                     )
@@ -1955,7 +1964,11 @@ class ProbeRepository(
             val sourceDates = records.map { it.sourceDate }.distinct()
             val rebuild = rebuildHr247EpochsForDates(deviceId = null, sourceDates = sourceDates)
             if (pruneRaw && rebuild.rawSourceDatesWithEpochs.isNotEmpty()) {
-                dao.deleteHrRecordsForDates(deviceId = null, sourceDates = rebuild.rawSourceDatesWithEpochs)
+                dao.deleteHrRecordsForDatesExceptRequestedRangePrefix(
+                    deviceId = null,
+                    sourceDates = rebuild.rawSourceDatesWithEpochs,
+                    retainedRequestedRangePrefix = CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX
+                )
             }
             rebuild.epochCount
         }
@@ -2148,10 +2161,18 @@ class ProbeRepository(
                 val skinSafeToPrune = skinRebuild.rawSourceDatesWithDerived + skinRebuild.emptyRawSourceDates
                 val activitySafeToPrune = activityRebuild.rawSourceDatesWithDerived + activityRebuild.emptyRawSourceDates
                 if (skinSafeToPrune.isNotEmpty()) {
-                    dao.deleteSkinTemperatureRecordsForDates(deviceId = null, sourceDates = skinSafeToPrune)
+                    dao.deleteSkinTemperatureRecordsForDatesExceptRequestedRangePrefix(
+                        deviceId = null,
+                        sourceDates = skinSafeToPrune,
+                        retainedRequestedRangePrefix = CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX
+                    )
                 }
                 if (activitySafeToPrune.isNotEmpty()) {
-                    dao.deleteActivitySampleRecordsForDates(deviceId = null, sourceDates = activitySafeToPrune)
+                    dao.deleteActivitySampleRecordsForDatesExceptRequestedRangePrefix(
+                        deviceId = null,
+                        sourceDates = activitySafeToPrune,
+                        retainedRequestedRangePrefix = CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX
+                    )
                 }
             }
             skinRebuild.rowCount + activityRebuild.rowCount
@@ -3741,6 +3762,7 @@ private const val OFFLINE_PPI_RETENTION_DAYS = 14L
 private const val GENERIC_OFFLINE_RETENTION_DAYS = 14L
 private const val DEVICE_STORED_DATA_RETENTION_DAYS = 14L
 private const val RAW_PPI_RETENTION_DAYS = 21L
+private const val CLOUD_BACKFILL_REQUESTED_RANGE_PREFIX = "cloud_backfill:"
 private const val STALE_RUNNING_SYNC_AFTER_MS = 15 * 60 * 1000L
 private const val MANUAL_SYNC_TIMEOUT_MS = 7 * 60 * 1000L
 private const val SYNC_NOTIFICATION_START_ATTEMPTS = 5

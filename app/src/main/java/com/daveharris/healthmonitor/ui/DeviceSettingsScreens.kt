@@ -100,7 +100,7 @@ fun DeviceScreen(
                 }
                 DetailRow("Selected device", viewModel.selectedDeviceId ?: "None")
                 DetailRow("Connected", runtime.connectedDevice?.name ?: "None")
-                DetailRow("Firmware", runtime.firmwareVersion ?: "Unknown")
+                DetailRow("Runtime firmware", runtime.firmwareVersion ?: "Unknown")
                 if (runtime.connectedDevice == null || runtime.connectionPhase == "connecting") {
                     BannerNote(
                         text = "Connection tip: Android does not let Lodestone disable Polar Flow's Bluetooth session automatically. Keep Flow closed during normal collection; if the Loop is missing or connection stalls, close Flow or disable Flow's Bluetooth/device access, then try Connect again.",
@@ -172,6 +172,7 @@ fun SettingsScreen(
     onClose: () -> Unit
 ) {
     val morningRead by viewModel.morningRead.collectAsState()
+    val appSettings by viewModel.appSettings.collectAsState()
     var cooldownTicker by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(viewModel.sleepReportRetryCooldownUntilEpochMs) {
         while (viewModel.sleepReportRetryCooldownUntilEpochMs > System.currentTimeMillis()) {
@@ -303,7 +304,7 @@ fun SettingsScreen(
                 DetailRow("Battery", runtime.batteryLevel?.let { "$it%" } ?: "Unknown")
                 DetailRow("Selected", viewModel.selectedDeviceId ?: "None")
                 DetailRow("Connected", runtime.connectedDevice?.name ?: "None")
-                DetailRow("Firmware", runtime.firmwareVersion ?: "Unknown")
+                DetailRow("Runtime firmware", runtime.firmwareVersion ?: "Unknown")
                 runtime.lastError?.takeIf { it.isNotBlank() }?.let { error ->
                     BannerNote(
                         text = error,
@@ -328,7 +329,7 @@ fun SettingsScreen(
                         Text("Disconnect")
                     }
                 }
-                SupportText("If Polar Flow is holding the Loop connection, close Flow before connecting here. Use Release to Flow only for planned maintenance or recovery.")
+                SupportText("If Polar Flow is holding the Loop connection, close Flow before connecting here. Firmware values are source-specific local observations, not a check against Flow or public release pages.")
             }
         }
         if (runtime.scannedDevices.isEmpty()) {
@@ -446,7 +447,7 @@ fun SettingsScreen(
             SectionCard(title = "Loop setup & repair", subtitle = "Rare controls for firmware changes, factory reset, or investigation") {
                 if (firmwareRediscoveryNeeded) {
                     BannerNote(
-                        text = "Firmware appears to have changed since the last stored settings. Refresh capabilities before trusting sync results.",
+                        text = "Runtime firmware appears to differ from the saved selected-device firmware. Refresh capabilities before trusting sync results.",
                         tint = MaterialTheme.colorScheme.errorContainer,
                         textColor = MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -465,6 +466,9 @@ fun SettingsScreen(
                 DetailRow("FTU complete", "${ftuProfile?.isCompleted ?: false}")
                 DetailRow("Last known device state", ftuProfile?.lastKnownDeviceState ?: "none")
                 DetailRow("Saved profile device", deviceProfile?.deviceId ?: "none")
+                DetailRow("Saved profile firmware", deviceProfile?.firmwareVersion ?: "none")
+                DetailRow("Saved selected-device firmware", appSettings?.lastKnownFirmwareBySelectedDevice ?: "none")
+                SupportText("Firmware values here are source-specific local observations. Polar Flow and public release pages remain separate manual references.")
                 if (capabilities.isNotEmpty()) {
                     SectionLabel("Recent capability snapshot")
                     capabilities.take(4).forEach { capability ->
