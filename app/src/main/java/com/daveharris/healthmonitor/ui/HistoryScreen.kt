@@ -123,8 +123,7 @@ fun HistoryScreen(
                         selected = selected,
                         onOpenDetail = { selectedReportDate = report.sourceDate },
                         onOpenJournal = {
-                            viewModel.loadDailyCheckIn(report.sourceDate)
-                            onOpenJournal()
+                            openJournalForDate(viewModel, report.sourceDate, onOpenJournal)
                         }
                     )
                     if (selected) {
@@ -132,8 +131,7 @@ fun HistoryScreen(
                             report = report,
                             sleepWindowStatus = sleepRepairByDate[report.sourceDate],
                             onOpenJournal = {
-                                viewModel.loadDailyCheckIn(report.sourceDate)
-                                onOpenJournal()
+                                openJournalForDate(viewModel, report.sourceDate, onOpenJournal)
                             },
                             onClose = { selectedReportDate = null }
                         )
@@ -142,6 +140,15 @@ fun HistoryScreen(
             }
         }
     }
+}
+
+private fun openJournalForDate(
+    viewModel: ProbeViewModel,
+    sourceDate: String,
+    onOpenJournal: () -> Unit
+) {
+    viewModel.updateCheckInDate(sourceDate)
+    onOpenJournal()
 }
 
 @Composable

@@ -188,7 +188,11 @@ fun JournalScreen(
         }
         item {
             SectionCard(title = "Prior days", subtitle = "Browse and edit on History") {
-                SupportText(journalPriorDaysHint(dailyCheckIns.size))
+                SupportText(
+                    journalPriorDaysHint(
+                        journalPriorEntryCount(dailyCheckIns, viewModel.checkInDate)
+                    )
+                )
                 ButtonRow {
                     TextButton(onClick = onOpenHistory) {
                         Text("Open History")
@@ -198,6 +202,9 @@ fun JournalScreen(
         }
     }
 }
+
+fun journalPriorEntryCount(checkIns: List<DailyCheckInEntity>, activeDate: String): Int =
+    checkIns.count { it.sourceDate != activeDate }
 
 fun journalPriorDaysHint(savedEntryCount: Int): String =
     if (savedEntryCount > 0) {
@@ -211,7 +218,7 @@ fun journalBackfillStatusMessage(date: String, hasSavedReview: Boolean): String 
     if (hasSavedReview) {
         "Loaded saved check-in for $date."
     } else {
-        "No saved check-in for $date. Current draft left unchanged."
+        "Ready to add journal for $date."
     }
 
 @Composable

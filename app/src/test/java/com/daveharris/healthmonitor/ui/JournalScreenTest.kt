@@ -1,5 +1,7 @@
 package com.daveharris.healthmonitor.ui
 
+import com.daveharris.healthmonitor.data.DailyCheckInEntity
+import com.daveharris.healthmonitor.data.TrafficLightStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -33,8 +35,39 @@ class JournalScreenTest {
             journalBackfillStatusMessage("2026-05-31", hasSavedReview = true)
         )
         assertEquals(
-            "No saved check-in for 2026-05-30. Current draft left unchanged.",
+            "Ready to add journal for 2026-05-30.",
             journalBackfillStatusMessage("2026-05-30", hasSavedReview = false)
         )
     }
+
+    @Test
+    fun priorEntryCountExcludesActiveDate() {
+        val checkIns = listOf(
+            checkIn("2026-05-30"),
+            checkIn("2026-05-31")
+        )
+
+        assertEquals(1, journalPriorEntryCount(checkIns, activeDate = "2026-05-31"))
+        assertEquals(2, journalPriorEntryCount(checkIns, activeDate = "2026-06-01"))
+    }
+
+    private fun checkIn(sourceDate: String): DailyCheckInEntity =
+        DailyCheckInEntity(
+            sourceDate = sourceDate,
+            eveningOutcome = TrafficLightStatus.OK.name,
+            approachToDay = null,
+            muscleWeaknessToday = false,
+            notes = null,
+            createdAtEpochMs = 1,
+            updatedAtEpochMs = 2,
+            dayShapeCaptured = null,
+            mostlyHorizontal = null,
+            leftHouse = null,
+            majorTask = null,
+            majorTaskType = null,
+            pemPaybackToday = null,
+            paybackPeakToday = null,
+            paybackPeakConfidence = null,
+            manualGripStrengthKg = null
+        )
 }
