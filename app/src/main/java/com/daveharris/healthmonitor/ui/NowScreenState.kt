@@ -5,6 +5,7 @@ import com.daveharris.healthmonitor.ACTIVE_WAKE_MARKER_DURATION
 import com.daveharris.healthmonitor.data.CautionLevel
 import com.daveharris.healthmonitor.data.ConfidenceLevel
 import com.daveharris.healthmonitor.data.CurrentStateRead
+import com.daveharris.healthmonitor.data.ForecastBasis
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.AnalysisWindowSource
@@ -279,14 +280,8 @@ fun buildNowScreenState(
     val stateStability = buildStateStability(relevantCurrentState)
     val autonomicContext = buildAutonomicContext(relevantMorningRead, noMainSleep)
     val currentState = buildCurrentState(
-        modelForecast = relevantCurrentState?.forecastLevel,
-        morningRead = relevantMorningRead,
-        noMainSleep = noMainSleep,
-        syncRunning = syncRunning,
-        markerStatus = markerStatus,
-        hasFinalSleep = hasFinalSleep,
-        hasPpi = hasPpi,
-        functionalContext = functionalContext
+        currentStateRead = relevantCurrentState,
+        syncRunning = syncRunning
     )
     val primaryActions = buildPrimaryActions(
         markerMode = markerMode,
@@ -443,171 +438,53 @@ private fun List<RestSummaryInterval>.mergeRestSummaryIntervals(): List<RestSumm
     return merged
 }
 
+/**
+ * Forecast-first: the Now read reflects the model ([CurrentStateRead]) directly. The
+ * forecast is lived-function persistence and does NOT depend on sleep/PPI, so a
+ * no-main-sleep day, a bedtime marker, or a running sync no longer suppress it — those
+ * are window/freshness notes elsewhere. Caution sits beside the forecast (ELEVATED
+ * leads); a STALE_CONTEXT basis is shown but caveated; no usable outcome -> awaiting.
+ * Anti-Visible is encoded in the model, so functional context is supporting detail
+ * here, never a forecast modifier.
+ */
 private fun buildCurrentState(
-    modelForecast: TrafficLightStatus?,
-    morningRead: AnalysisWindowEvidence?,
-    noMainSleep: Boolean,
-    syncRunning: Boolean,
-    markerStatus: NowMarkerStatus,
-    hasFinalSleep: Boolean,
-    hasPpi: Boolean,
-    functionalContext: NowFunctionalContext
-): NowCurrentState =
-    when {
-        noMainSleep -> NowCurrentState(
-            kind = NowCurrentStateKind.NO_MAIN_SLEEP,
-            availability = NowDataAvailability.PRESENT,
-            status = null,
-            label = "No sleep/rest recorded",
-            qualifier = "No saved window",
-            message = "No sleep/rest window is saved for this date, so Lodestone will not invent one."
-        )
-        markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> NowCurrentState(
-            kind = NowCurrentStateKind.SLEEP_MARKED,
-            availability = NowDataAvailability.PENDING,
-            status = null,
-            label = "Bedtime marked",
-            qualifier = "Waiting for next check-in",
-            message = "Bedtime is saved. A normal Check in can still sync current data when you are ready."
-        )
-        syncRunning -> NowCurrentState(
-            kind = NowCurrentStateKind.SYNCING,
-            availability = NowDataAvailability.PENDING,
-            status = modelForecast,
-            label = "Checking Loop",
-            qualifier = "Sync in progress",
-            message = "Lodestone is connecting and pulling the current core data."
-        )
-        hasFinalSleep -> readyCurrentState(modelForecast, morningRead, functionalContext, hasFinalSleep = true)
-        hasPpi && !morningRead.hasEstablishedSleepWindow() -> needsWindowCurrentState(modelForecast, functionalContext)
-        hasPpi && !morningRead.hasSufficientReadyPpiCoverage() -> lowConfidenceCurrentState(modelForecast, functionalContext)
-        hasPpi -> readyCurrentState(modelForecast, morningRead, functionalContext, hasFinalSleep = false)
-        morningRead.hasEstablishedSleepWindow() -> markerOnlyCurrentState(modelForecast, functionalContext)
-        else -> NowCurrentState(
+    currentStateRead: CurrentStateRead?,
+    syncRunning: Boolean
+): NowCurrentState {
+    val forecast = currentStateRead?.forecastLevel
+    val basis = currentStateRead?.forecastBasis ?: ForecastBasis.NONE
+    val elevated = currentStateRead?.caution?.level == CautionLevel.ELEVATED
+
+    if (forecast == null || basis == ForecastBasis.NONE) {
+        return NowCurrentState(
             kind = NowCurrentStateKind.WAITING_FOR_DATA,
-            availability = NowDataAvailability.MISSING,
+            availability = if (syncRunning) NowDataAvailability.PENDING else NowDataAvailability.MISSING,
             status = null,
             label = "Awaiting check-in",
             qualifier = "No current read",
-            message = "Tap Check in to sync current data. Missing or stale markers do not block this."
+            message = "Log a check-in to build today's forecast. Missing or stale markers do not block this."
         )
     }
 
-private fun readyCurrentState(
-    modelForecast: TrafficLightStatus?,
-    morningRead: AnalysisWindowEvidence?,
-    functionalContext: NowFunctionalContext,
-    hasFinalSleep: Boolean
-): NowCurrentState {
-    val planningStatus = planningStatus(modelForecast, functionalContext.status)
-    val finalSleepMessage = if (morningRead.hasPpiSignal()) {
-        "PPI is aligned to the resolved Loop sleep context. Use it as pacing context, not a verdict."
-    } else {
-        "Loop sleep context is attached. Use it as pacing context, not a verdict."
-    }
+    val stale = basis == ForecastBasis.STALE_CONTEXT
     return NowCurrentState(
-        kind = NowCurrentStateKind.READY,
-        availability = NowDataAvailability.PRESENT,
-        status = planningStatus,
-        label = planningStatus.forecastLabel(),
-        qualifier = if (functionalContext.disagreesWithAutonomic(modelForecast)) {
-            "Mixed autonomic/function evidence"
-        } else if (hasFinalSleep) {
-            "Ready"
-        } else {
-            "Ready"
+        kind = if (stale) NowCurrentStateKind.LOW_CONFIDENCE_READ else NowCurrentStateKind.READY,
+        availability = if (stale) NowDataAvailability.PARTIAL else NowDataAvailability.PRESENT,
+        status = forecast,
+        label = forecast.forecastLabel(),
+        qualifier = when {
+            elevated -> "Caution"
+            stale -> "From recent context"
+            else -> "Ready"
         },
-        message = currentStateMessage(
-            autonomicStatus = modelForecast,
-            functionalContext = functionalContext,
-            defaultMessage = if (hasFinalSleep) {
-                finalSleepMessage
-            } else {
-                "PPI is aligned to a usable sleep/rest window. Loop sleep report is pending for comparison."
-            }
-        )
+        message = when {
+            elevated -> currentStateRead.caution.reasons.firstOrNull()
+                ?: "Recent load or instability is up — easing may be wise; payback can land a couple of days out."
+            stale -> "Carried from your most recent logged day — no fresh outcome yet, so hold it lightly."
+            else -> "Carried from recent lived function. Use it as pacing guidance, not a verdict."
+        }
     )
 }
-
-private fun needsWindowCurrentState(
-    modelForecast: TrafficLightStatus?,
-    functionalContext: NowFunctionalContext
-): NowCurrentState {
-    val planningStatus = planningStatus(modelForecast, functionalContext.status)
-    return NowCurrentState(
-        kind = NowCurrentStateKind.NEEDS_WINDOW,
-        availability = NowDataAvailability.PARTIAL,
-        status = planningStatus,
-        label = "Needs sleep/rest window",
-        qualifier = if (functionalContext.disagreesWithAutonomic(modelForecast)) {
-            "Mixed autonomic/function evidence"
-        } else {
-            "PPI received"
-        },
-        message = currentStateMessage(
-            autonomicStatus = modelForecast,
-            functionalContext = functionalContext,
-            defaultMessage = "PPI is available, but Lodestone needs a usable sleep/rest window before the current signal is ready."
-        )
-    )
-}
-
-private fun lowConfidenceCurrentState(
-    modelForecast: TrafficLightStatus?,
-    functionalContext: NowFunctionalContext
-): NowCurrentState {
-    val planningStatus = planningStatus(modelForecast, functionalContext.status)
-    return NowCurrentState(
-        kind = NowCurrentStateKind.LOW_CONFIDENCE_READ,
-        availability = NowDataAvailability.PARTIAL,
-        status = planningStatus,
-        label = planningStatus.forecastLabel(),
-        qualifier = if (functionalContext.disagreesWithAutonomic(modelForecast)) {
-            "Mixed autonomic/function evidence"
-        } else {
-            "Limited confidence"
-        },
-        message = currentStateMessage(
-            autonomicStatus = modelForecast,
-            functionalContext = functionalContext,
-            defaultMessage = "PPI/window evidence is present, but coverage is thin. Treat this current signal as tentative context."
-        )
-    )
-}
-
-private fun markerOnlyCurrentState(
-    modelForecast: TrafficLightStatus?,
-    functionalContext: NowFunctionalContext
-): NowCurrentState {
-    val planningStatus = planningStatus(modelForecast, functionalContext.status)
-    return NowCurrentState(
-        kind = NowCurrentStateKind.LOW_CONFIDENCE_READ,
-        availability = NowDataAvailability.PARTIAL,
-        status = planningStatus,
-        label = planningStatus.forecastLabel(),
-        qualifier = if (functionalContext.disagreesWithAutonomic(modelForecast)) {
-            "Mixed sleep/function evidence"
-        } else {
-            "No autonomic signal"
-        },
-        message = currentStateMessage(
-            autonomicStatus = modelForecast,
-            functionalContext = functionalContext,
-            defaultMessage = "Lodestone has a usable marker-derived sleep window, but no overnight PPI overlapped it. Treat this as sleep timing context, not an autonomic read."
-        )
-    )
-}
-
-private fun currentStateMessage(
-    autonomicStatus: TrafficLightStatus?,
-    functionalContext: NowFunctionalContext,
-    defaultMessage: String
-): String =
-    if (functionalContext.disagreesWithAutonomic(autonomicStatus)) {
-        "Autonomic signal looks steady, but recent outcomes suggest a lower-function spell. Use this as pacing context, not proof you are recovered."
-    } else {
-        defaultMessage
-    }
 
 private fun buildFunctionalContext(
     today: String,
@@ -743,12 +620,6 @@ private fun List<Pair<LocalDate, DailyCheckInEntity>>.recoveryGate(): Functional
         recoveringFromLowerFunction = true
     )
 }
-
-private fun NowFunctionalContext.disagreesWithAutonomic(autonomicStatus: TrafficLightStatus?): Boolean =
-    autonomicStatus != null &&
-        status != null &&
-        autonomicStatus.severityRank() <= TrafficLightStatus.OK.severityRank() &&
-        status.severityRank() >= TrafficLightStatus.UNSTEADY.severityRank()
 
 private fun buildSignalRobustness(
     morningRead: AnalysisWindowEvidence?,

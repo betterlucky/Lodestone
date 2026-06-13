@@ -47,6 +47,8 @@ import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.AnalysisWindowSource
 import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
+import com.daveharris.healthmonitor.data.CautionLevel
+import com.daveharris.healthmonitor.data.ConfidenceLevel
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.data.WakeMarkerSources
@@ -408,43 +410,19 @@ fun TodayHeroCard(
 internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
     buildList {
         heroAttentionFact(nowState)?.let { add(it) }
-        heroQualifierFact(nowState)?.let { add(it) }
-        heroStabilityFact(nowState)?.let { add(it) }
-        add(heroConfidenceFact(nowState))
+        heroCautionFact(nowState)?.let { add(it) }
+        heroConfidenceFact(nowState)?.let { add(it) }
         add(heroFreshnessFact(nowState))
         add(heroSleepRestFact(nowState))
     }.distinct().take(MAX_DAILY_FORECAST_FACTS)
 
 private const val MAX_DAILY_FORECAST_FACTS = 5
-private const val DEFAULT_DAILY_FORECAST_QUALIFIER = "Ready"
 
 internal fun dailyForecastHeroMessage(nowState: NowScreenState): String =
-    when {
-        nowState.currentState.qualifier.contains("function", ignoreCase = true) ->
-            "Recent outcomes suggest a lower-function spell. Keep today conservative until function has clearly improved."
-        nowState.currentState.kind == NowCurrentStateKind.WAITING_FOR_DATA &&
-            nowState.functionalContext.availability != NowDataAvailability.MISSING ->
-            "No fresh Loop data yet. Lodestone can still lean on recent check-ins, but confidence is lower."
-        nowState.currentState.kind == NowCurrentStateKind.WAITING_FOR_DATA ->
-            "Tap Check in to refresh the forecast. Without fresh data, Lodestone can only use saved context."
-        nowState.currentState.kind == NowCurrentStateKind.SYNCING ->
-            "Sync is running. Keep the phone and Loop close until the forecast refreshes."
-        nowState.currentState.kind == NowCurrentStateKind.SLEEP_MARKED ->
-            "Bedtime is saved. Check in when you are ready to refresh the forecast."
-        nowState.currentState.kind == NowCurrentStateKind.NEEDS_WINDOW ->
-            "Some body-signal data needs sleep/rest context before it can support the forecast. Recent check-ins still matter."
-        nowState.currentState.kind == NowCurrentStateKind.LOW_CONFIDENCE_READ ->
-            "Today's read is partial, so treat the forecast as cautious pacing guidance."
-        nowState.currentState.kind == NowCurrentStateKind.NO_MAIN_SLEEP ->
-            "No sleep/rest window is saved for this date, so Lodestone will not invent one."
-        else ->
-            "Use this as pacing guidance. Recent function, rest, and signal quality all stay part of the read."
-    }
+    nowState.currentState.message
 
 internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
     when {
-        nowState.currentState.kind == NowCurrentStateKind.SYNCING ->
-            "Keep the phone and Loop close while sync completes."
         nowState.deviceConnection.availability == NowDataAvailability.MISSING ->
             "Check in can refresh Loop data once a device is selected. Recent check-ins still provide functional context."
         nowState.signalRobustness.availability == NowDataAvailability.MISSING &&
@@ -452,23 +430,6 @@ internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
             "Check in refreshes Loop data when available. Until then, the forecast leans on recent check-ins."
         else ->
             "Check in refreshes the forecast and syncs the Loop."
-    }
-
-private fun heroQualifierFact(nowState: NowScreenState): String? =
-    when {
-        nowState.currentState.qualifier == DEFAULT_DAILY_FORECAST_QUALIFIER -> null
-        nowState.currentState.kind == NowCurrentStateKind.NEEDS_WINDOW -> "Needs context"
-        nowState.currentState.kind == NowCurrentStateKind.NO_MAIN_SLEEP -> "No saved window"
-        nowState.currentState.qualifier.contains("function", ignoreCase = true) -> "Mixed evidence"
-        nowState.currentState.qualifier.contains("signal", ignoreCase = true) -> "No body signal"
-        else -> scrubHeroQualifier(nowState.currentState.qualifier)
-    }
-
-private fun scrubHeroQualifier(qualifier: String): String =
-    when {
-        qualifier.contains("PPI", ignoreCase = true) -> "Needs context"
-        qualifier.contains("autonomic", ignoreCase = true) -> "Mixed evidence"
-        else -> qualifier
     }
 
 private fun heroAttentionFact(nowState: NowScreenState): String? {
@@ -484,22 +445,26 @@ private fun heroAttentionFact(nowState: NowScreenState): String? {
     }
 }
 
-private fun heroStabilityFact(nowState: NowScreenState): String? =
-    if (nowState.stateStability.availability == NowDataAvailability.PRESENT) {
-        "Stability: ${nowState.stateStability.label}"
-    } else {
-        null
-    }
+// Caution sits beside the forecast and only surfaces when ELEVATED (naming contract:
+// heroStabilityFact -> heroCautionFact).
+private fun heroCautionFact(nowState: NowScreenState): String? =
+    nowState.currentStateRead?.caution
+        ?.takeIf { it.level == CautionLevel.ELEVATED }
+        ?.let { "Caution: ${it.reasons.firstOrNull() ?: "ease off; payback can land a couple of days out"}" }
 
-private fun heroConfidenceFact(nowState: NowScreenState): String =
+// Confidence is shown ONLY when degraded — never over-claim during data collection.
+// "Degraded" = a genuinely low model read or no Loop signal at all; the normal capped
+// MEDIUM ceiling is not surfaced.
+private fun heroConfidenceFact(nowState: NowScreenState): String? =
     when {
         nowState.signalRobustness.availability == NowDataAvailability.MISSING &&
             nowState.functionalContext.availability != NowDataAvailability.MISSING ->
             "Confidence: check-ins only"
         nowState.signalRobustness.availability == NowDataAvailability.MISSING ->
             "Confidence: low"
-        else ->
-            "Confidence: ${nowState.signalRobustness.label}"
+        nowState.currentStateRead?.confidence == ConfidenceLevel.LOW ->
+            "Confidence: low"
+        else -> null
     }
 
 private fun heroFreshnessFact(nowState: NowScreenState): String =
