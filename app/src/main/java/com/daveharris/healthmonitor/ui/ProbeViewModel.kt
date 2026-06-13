@@ -24,7 +24,7 @@ import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.DailyWeightEntity
 import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.PaybackPeakConfidence
 import com.daveharris.healthmonitor.data.ProbeRepository
 import com.daveharris.healthmonitor.data.SleepEpisodeKinds
@@ -179,11 +179,6 @@ class ProbeViewModel(
                     deviceId = selectedDeviceId,
                     runtimeFirmware = runtime.firmwareVersion
                 )
-            }
-        }
-        viewModelScope.launch {
-            morningRead.filterNotNull().collect { snapshot ->
-                repository.recordMorningPredictionSnapshot(snapshot)
             }
         }
         viewModelScope.launch {
@@ -670,7 +665,7 @@ class ProbeViewModel(
             WakeMarkerSources.GOING_TO_BED -> sleepTargetDateForBedtime(markerEpochMs).toString()
             WakeMarkerSources.IM_AWAKE -> resolveLodestoneDisplayDate(
                 nowEpochMs = markerEpochMs,
-                latestMorningReadSourceDate = morningRead.value?.sourceDate,
+                latestAnalysisWindowSourceDate = morningRead.value?.sourceDate,
                 wakeMarkers = recentWakeMarkers.value.filterNot { it.id == id }
             ).sourceDate
             else -> sourceDate
@@ -1223,7 +1218,7 @@ class ProbeViewModel(
 
     fun currentLodestoneDate(): String =
         resolveLodestoneDisplayDate(
-            latestMorningReadSourceDate = morningRead.value?.sourceDate,
+            latestAnalysisWindowSourceDate = morningRead.value?.sourceDate,
             wakeMarkers = recentWakeMarkers.value
         ).sourceDate
 

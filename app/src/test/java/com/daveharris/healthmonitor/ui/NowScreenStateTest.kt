@@ -8,7 +8,7 @@ import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.ForecastBasis
 import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.SleepEpisodeConfidences
 import com.daveharris.healthmonitor.data.SleepEpisodeEntity
 import com.daveharris.healthmonitor.data.SleepEpisodeKinds
@@ -50,7 +50,8 @@ class NowScreenStateTest {
                 source = "raw_ppi_calibrated_window_pending_sleep_report",
                 rawPpiGoodEpochCount = 36,
                 rawPpiCoverageHours = 4.5
-            )
+            ),
+            currentState = modelRead()
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
@@ -97,7 +98,8 @@ class NowScreenStateTest {
                 source = "raw_ppi_calibrated_window_pending_sleep_report",
                 rawPpiGoodEpochCount = 8,
                 rawPpiCoverageHours = 2.5
-            )
+            ),
+            currentState = modelRead()
         )
 
         assertEquals(NowCurrentStateKind.LOW_CONFIDENCE_READ, state.currentState.kind)
@@ -119,7 +121,8 @@ class NowScreenStateTest {
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
                 nightlyRmssd = 48.0
-            )
+            ),
+            currentState = modelRead()
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
@@ -213,9 +216,9 @@ class NowScreenStateTest {
                 source = "ppi247_sleep_window",
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
-                nightlyRmssd = 48.0,
-                status = TrafficLightStatus.GOOD
+                nightlyRmssd = 48.0
             ),
+            currentState = modelRead(forecast = TrafficLightStatus.GOOD),
             syncRuns = listOf(
                 SyncRunEntity(
                     deviceId = "loop-1",
@@ -253,12 +256,12 @@ class NowScreenStateTest {
                 rawPpiGoodEpochCount = 12,
                 rawPpiCoverageHours = 4.0,
                 nightlyRmssd = 62.0,
-                status = TrafficLightStatus.GOOD,
                 hrvTrajectory = trajectory(
                     48.0, 50.0, 52.0, 54.0, 55.0, 58.0,
                     62.0, 65.0, 70.0, 76.0, 82.0, 88.0
                 )
-            )
+            ),
+            currentState = modelRead(forecast = TrafficLightStatus.GOOD)
         )
 
         assertEquals(TrafficLightStatus.GOOD, state.currentState.status)
@@ -276,9 +279,9 @@ class NowScreenStateTest {
                 source = "ppi247_sleep_window",
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
-                nightlyRmssd = 64.0,
-                status = TrafficLightStatus.GOOD
+                nightlyRmssd = 64.0
             ),
+            currentState = modelRead(forecast = TrafficLightStatus.GOOD),
             dailyCheckIns = listOf(
                 checkIn(
                     sourceDate = "2026-05-30",
@@ -289,7 +292,7 @@ class NowScreenStateTest {
             )
         )
 
-        assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
+        assertEquals(TrafficLightStatus.GOOD, state.currentStateRead?.forecastLevel)
         assertEquals(TrafficLightStatus.UNSTEADY, state.functionalContext.status)
         assertEquals(TrafficLightStatus.UNSTEADY, state.currentState.status)
         assertEquals("Mixed autonomic/function evidence", state.currentState.qualifier)
@@ -307,9 +310,9 @@ class NowScreenStateTest {
                 source = "ppi247_sleep_window",
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
-                nightlyRmssd = 88.0,
-                status = TrafficLightStatus.GOOD
+                nightlyRmssd = 88.0
             ),
+            currentState = modelRead(forecast = TrafficLightStatus.GOOD),
             dailyCheckIns = listOf(
                 checkIn(
                     sourceDate = "2026-05-30",
@@ -323,7 +326,7 @@ class NowScreenStateTest {
             )
         )
 
-        assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
+        assertEquals(TrafficLightStatus.GOOD, state.currentStateRead?.forecastLevel)
         assertEquals(TrafficLightStatus.OK, state.functionalContext.status)
         assertEquals(TrafficLightStatus.OK, state.currentState.status)
         assertEquals("Ready", state.currentState.qualifier)
@@ -724,7 +727,7 @@ class NowScreenStateTest {
     }
 
     private fun nowState(
-        morningRead: MorningReadSnapshot? = null,
+        morningRead: AnalysisWindowEvidence? = null,
         currentState: CurrentStateRead? = null,
         syncRuns: List<SyncRunEntity> = emptyList(),
         wakeMarkers: List<WakeMarkerEntity> = emptyList(),
@@ -812,20 +815,14 @@ class NowScreenStateTest {
         rawPpiCoverageHours: Double?,
         isInterim: Boolean = false,
         nightlyRmssd: Double? = null,
-        status: TrafficLightStatus = TrafficLightStatus.OK,
         hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
-    ): MorningReadSnapshot =
-        MorningReadSnapshot(
+    ): AnalysisWindowEvidence =
+        AnalysisWindowEvidence(
             sourceDate = "2026-05-31",
-            status = status,
-            confidence = "medium",
             overnightAutonomicSource = source,
             sleepDurationMinutes = if (sleepDataReady) 420 else null,
             nightlyRmssd = nightlyRmssd,
             baselineReady = true,
-            recoveryAvailable = true,
-            summary = "summary",
-            reasons = emptyList(),
             isInterim = isInterim,
             sleepDataReady = sleepDataReady,
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,

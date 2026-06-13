@@ -9,7 +9,7 @@ class MorningReadSignalTest {
     fun markerOnlyWindowDoesNotSatisfyMorningPpiGate() {
         assertFalse(
             snapshot(
-                source = MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT,
+                source = AnalysisWindowSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT,
                 goodEpochs = null
             ).hasUsableMorningPpiSignal()
         )
@@ -19,7 +19,7 @@ class MorningReadSignalTest {
     fun rawPendingWithoutWindowSummaryDoesNotSatisfyMorningPpiGate() {
         assertFalse(
             snapshot(
-                source = MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW,
+                source = AnalysisWindowSource.RAW_PPI_PENDING_SLEEP_WINDOW,
                 goodEpochs = null
             ).hasUsableMorningPpiSignal()
         )
@@ -29,7 +29,7 @@ class MorningReadSignalTest {
     fun insufficientWindowCoverageDoesNotSatisfyMorningPpiGate() {
         assertFalse(
             snapshot(
-                source = MorningReadSource.PPI247_SLEEP_WINDOW,
+                source = AnalysisWindowSource.PPI247_SLEEP_WINDOW,
                 goodEpochs = 11
             ).hasUsableMorningPpiSignal()
         )
@@ -39,27 +39,22 @@ class MorningReadSignalTest {
     fun derivedWindowCoverageSatisfiesMorningPpiGate() {
         assertTrue(
             snapshot(
-                source = MorningReadSource.PPI247_SLEEP_WINDOW,
+                source = AnalysisWindowSource.PPI247_SLEEP_WINDOW,
                 goodEpochs = 12
             ).hasUsableMorningPpiSignal()
         )
     }
 
     private fun snapshot(
-        source: MorningReadSource,
+        source: AnalysisWindowSource,
         goodEpochs: Int?
-    ): MorningReadSnapshot =
-        MorningReadSnapshot(
+    ): AnalysisWindowEvidence =
+        AnalysisWindowEvidence(
             sourceDate = "2026-06-12",
-            status = TrafficLightStatus.OK,
-            confidence = "interim",
             overnightAutonomicSource = source.key,
             sleepDurationMinutes = 420,
             nightlyRmssd = null,
             baselineReady = false,
-            recoveryAvailable = false,
-            summary = "test",
-            reasons = emptyList(),
             isInterim = true,
             sleepDataReady = false,
             rawPpiGoodEpochCount = goodEpochs,

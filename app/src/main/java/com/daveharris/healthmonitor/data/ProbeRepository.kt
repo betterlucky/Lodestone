@@ -86,27 +86,18 @@ class ProbeRepository(
     ) { _, _, _ -> runCatching { deriveCurrentState() }.getOrNull() }
 
     /**
-     * Sleep/PPI provenance snapshot (for Signals) with the model forecast overlaid
-     * onto its legacy status/confidence. Derived from [currentState] so it inherits
-     * the model's full reactivity (notably: refreshes when a new outcome is logged),
-     * and so deriveCurrentState() runs once, not per flow.
+     * Sleep/PPI provenance for the active analysis window (for Signals). Pure
+     * provenance — no forecast: the forecast is [currentState] (the model), consumed
+     * natively by Now/Signals. See docs/lodestone-redesign-architecture.md.
      */
     val morningRead = combine(
-        combine(
-            dao.observeLatestSleepRecord(),
-            dao.observeLatestNightlyRechargeRecord(),
-            dao.observeRecentPpi247Epochs(),
-            dao.observeRecentWakeMarkers(),
-            dao.observeRecentSleepEpisodes()
-        ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
-            MorningReadProvenanceInputs(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
-        },
-        currentState
-    ) { p, modelRead ->
-        deriveMorningRead(
-            p.sleepRow, p.nightlyRow, p.ppi247Epochs, p.wakeMarkers, p.sleepEpisodes,
-            currentState = modelRead
-        )
+        dao.observeLatestSleepRecord(),
+        dao.observeLatestNightlyRechargeRecord(),
+        dao.observeRecentPpi247Epochs(),
+        dao.observeRecentWakeMarkers(),
+        dao.observeRecentSleepEpisodes()
+    ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
+        deriveMorningRead(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
     }
     val recentWakeMarkers = dao.observeRecentWakeMarkers()
     val recentPpi247Epochs = dao.observeRecentPpi247Epochs()
@@ -117,8 +108,6 @@ class ProbeRepository(
             rebuildHr247EpochTables(pruneRaw = true)
             rebuildContextEpochTables(pruneRaw = true)
             pruneOversizedSyncResultPayloads()
-            dao.pruneDuplicateMorningPredictionSnapshots()
-            backfillMorningPredictionSnapshots()
         }
     }
 
@@ -493,48 +482,14 @@ class ProbeRepository(
         }
     }
 
-    suspend fun recordMorningPredictionSnapshot(
-        snapshot: MorningReadSnapshot,
-        snapshotOrigin: String = MORNING_PREDICTION_ORIGIN_OBSERVED
-    ) {
-        val sourceDate = snapshot.sourceDate ?: return
-        if (snapshot.status == null) return
-        predictionSnapshotMutex.withLock {
-            val entity = snapshot.toMorningPredictionSnapshotEntity(
-                snapshotOrigin = snapshotOrigin,
-                issuedAtEpochMs = System.currentTimeMillis()
-            )
-            val latest = dao.getLatestMorningPredictionSnapshot(sourceDate, snapshotOrigin)
-            if (latest?.isSamePrediction(entity) == true) return@withLock
-            dao.insertMorningPredictionSnapshot(entity)
-            dao.pruneDuplicateMorningPredictionSnapshots()
-        }
-    }
-
-    private suspend fun backfillMorningPredictionSnapshots() {
-        val today = LocalDate.now(ZoneId.systemDefault()).toString()
-        dao.getMorningPredictionBackfillCandidateDates()
-            .asSequence()
-            .filter { it <= today }
-            .forEach { sourceDate ->
-                if (
-                    dao.countMorningPredictionSnapshots(
-                        sourceDate,
-                        MORNING_PREDICTION_ORIGIN_BACKFILLED,
-                        MORNING_MODEL_VERSION
-                    ) > 0
-                ) {
-                    return@forEach
-                }
-                val snapshot = deriveMorningReadForDate(sourceDate, allowProvisional = false) ?: return@forEach
-                recordMorningPredictionSnapshot(snapshot, MORNING_PREDICTION_ORIGIN_BACKFILLED)
-            }
-    }
+    // The legacy morning_prediction_snapshot is no longer written — the model now
+    // persists current_state_snapshot via recordCurrentStateSnapshot(). Legacy rows
+    // are kept read-only so History still renders past predictions.
 
     private suspend fun deriveMorningReadForDate(
         sourceDate: String,
         allowProvisional: Boolean
-    ): MorningReadSnapshot? {
+    ): AnalysisWindowEvidence? {
         val date = runCatching { LocalDate.parse(sourceDate) }.getOrNull() ?: return null
         val sleep = dao.getLatestSleepRecordForDate(sourceDate)
         val nightly = dao.getLatestNightlyRechargeRecordForDate(sourceDate)
@@ -561,8 +516,7 @@ class ProbeRepository(
             wakeMarkers = wakeMarkers,
             sleepEpisodes = sleepEpisodes,
             expectedSourceDate = sourceDate,
-            allowProvisional = allowProvisional,
-            currentState = runCatching { deriveCurrentState(sourceDate) }.getOrNull()
+            allowProvisional = allowProvisional
         )
     }
 
@@ -2856,9 +2810,8 @@ class ProbeRepository(
         wakeMarkers: List<WakeMarkerEntity>,
         sleepEpisodes: List<SleepEpisodeEntity> = emptyList(),
         expectedSourceDate: String = LocalDate.now(ZoneId.systemDefault()).toString(),
-        allowProvisional: Boolean = true,
-        currentState: CurrentStateRead? = null
-    ): MorningReadSnapshot? {
+        allowProvisional: Boolean = true
+    ): AnalysisWindowEvidence? {
         if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty() && sleepEpisodes.isEmpty()) return null
 
         val todayPpiEpochs = ppi247Epochs.filter { it.sourceDate == expectedSourceDate }
@@ -2872,8 +2825,7 @@ class ProbeRepository(
         if (primaryEpisodeWindow == null && hasConfirmedNoMainSleep(expectedSourceDate, sleepEpisodes)) {
             return noMainSleepMorningRead(
                 sourceDate = expectedSourceDate,
-                baselineReady = latestBaselineReady,
-                currentState = currentState
+                baselineReady = latestBaselineReady
             )
         }
         if (sleepRow?.sourceDate != expectedSourceDate) {
@@ -2890,41 +2842,17 @@ class ProbeRepository(
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
-            val pendingSource = provisionalMorningReadSource(
+            val pendingSource = provisionalAnalysisWindowSource(
                 provisionalWindow = provisionalWindow,
                 ppi247Autonomic = ppi247Autonomic,
                 hasRawPpi = hasRawPpi
             )
-            val scoreResult = currentState.toScoreResult()
-            val provisionalStatus = provisionalStatus(
-                scoreResult = scoreResult,
-                provisionalWindow = provisionalWindow,
-                ppi247Autonomic = ppi247Autonomic
-            )
-            return MorningReadSnapshot(
+            return AnalysisWindowEvidence(
                 sourceDate = expectedSourceDate,
-                status = provisionalStatus,
-                confidence = provisionalConfidence(provisionalStatus, ppi247Autonomic),
                 overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
-                recoveryAvailable = false,
-                summary = provisionalSummary(provisionalStatus, ppi247Autonomic, "waiting for Polar sleep data"),
-                reasons = listOf(
-                    "Today’s resolved sleep window is not available yet.",
-                    if (ppi247Autonomic != null) {
-                        "A provisional PPI read is available from the ${provisionalWindow.label}."
-                    } else if (provisionalWindow?.hasExplicitWakeMarker == true) {
-                        "A marker-defined sleep window is available, but no usable overnight PPI overlapped it."
-                    } else if (hasRawPpi && provisionalWindow == null) {
-                        "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
-                    } else if (hasRawPpi) {
-                        "Raw PPI has been fetched, but the final sleep-window score is waiting for Polar’s sleep report."
-                    } else {
-                        "The app will keep checking for the completed sleep report."
-                    }
-                ) + scoreResult.reasons,
                 isInterim = true,
                 sleepDataReady = false,
                 rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
@@ -2966,41 +2894,17 @@ class ProbeRepository(
             }
             val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
-            val pendingSource = provisionalMorningReadSource(
+            val pendingSource = provisionalAnalysisWindowSource(
                 provisionalWindow = provisionalWindow,
                 ppi247Autonomic = ppi247Autonomic,
                 hasRawPpi = hasRawPpi
             )
-            val scoreResult = currentState.toScoreResult()
-            val provisionalStatus = provisionalStatus(
-                scoreResult = scoreResult,
-                provisionalWindow = provisionalWindow,
-                ppi247Autonomic = ppi247Autonomic
-            )
-            return MorningReadSnapshot(
+            return AnalysisWindowEvidence(
                 sourceDate = expectedSourceDate,
-                status = provisionalStatus,
-                confidence = provisionalConfidence(provisionalStatus, ppi247Autonomic),
                 overnightAutonomicSource = pendingSource,
                 sleepDurationMinutes = provisionalDurationMinutes,
                 nightlyRmssd = ppi247Autonomic?.averageRmssdMs,
                 baselineReady = latestBaselineReady,
-                recoveryAvailable = false,
-                summary = provisionalSummary(provisionalStatus, ppi247Autonomic, "waiting for resolved Polar sleep window"),
-                reasons = listOf(
-                    "Polar has created today’s sleep record, but the resolved start/end times are not available yet.",
-                    if (ppi247Autonomic != null) {
-                        "A provisional PPI read is available from the ${provisionalWindow.label}."
-                    } else if (provisionalWindow?.hasExplicitWakeMarker == true) {
-                        "A marker-defined sleep window is available, but no usable overnight PPI overlapped it."
-                    } else if (hasRawPpi && provisionalWindow == null) {
-                        "Raw PPI has been fetched, but no manual bedtime marker is available to define the provisional sleep window."
-                    } else if (hasRawPpi) {
-                        "Raw PPI has been fetched, but the final sleep-window score is waiting for those times."
-                    } else {
-                        "The app will keep checking for the completed sleep report."
-                    }
-                ) + scoreResult.reasons,
                 isInterim = true,
                 sleepDataReady = false,
                 rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
@@ -3041,35 +2945,16 @@ class ProbeRepository(
         val scoringDurationMinutes = primaryWindow?.durationMinutes?.takeIf { usePrimaryWindow } ?: durationMinutes
         val autonomicRmssd = ppi247Autonomic?.averageRmssdMs ?: rmssd
         val autonomicSource = when {
-            usePrimaryWindow && primaryWindow.source == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT.key ->
-                MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
-            usePrimaryWindow && primaryWindow.source == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT.key ->
-                MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
-            usePrimaryWindow -> MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
-            loopPpi247Autonomic != null -> MorningReadSource.PPI247_SLEEP_WINDOW.key
-            nightlySummary != null -> MorningReadSource.NIGHTLY_RECHARGE_SUMMARY.key
-            else -> MorningReadSource.SLEEP_CONTEXT_ONLY.key
+            usePrimaryWindow && primaryWindow.source == AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT.key ->
+                AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
+            usePrimaryWindow && primaryWindow.source == AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT.key ->
+                AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
+            usePrimaryWindow -> AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT.key
+            loopPpi247Autonomic != null -> AnalysisWindowSource.PPI247_SLEEP_WINDOW.key
+            nightlySummary != null -> AnalysisWindowSource.NIGHTLY_RECHARGE_SUMMARY.key
+            else -> AnalysisWindowSource.SLEEP_CONTEXT_ONLY.key
         }
 
-        val scoreResult = currentState.toScoreResult()
-        val status: TrafficLightStatus? = scoreResult.status
-        val contextReasons = primaryWindow?.let {
-            finalSleepReportContextReasons(
-                primaryWindow = it,
-                loopDurationMinutes = durationMinutes,
-                sleepStartEpochMs = sleepStartEpochMs,
-                sleepEndEpochMs = sleepEndEpochMs,
-                usePrimaryWindow = usePrimaryWindow
-            )
-        }.orEmpty()
-        val reasons = scoreResult.reasons + contextReasons
-        val confidence = when {
-            ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 48 && baselineReady -> "high"
-            ppi247Autonomic != null && ppi247Autonomic.goodEpochCount >= 12 -> "medium"
-            nightlyRow == null -> "low"
-            !baselineReady || !recoveryAvailable || !ansAvailable -> "medium"
-            else -> "high"
-        }
         val sourceDate = listOfNotNull(
             sleepRow.sourceDate,
             nightlyRow?.sourceDate,
@@ -3077,18 +2962,12 @@ class ProbeRepository(
             nightlySummary?.stringOrNull("sleepResultDate")
         ).firstOrNull()
 
-        return MorningReadSnapshot(
+        return AnalysisWindowEvidence(
             sourceDate = sourceDate,
-            status = status,
-            confidence = confidence,
             overnightAutonomicSource = autonomicSource,
             sleepDurationMinutes = scoringDurationMinutes,
             nightlyRmssd = autonomicRmssd,
             baselineReady = baselineReady,
-            recoveryAvailable = recoveryAvailable,
-            summary = status?.let { "${it.name.lowercase().replaceFirstChar { c -> c.titlecase() }} ($confidence confidence)" }
-                ?: "Awaiting a recent check-in to forecast from.",
-            reasons = reasons,
             isInterim = false,
             sleepDataReady = true,
             rawPpiGoodEpochCount = ppi247Autonomic?.goodEpochCount,
@@ -3103,10 +2982,10 @@ class ProbeRepository(
         val end = endEpochMs ?: return null
         if (end <= start) return null
         val sourceLabel = when (source) {
-            SleepEpisodeSources.EDITED -> MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY.key
-            SleepEpisodeSources.MIXED -> MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY.key
-            SleepEpisodeSources.MANUAL -> MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY.key
-            else -> MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY.key
+            SleepEpisodeSources.EDITED -> AnalysisWindowSource.EDITED_SLEEP_EPISODE_PRIMARY.key
+            SleepEpisodeSources.MIXED -> AnalysisWindowSource.MIXED_SLEEP_EPISODE_PRIMARY.key
+            SleepEpisodeSources.MANUAL -> AnalysisWindowSource.MANUAL_SLEEP_EPISODE_PRIMARY.key
+            else -> AnalysisWindowSource.CONFIRMED_SLEEP_EPISODE_PRIMARY.key
         }
         val label = when (episodeKind) {
             SleepEpisodeKinds.NAP -> "selected nap window"
@@ -3124,24 +3003,15 @@ class ProbeRepository(
 
     private fun noMainSleepMorningRead(
         sourceDate: String,
-        baselineReady: Boolean,
-        currentState: CurrentStateRead? = null
-    ): MorningReadSnapshot {
-        val autonomicSource = MorningReadSource.USER_CONFIRMED_NO_SLEEP.key
-        val scoreResult = currentState.toScoreResult()
-        val status: TrafficLightStatus? = scoreResult.status
-        return MorningReadSnapshot(
+        baselineReady: Boolean
+    ): AnalysisWindowEvidence {
+        val autonomicSource = AnalysisWindowSource.USER_CONFIRMED_NO_SLEEP.key
+        return AnalysisWindowEvidence(
             sourceDate = sourceDate,
-            status = status,
-            confidence = "user_confirmed",
             overnightAutonomicSource = autonomicSource,
             sleepDurationMinutes = 0,
             nightlyRmssd = null,
             baselineReady = baselineReady,
-            recoveryAvailable = false,
-            summary = status?.let { "${it.name.lowercase().replaceFirstChar { c -> c.titlecase() }} (user confirmed no sleep)" }
-                ?: "No main sleep; awaiting a recent check-in.",
-            reasons = listOf("You marked this day as having no main sleep window.") + scoreResult.reasons,
             isInterim = false,
             sleepDataReady = true,
             rawPpiGoodEpochCount = null,
@@ -3151,61 +3021,18 @@ class ProbeRepository(
         )
     }
 
-    private fun provisionalMorningReadSource(
+    private fun provisionalAnalysisWindowSource(
         provisionalWindow: SleepWindowEstimate?,
         ppi247Autonomic: Ppi247WindowSummary?,
         hasRawPpi: Boolean
     ): String =
         when {
             ppi247Autonomic != null -> requireNotNull(provisionalWindow).source
-            provisionalWindow?.hasExplicitWakeMarker == true -> MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT.key
-            hasRawPpi && provisionalWindow == null -> MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
-            hasRawPpi -> MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
-            else -> MorningReadSource.AWAITING_SLEEP_DATA.key
+            provisionalWindow?.hasExplicitWakeMarker == true -> AnalysisWindowSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT.key
+            hasRawPpi && provisionalWindow == null -> AnalysisWindowSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW.key
+            hasRawPpi -> AnalysisWindowSource.RAW_PPI_PENDING_SLEEP_WINDOW.key
+            else -> AnalysisWindowSource.AWAITING_SLEEP_DATA.key
         }
-
-    private fun provisionalStatus(
-        scoreResult: MorningScoreResult,
-        provisionalWindow: SleepWindowEstimate?,
-        ppi247Autonomic: Ppi247WindowSummary?
-    ): TrafficLightStatus? =
-        scoreResult.status.takeIf {
-            ppi247Autonomic != null || provisionalWindow?.hasExplicitWakeMarker == true
-        }
-
-    private fun provisionalConfidence(
-        provisionalStatus: TrafficLightStatus?,
-        ppi247Autonomic: Ppi247WindowSummary?
-    ): String =
-        when {
-            provisionalStatus == null -> "pending"
-            ppi247Autonomic != null -> "interim"
-            else -> "low"
-        }
-
-    private fun provisionalSummary(
-        provisionalStatus: TrafficLightStatus?,
-        ppi247Autonomic: Ppi247WindowSummary?,
-        fallback: String
-    ): String =
-        when {
-            provisionalStatus == null -> "Interim: $fallback"
-            ppi247Autonomic == null -> "Interim: marker-defined sleep window, autonomic unavailable"
-            else -> "Interim: $fallback"
-        }
-
-    /**
-     * Adapter: express the model-v1 [CurrentStateRead] as the legacy score-carrier
-     * the snapshot branches consume. Replaces the deleted sleep-recovery scorer
-     * `scoreMorningRead`, which was empirically non-predictive and reproduced the
-     * Visible cognitive-dissonance failure (see docs/lodestone-model-v1.md). The
-     * forecast now comes from lived-function persistence + caution, not sleep.
-     */
-    private fun CurrentStateRead?.toScoreResult(): MorningScoreResult =
-        MorningScoreResult(
-            status = this?.forecastLevel,
-            reasons = this?.reasons.orEmpty()
-        )
 
     private fun summarizePpi247ForSleepWindow(
         sourceDate: String?,
@@ -3247,34 +3074,6 @@ class ProbeRepository(
                 }
             }
         )
-    }
-
-    private fun finalSleepReportContextReasons(
-        primaryWindow: SleepWindowEstimate,
-        loopDurationMinutes: Int,
-        sleepStartEpochMs: Long,
-        sleepEndEpochMs: Long,
-        usePrimaryWindow: Boolean
-    ): List<String> {
-        if (!usePrimaryWindow) {
-            return listOf("Loop final sleep report is available; no usable manual/PPI window replaced it.")
-        }
-        val reasons = mutableListOf(
-            "Primary rating uses the ${primaryWindow.label}; Loop final sleep report is kept as context."
-        )
-        val primaryDurationMinutes = primaryWindow.durationMinutes
-        val durationDelta = primaryDurationMinutes - loopDurationMinutes
-        val wakeDelta = ((primaryWindow.endEpochMs - sleepEndEpochMs) / 60_000L).toInt()
-        val onsetDelta = ((primaryWindow.startEpochMs - sleepStartEpochMs) / 60_000L).toInt()
-        if (kotlin.math.abs(durationDelta) >= SLEEP_REPORT_DISAGREEMENT_MINUTES) {
-            reasons += "Loop sleep duration differed from the primary window by ${formatSignedMinutes(durationDelta)}."
-        } else if (
-            kotlin.math.abs(wakeDelta) >= SLEEP_REPORT_DISAGREEMENT_MINUTES ||
-            kotlin.math.abs(onsetDelta) >= SLEEP_REPORT_DISAGREEMENT_MINUTES
-        ) {
-            reasons += "Loop sleep timing differed from the primary window, but total duration was similar."
-        }
-        return reasons
     }
 
     private fun provisionalSleepWindowForDate(
@@ -3390,9 +3189,9 @@ class ProbeRepository(
         val estimatedOnset = ppiOnsetEpochMs ?: bed?.markerEpochMs ?: return null
         if (estimatedWake <= estimatedOnset) return null
         val source = when {
-            bed == null -> MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT.key
-            estimatedOnset > bed.markerEpochMs -> MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT.key
-            else -> MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT.key
+            bed == null -> AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT.key
+            estimatedOnset > bed.markerEpochMs -> AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT.key
+            else -> AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT.key
         }
         val label = when {
             bed == null && awakeMarker == null -> "PPI-inferred sleep/wake window"
@@ -3613,31 +3412,6 @@ class ProbeRepository(
         return sqrt(sumOf { value -> val delta = value - average; delta * delta } / size.toDouble())
     }
 
-    private fun MorningReadSnapshot.toMorningPredictionSnapshotEntity(
-        snapshotOrigin: String,
-        issuedAtEpochMs: Long
-    ): MorningPredictionSnapshotEntity =
-        MorningPredictionSnapshotEntity(
-            sourceDate = requireNotNull(sourceDate),
-            issuedAtEpochMs = issuedAtEpochMs,
-            snapshotOrigin = snapshotOrigin,
-            modelVersion = MORNING_MODEL_VERSION,
-            status = requireNotNull(status).name,
-            confidence = confidence,
-            isInterim = isInterim,
-            sleepDataReady = sleepDataReady,
-            overnightAutonomicSource = overnightAutonomicSource,
-            sleepDurationMinutes = sleepDurationMinutes,
-            nightlyRmssd = nightlyRmssd,
-            baselineReady = baselineReady,
-            recoveryAvailable = recoveryAvailable,
-            rawPpiGoodEpochCount = rawPpiGoodEpochCount,
-            rawPpiPoorEpochCount = rawPpiPoorEpochCount,
-            rawPpiCoverageHours = rawPpiCoverageHours,
-            summary = summary,
-            reasonsJson = GsonProvider.gson.toJson(reasons)
-        )
-
     private fun CurrentStateRead.toCurrentStateSnapshotEntity(
         snapshotOrigin: String,
         issuedAtEpochMs: Long
@@ -3813,22 +3587,8 @@ const val CURRENT_STATE_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
 private const val CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS = 10
 private val AUTOS_FILE_NAME_REGEX = Regex("""AUTOS\d{3}\.BPB""")
 
-/** Reactive inputs for the sleep/PPI provenance snapshot (see [ProbeRepository.morningRead]). */
-private data class MorningReadProvenanceInputs(
-    val sleepRow: SleepNightRawEntity?,
-    val nightlyRow: NightlyRechargeRawEntity?,
-    val ppi247Epochs: List<Ppi247EpochEntity>,
-    val wakeMarkers: List<WakeMarkerEntity>,
-    val sleepEpisodes: List<SleepEpisodeEntity>
-)
-
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")
-
-private data class MorningScoreResult(
-    val status: TrafficLightStatus?,
-    val reasons: List<String>
-)
 
 private data class Ppi247WindowSummary(
     val averageRmssdMs: Double,

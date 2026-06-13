@@ -13,7 +13,7 @@ class LodestoneDayTest {
     fun recentWakeMarkerKeepsLateNightUiOnActiveDay() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T02:30:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = listOf(marker("2026-05-26", "2026-05-26T08:00:00", "manual_im_awake")),
             zoneId = zone
         )
@@ -26,7 +26,7 @@ class LodestoneDayTest {
     fun bedtimeBeforeMidnightTargetsNextMorning() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-26T23:30:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = listOf(marker("2026-05-27", "2026-05-26T23:15:00", "manual_going_to_bed")),
             zoneId = zone
         )
@@ -83,7 +83,7 @@ class LodestoneDayTest {
     fun staleWakeMarkerExpiresAfterThirtyHours() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T14:01:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = listOf(marker("2026-05-26", "2026-05-26T08:00:00", "manual_im_awake")),
             zoneId = zone
         )
@@ -96,7 +96,7 @@ class LodestoneDayTest {
     fun wallDateMorningReadBeatsPreviousWakeMarker() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-06-04T10:15:00"),
-            latestMorningReadSourceDate = "2026-06-04",
+            latestAnalysisWindowSourceDate = "2026-06-04",
             wakeMarkers = listOf(
                 marker("2026-06-03", "2026-06-03T07:59:00", "manual_im_awake"),
                 marker("2026-06-03", "2026-06-04T09:00:00", "manual_im_awake")
@@ -112,7 +112,7 @@ class LodestoneDayTest {
     fun automationWakeMarkerDoesNotEndSleepMode() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T07:00:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = listOf(
                 marker("2026-05-27", "2026-05-26T23:15:00", "manual_going_to_bed"),
                 marker(
@@ -133,7 +133,7 @@ class LodestoneDayTest {
     fun bedtimeMarkerWithinThirtyHoursKeepsSleepInProgress() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T23:14:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = listOf(marker("2026-05-27", "2026-05-26T17:15:00", "manual_going_to_bed")),
             zoneId = zone
         )
@@ -146,7 +146,7 @@ class LodestoneDayTest {
     fun bedtimeMarkerAtThirtyHoursStillKeepsSleepInProgress() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T23:15:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = listOf(marker("2026-05-27", "2026-05-26T17:15:00", "manual_going_to_bed")),
             zoneId = zone
         )
@@ -159,7 +159,7 @@ class LodestoneDayTest {
     fun staleBedtimeMarkerDoesNotHoldDisplayDateForever() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-28T23:16:00"),
-            latestMorningReadSourceDate = "2026-05-27",
+            latestAnalysisWindowSourceDate = "2026-05-27",
             wakeMarkers = listOf(marker("2026-05-28", "2026-05-27T17:15:00", "manual_going_to_bed")),
             zoneId = zone
         )
@@ -172,7 +172,7 @@ class LodestoneDayTest {
     fun latestMorningReadCanHoldDateBeforeNoonWhenNoMarkerExists() {
         val resolution = resolveLodestoneDisplayDate(
             nowEpochMs = epoch("2026-05-27T03:00:00"),
-            latestMorningReadSourceDate = "2026-05-26",
+            latestAnalysisWindowSourceDate = "2026-05-26",
             wakeMarkers = emptyList(),
             zoneId = zone
         )
