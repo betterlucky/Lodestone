@@ -72,29 +72,44 @@ class ProbeRepository(
     val appSettings = dao.observeAppSettings()
     val morningPredictionSnapshots = dao.observeMorningPredictionSnapshots()
     val recentSleepEpisodes = dao.observeRecentSleepEpisodes()
-    val morningRead = combine(
-        dao.observeLatestSleepRecord(),
-        dao.observeLatestNightlyRechargeRecord(),
-        dao.observeRecentPpi247Epochs(),
-        dao.observeRecentWakeMarkers(),
-        dao.observeRecentSleepEpisodes()
-    ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
-        val modelRead = runCatching { deriveCurrentState() }.getOrNull()
-        deriveMorningRead(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes, currentState = modelRead)
-    }
-    val recentWakeMarkers = dao.observeRecentWakeMarkers()
-    val recentPpi247Epochs = dao.observeRecentPpi247Epochs()
-
     /**
      * Lodestone model-v1 read (persistence spine + caution + capped confidence).
-     * Recomputed when lived outcomes or autonomic data change. This is the honest
-     * forecast that supersedes the legacy sleep-recovery score; the legacy
-     * [morningRead] flow now only carries sleep/PPI provenance for Signals.
+     * The honest forecast that supersedes the legacy sleep-recovery score. Observes
+     * EVERY table deriveCurrentState() reads — lived outcomes (the spine),
+     * exertion summaries, and autonomic epochs — so a fresh check-in or sync
+     * recomputes it reactively.
      */
     val currentState: Flow<CurrentStateRead?> = combine(
         dao.observeDailyCheckIns(),
+        dao.observeRecentDailySummaries(),
         dao.observeRecentPpi247Epochs()
-    ) { _, _ -> runCatching { deriveCurrentState() }.getOrNull() }
+    ) { _, _, _ -> runCatching { deriveCurrentState() }.getOrNull() }
+
+    /**
+     * Sleep/PPI provenance snapshot (for Signals) with the model forecast overlaid
+     * onto its legacy status/confidence. Derived from [currentState] so it inherits
+     * the model's full reactivity (notably: refreshes when a new outcome is logged),
+     * and so deriveCurrentState() runs once, not per flow.
+     */
+    val morningRead = combine(
+        combine(
+            dao.observeLatestSleepRecord(),
+            dao.observeLatestNightlyRechargeRecord(),
+            dao.observeRecentPpi247Epochs(),
+            dao.observeRecentWakeMarkers(),
+            dao.observeRecentSleepEpisodes()
+        ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
+            MorningReadProvenanceInputs(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
+        },
+        currentState
+    ) { p, modelRead ->
+        deriveMorningRead(
+            p.sleepRow, p.nightlyRow, p.ppi247Epochs, p.wakeMarkers, p.sleepEpisodes,
+            currentState = modelRead
+        )
+    }
+    val recentWakeMarkers = dao.observeRecentWakeMarkers()
+    val recentPpi247Epochs = dao.observeRecentPpi247Epochs()
 
     init {
         scope.launch {
@@ -3797,6 +3812,15 @@ private const val CURRENT_STATE_MODEL_VERSION = "current_state_v1_persistence_ca
 const val CURRENT_STATE_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
 private const val CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS = 10
 private val AUTOS_FILE_NAME_REGEX = Regex("""AUTOS\d{3}\.BPB""")
+
+/** Reactive inputs for the sleep/PPI provenance snapshot (see [ProbeRepository.morningRead]). */
+private data class MorningReadProvenanceInputs(
+    val sleepRow: SleepNightRawEntity?,
+    val nightlyRow: NightlyRechargeRawEntity?,
+    val ppi247Epochs: List<Ppi247EpochEntity>,
+    val wakeMarkers: List<WakeMarkerEntity>,
+    val sleepEpisodes: List<SleepEpisodeEntity>
+)
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")

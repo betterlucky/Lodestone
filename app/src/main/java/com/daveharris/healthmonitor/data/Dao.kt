@@ -834,6 +834,9 @@ interface ProbeDao {
     @Query("SELECT * FROM daily_summary_raw WHERE sourceDate IN (:sourceDates)")
     suspend fun getDailySummariesForDates(sourceDates: List<String>): List<DailySummaryRawEntity>
 
+    @Query("SELECT * FROM daily_summary_raw ORDER BY sourceDate DESC LIMIT 120")
+    fun observeRecentDailySummaries(): Flow<List<DailySummaryRawEntity>>
+
     @Query("SELECT * FROM food_daily_summary WHERE sourceDate = :sourceDate LIMIT 1")
     suspend fun getFoodDailySummary(sourceDate: String): FoodDailySummaryEntity?
 
