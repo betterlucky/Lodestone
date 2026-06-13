@@ -3678,28 +3678,6 @@ class ProbeRepository(
             summary == other.summary &&
             reasonsJson == other.reasonsJson
 
-    private fun autonomicSourceLabel(source: String): String =
-        when (MorningReadSource.fromKey(source)) {
-            MorningReadSource.PPI247_SLEEP_WINDOW -> "24/7 PPI"
-            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "Calibrated-window PPI"
-            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "Manual-window PPI"
-            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred-window PPI"
-            MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "Manual sleep window"
-            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Calibrated-window PPI"
-            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Manual-window PPI"
-            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred-window PPI"
-            MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY -> "Edited-window PPI"
-            MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY -> "Confirmed-window PPI"
-            MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY -> "Manual-window PPI"
-            MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "Confirmed-window PPI"
-            MorningReadSource.USER_CONFIRMED_NO_SLEEP -> "No-sleep"
-            MorningReadSource.NIGHTLY_RECHARGE_SUMMARY -> "Nightly Recharge"
-            else -> "Overnight"
-        }
-
-    private fun formatHours(hours: Double): String =
-        "${String.format(java.util.Locale.UK, "%.1f", hours)}h"
-
     private fun formatSignedMinutes(value: Int): String {
         val sign = if (value >= 0) "+" else "-"
         val absolute = kotlin.math.abs(value)
