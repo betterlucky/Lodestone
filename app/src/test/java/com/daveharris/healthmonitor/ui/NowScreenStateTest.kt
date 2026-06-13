@@ -1,6 +1,12 @@
 package com.daveharris.healthmonitor.ui
 
+import com.daveharris.healthmonitor.data.CautionKind
+import com.daveharris.healthmonitor.data.CautionLevel
+import com.daveharris.healthmonitor.data.CautionSignal
+import com.daveharris.healthmonitor.data.ConfidenceLevel
+import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
+import com.daveharris.healthmonitor.data.ForecastBasis
 import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SleepEpisodeConfidences
@@ -98,7 +104,9 @@ class NowScreenStateTest {
         assertEquals("Likely OK", state.currentState.label)
         assertTrue(state.currentState.message.contains("coverage is thin"))
         assertEquals("Limited confidence", state.currentState.qualifier)
-        assertEquals("Brittle", state.stateStability.label)
+        // Stability is no longer derived from PPI thinness (fake `buildStateStability`
+        // deleted); it now comes from the model's caution + confidence — covered by
+        // stateStabilityReflectsCautionAndConfidence().
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
 
@@ -120,7 +128,6 @@ class NowScreenStateTest {
         assertTrue(state.currentState.message.contains("pacing context"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
-        assertEquals("Stable", state.stateStability.label)
         assertEquals(NowAnalysisWindowSourceType.LOOP_REPORT, state.activeAnalysisWindow.sourceType)
         assertEquals("Loop sleep report window", state.activeAnalysisWindow.label)
     }
@@ -135,6 +142,7 @@ class NowScreenStateTest {
                 rawPpiCoverageHours = 7.25,
                 nightlyRmssd = 48.0
             ),
+            currentState = modelRead(),
             syncRuns = listOf(
                 SyncRunEntity(
                     deviceId = "loop-1",
@@ -151,7 +159,7 @@ class NowScreenStateTest {
         val facts = dailyForecastHeroFacts(state)
 
         assertFalse("Ready" in facts)
-        assertTrue("Stability: Stable" in facts)
+        assertTrue("Stability: No caution flag" in facts)
         assertTrue("Confidence: Well supported" in facts)
         assertTrue("Last sync: 2h ago" in facts)
         assertTrue("Recent rest: 7h (last 18h)" in facts)
@@ -593,6 +601,21 @@ class NowScreenStateTest {
     }
 
     @Test
+    fun stateStabilityReflectsCautionAndConfidence() {
+        val elevated = nowState(currentState = modelRead(cautionLevel = CautionLevel.ELEVATED))
+        assertEquals(NowDataAvailability.PRESENT, elevated.stateStability.availability)
+        assertEquals("Caution", elevated.stateStability.label)
+        assertTrue(elevated.stateStability.detail.contains("higher range"))
+
+        val settled = nowState(currentState = modelRead(cautionLevel = CautionLevel.NONE, confidence = ConfidenceLevel.LOW))
+        assertEquals("No caution flag", settled.stateStability.label)
+        assertTrue(settled.stateStability.detail.contains("Limited"))
+
+        val missing = nowState(currentState = null)
+        assertEquals(NowDataAvailability.MISSING, missing.stateStability.availability)
+    }
+
+    @Test
     fun noMainSleepIsExplicitAndDoesNotFabricateSleepReport() {
         val state = nowState(
             sleepEpisodeReviewState = buildSleepEpisodeReviewState(
@@ -609,7 +632,8 @@ class NowScreenStateTest {
         assertTrue(state.activeAnalysisWindow.selectedByUser)
         assertEquals(NowDataAvailability.NOT_APPLICABLE, state.signalRobustness.sleepReport.availability)
         assertEquals("No main sleep decision", state.signalRobustness.basisLabel)
-        assertEquals(NowDataAvailability.NOT_APPLICABLE, state.stateStability.availability)
+        // No model read supplied in this fixture -> stability simply unavailable.
+        assertEquals(NowDataAvailability.MISSING, state.stateStability.availability)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
 
@@ -701,6 +725,7 @@ class NowScreenStateTest {
 
     private fun nowState(
         morningRead: MorningReadSnapshot? = null,
+        currentState: CurrentStateRead? = null,
         syncRuns: List<SyncRunEntity> = emptyList(),
         wakeMarkers: List<WakeMarkerEntity> = emptyList(),
         dailyCheckIns: List<DailyCheckInEntity> = emptyList(),
@@ -717,6 +742,7 @@ class NowScreenStateTest {
         buildNowScreenState(
             today = "2026-05-31",
             morningRead = morningRead,
+            currentState = currentState,
             syncRuns = syncRuns,
             wakeMarkers = wakeMarkers,
             dailyCheckIns = dailyCheckIns,
@@ -730,6 +756,24 @@ class NowScreenStateTest {
             journalFocusFixedTimeMinutes = journalFocusFixedTimeMinutes,
             nowEpochMs = nowEpochMs,
             zoneId = zone
+        )
+
+    private fun modelRead(
+        forecast: TrafficLightStatus? = TrafficLightStatus.OK,
+        cautionLevel: CautionLevel = CautionLevel.NONE,
+        confidence: ConfidenceLevel = ConfidenceLevel.MEDIUM
+    ): CurrentStateRead =
+        CurrentStateRead(
+            sourceDate = "2026-05-31",
+            forecastLevel = forecast,
+            forecastBasis = ForecastBasis.RECENT_OUTCOME,
+            caution = CautionSignal(
+                level = cautionLevel,
+                kind = CautionKind.PUSH_RISK,
+                reasons = if (cautionLevel == CautionLevel.ELEVATED) listOf("Recent activity is in your higher range.") else emptyList()
+            ),
+            confidence = confidence,
+            reasons = emptyList()
         )
 
     private fun stateWithSelectedWake(

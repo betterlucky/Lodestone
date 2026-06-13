@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.AutonomicDetailScope
 import com.daveharris.healthmonitor.data.AutonomicScopeResolver
+import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.Ppi247EpochEntity
@@ -37,6 +38,7 @@ fun SignalsScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
     morningRead: MorningReadSnapshot?,
+    currentState: CurrentStateRead?,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -54,6 +56,7 @@ fun SignalsScreen(
     val nowState = buildNowScreenState(
         today = today,
         morningRead = morningRead,
+        currentState = currentState,
         syncRuns = syncRuns,
         wakeMarkers = wakeMarkers,
         dailyCheckIns = dailyCheckIns,

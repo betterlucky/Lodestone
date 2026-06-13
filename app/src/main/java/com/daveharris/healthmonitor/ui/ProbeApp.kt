@@ -73,6 +73,7 @@ fun ProbeApp(
     val dailyWeights by viewModel.dailyWeights.collectAsState()
     val gripSessions by viewModel.gripSessions.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
+    val currentState by viewModel.currentState.collectAsState()
     val morningPredictionSnapshots by viewModel.morningPredictionSnapshots.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
     val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
@@ -200,6 +201,7 @@ fun ProbeApp(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,
+                                            currentState = currentState,
                                             syncRuns = syncRuns,
                                             wakeMarkers = recentWakeMarkers,
                                             dailyCheckIns = dailyCheckIns,
@@ -215,6 +217,7 @@ fun ProbeApp(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,
+                                            currentState = currentState,
                                             syncRuns = syncRuns,
                                             wakeMarkers = recentWakeMarkers,
                                             dailyCheckIns = dailyCheckIns,

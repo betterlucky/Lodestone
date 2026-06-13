@@ -4,6 +4,10 @@ This is the canonical language guide for Lodestone's modelling and product
 terms. Use it to avoid reintroducing stale assumptions from older sleep-centred
 or readiness-centred work.
 
+For the mapping of these terms onto **code identifiers** (and which legacy names
+to stop using), see `docs/lodestone-naming-contract.md`. Read it before working
+in the forecast / Now / Signals / sleep-window code.
+
 Statuses:
 
 - **Active:** use this term in current product and modelling discussion.

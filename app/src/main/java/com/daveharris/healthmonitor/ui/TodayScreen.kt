@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
+import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.MorningReadSnapshot
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
@@ -32,6 +33,7 @@ fun DataScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
     morningRead: MorningReadSnapshot?,
+    currentState: CurrentStateRead?,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -48,6 +50,7 @@ fun DataScreen(
     val nowState = buildNowScreenState(
         today = today,
         morningRead = morningRead,
+        currentState = currentState,
         syncRuns = syncRuns,
         wakeMarkers = wakeMarkers,
         dailyCheckIns = dailyCheckIns,
