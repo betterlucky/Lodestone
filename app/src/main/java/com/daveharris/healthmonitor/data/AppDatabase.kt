@@ -28,6 +28,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AppSettingsEntity::class,
         DailyCheckInEntity::class,
         MorningPredictionSnapshotEntity::class,
+        CurrentStateSnapshotEntity::class,
         SleepEpisodeEntity::class,
         WakeMarkerEntity::class,
         FoodDailySummaryEntity::class,
@@ -36,7 +37,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GripSessionEntity::class,
         GripRepEntity::class
     ],
-    version = 27,
+    version = 28,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -468,6 +469,41 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_27_28 = object : Migration(27, 28) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Additive: new model-v1 history table. morning_prediction_snapshot
+                // is left intact (read-only legacy) so existing History rows survive.
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS current_state_snapshot (
+                        id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                        sourceDate TEXT NOT NULL,
+                        issuedAtEpochMs INTEGER NOT NULL,
+                        snapshotOrigin TEXT NOT NULL,
+                        modelVersion TEXT NOT NULL,
+                        forecastLevel TEXT,
+                        forecastBasis TEXT NOT NULL,
+                        cautionLevel TEXT NOT NULL,
+                        cautionKind TEXT NOT NULL,
+                        cautionReasonsJson TEXT NOT NULL,
+                        confidenceLevel TEXT NOT NULL,
+                        recentOutcomeLevel TEXT,
+                        recentOutcomeDate TEXT,
+                        exertionLoadRecent INTEGER,
+                        hrvCv24h REAL,
+                        reasonsJson TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_current_state_snapshot_sourceDate ON current_state_snapshot(sourceDate)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_current_state_snapshot_sourceDate_snapshotOrigin ON current_state_snapshot(sourceDate, snapshotOrigin)"
+                )
+            }
+        }
+
         private fun createGripRepTable(db: SupportSQLiteDatabase) {
             db.execSQL(
                 """
@@ -514,7 +550,8 @@ abstract class AppDatabase : RoomDatabase() {
                 MIGRATION_23_24,
                 MIGRATION_24_25,
                 MIGRATION_25_26,
-                MIGRATION_26_27
+                MIGRATION_26_27,
+                MIGRATION_27_28
             )
             .build()
     }

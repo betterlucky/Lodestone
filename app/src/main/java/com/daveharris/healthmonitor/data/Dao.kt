@@ -46,6 +46,9 @@ interface ProbeDao {
     suspend fun insertMorningPredictionSnapshot(entity: MorningPredictionSnapshotEntity): Long
 
     @Insert
+    suspend fun insertCurrentStateSnapshot(entity: CurrentStateSnapshotEntity): Long
+
+    @Insert
     suspend fun insertSleepEpisode(entity: SleepEpisodeEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -806,6 +809,33 @@ interface ProbeDao {
         """
     )
     suspend fun pruneDuplicateMorningPredictionSnapshots(): Int
+
+    // --- Model-v1 current-state snapshots + feature-extraction reads ---------
+
+    @Query("SELECT * FROM current_state_snapshot ORDER BY issuedAtEpochMs DESC")
+    fun observeCurrentStateSnapshots(): Flow<List<CurrentStateSnapshotEntity>>
+
+    @Query(
+        """
+        SELECT * FROM current_state_snapshot
+        WHERE sourceDate = :sourceDate AND snapshotOrigin = :snapshotOrigin
+        ORDER BY issuedAtEpochMs DESC
+        LIMIT 1
+        """
+    )
+    suspend fun getLatestCurrentStateSnapshot(
+        sourceDate: String,
+        snapshotOrigin: String
+    ): CurrentStateSnapshotEntity?
+
+    @Query("SELECT * FROM daily_check_in WHERE sourceDate <= :asOf ORDER BY sourceDate DESC LIMIT :limit")
+    suspend fun getRecentDailyCheckInsAsOf(asOf: String, limit: Int): List<DailyCheckInEntity>
+
+    @Query("SELECT * FROM daily_summary_raw WHERE sourceDate IN (:sourceDates)")
+    suspend fun getDailySummariesForDates(sourceDates: List<String>): List<DailySummaryRawEntity>
+
+    @Query("SELECT * FROM daily_summary_raw ORDER BY sourceDate DESC LIMIT 120")
+    fun observeRecentDailySummaries(): Flow<List<DailySummaryRawEntity>>
 
     @Query("SELECT * FROM food_daily_summary WHERE sourceDate = :sourceDate LIMIT 1")
     suspend fun getFoodDailySummary(sourceDate: String): FoodDailySummaryEntity?

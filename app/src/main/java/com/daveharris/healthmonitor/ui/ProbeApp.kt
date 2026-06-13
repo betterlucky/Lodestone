@@ -73,9 +73,12 @@ fun ProbeApp(
     val dailyWeights by viewModel.dailyWeights.collectAsState()
     val gripSessions by viewModel.gripSessions.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
+    val currentState by viewModel.currentState.collectAsState()
     val morningPredictionSnapshots by viewModel.morningPredictionSnapshots.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
     val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
+    val recentPpi247Epochs by viewModel.recentPpi247Epochs.collectAsState()
+    val recentSleepEpisodes by viewModel.recentSleepEpisodes.collectAsState()
     val sleepEpisodeReviewState by viewModel.sleepEpisodeReviewState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { ProbeTab.entries.size })
@@ -198,6 +201,7 @@ fun ProbeApp(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,
+                                            currentState = currentState,
                                             syncRuns = syncRuns,
                                             wakeMarkers = recentWakeMarkers,
                                             dailyCheckIns = dailyCheckIns,
@@ -213,10 +217,13 @@ fun ProbeApp(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,
+                                            currentState = currentState,
                                             syncRuns = syncRuns,
                                             wakeMarkers = recentWakeMarkers,
                                             dailyCheckIns = dailyCheckIns,
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
+                                            ppi247Epochs = recentPpi247Epochs,
+                                            sleepEpisodes = recentSleepEpisodes,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }

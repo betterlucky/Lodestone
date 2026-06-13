@@ -336,6 +336,37 @@ data class MorningPredictionSnapshotEntity(
     val reasonsJson: String
 )
 
+/**
+ * Lodestone model-v1 persisted read (naming contract: `current_state_snapshot`).
+ * History sibling of `morning_prediction_snapshot` — the latter is kept read-only
+ * during migration so existing History rows survive (see docs/lodestone-model-v1.md).
+ */
+@Entity(
+    tableName = "current_state_snapshot",
+    indices = [
+        Index("sourceDate"),
+        Index("sourceDate", "snapshotOrigin")
+    ]
+)
+data class CurrentStateSnapshotEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sourceDate: String,
+    val issuedAtEpochMs: Long,
+    val snapshotOrigin: String,
+    val modelVersion: String,
+    val forecastLevel: String?,
+    val forecastBasis: String,
+    val cautionLevel: String,
+    val cautionKind: String,
+    val cautionReasonsJson: String,
+    val confidenceLevel: String,
+    val recentOutcomeLevel: String?,
+    val recentOutcomeDate: String?,
+    val exertionLoadRecent: Int?,
+    val hrvCv24h: Double?,
+    val reasonsJson: String
+)
+
 @Entity(
     tableName = "sleep_episode",
     indices = [

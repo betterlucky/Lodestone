@@ -154,7 +154,7 @@ fun todayReadinessStatus(
             sleepReport = "Cleared for tonight",
             ppiReceipt = "Waiting for wake sync",
             message = "Bedtime is marked. Today's old read is hidden until you wake and sync again.",
-            hrvDetail = "Sleep mode is active. Overnight HRV detail will appear after Lodestone syncs the Loop; tap I'm awake when you want to record wake time.",
+            hrvDetail = "Sleep mode is active. Sleep/rest HRV detail will appear after Lodestone syncs the Loop; tap I'm awake when you want to record wake time.",
             dataQuality = dataQuality,
             lastUsedLabel = lastUsedLabel,
             lastLoopSyncLabel = lastLoopSyncLabel
@@ -644,7 +644,7 @@ private val NowEvidenceDetail.title: String
         NowEvidenceDetail.SIGNAL -> "Signal detail"
         NowEvidenceDetail.SLEEP_REST -> "Sleep/rest evidence"
         NowEvidenceDetail.DATA_QUALITY -> "Data quality"
-        NowEvidenceDetail.HRV -> "HRV detail"
+        NowEvidenceDetail.HRV -> "Autonomic detail"
     }
 
 @Composable
@@ -726,7 +726,7 @@ private fun HrvEvidenceContent(
                 onClick = onOpenHrvTrajectory,
                 enabled = morningRead.hrvTrajectory.isNotEmpty()
             ) {
-                Text("View trajectory")
+                Text("Open autonomic detail")
             }
         }
     }
@@ -835,7 +835,7 @@ fun HrvTrajectoryDialog(
     val trend = hrvTrendSummary(points)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("HRV trajectory") },
+        title = { Text("Sleep/rest HRV") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
@@ -951,17 +951,17 @@ private fun HrvTrajectoryChart(points: List<HrvTrajectoryPoint>) {
     }
 }
 
-private fun measureText(text: String, paint: android.graphics.Paint): Float =
+internal fun measureText(text: String, paint: android.graphics.Paint): Float =
     paint.measureText(text)
 
-private data class HrvTrendSummary(
+internal data class HrvTrendSummary(
     val startValueMs: Double,
     val endValueMs: Double,
     val linearDeltaMs: Double,
     val shapeLabel: String
 )
 
-private fun hrvPath(
+internal fun hrvPath(
     points: List<HrvTrajectoryPoint>,
     minValue: Double,
     maxValue: Double,
@@ -981,7 +981,7 @@ private fun hrvPath(
     return path
 }
 
-private fun valueToChartY(
+internal fun valueToChartY(
     value: Double,
     minValue: Double,
     maxValue: Double,
@@ -992,7 +992,7 @@ private fun valueToChartY(
     return bottom - (bottom - top) * yRatio
 }
 
-private fun rollingMedianPoints(
+internal fun rollingMedianPoints(
     points: List<HrvTrajectoryPoint>,
     windowSize: Int
 ): List<HrvTrajectoryPoint> {
@@ -1006,7 +1006,7 @@ private fun rollingMedianPoints(
     }
 }
 
-private fun hrvTrendSummary(points: List<HrvTrajectoryPoint>): HrvTrendSummary {
+internal fun hrvTrendSummary(points: List<HrvTrajectoryPoint>): HrvTrendSummary {
     if (points.size < 2) {
         val value = points.firstOrNull()?.rmssdMs ?: 0.0
         return HrvTrendSummary(value, value, 0.0, "Not enough data")
@@ -1056,7 +1056,7 @@ private fun hrvShapeLabel(
     }
 }
 
-private fun List<Double>.averageOrNull(): Double? =
+internal fun List<Double>.averageOrNull(): Double? =
     if (isEmpty()) null else average()
 
 private fun List<Double>.medianOrNull(): Double? {

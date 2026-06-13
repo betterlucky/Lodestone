@@ -21,6 +21,7 @@ __pycache__/
 venv/
 
 # Local exports, databases, and generated reports
+local/
 *.db
 *.db-shm
 *.db-wal

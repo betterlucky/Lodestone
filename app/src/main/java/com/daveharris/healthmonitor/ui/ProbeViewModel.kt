@@ -72,8 +72,11 @@ class ProbeViewModel(
     val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val gripSessions = dailyReviewRepository.gripSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val currentState = repository.currentState.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val morningPredictionSnapshots = repository.morningPredictionSnapshots.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val recentWakeMarkers = repository.recentWakeMarkers.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val recentPpi247Epochs = repository.recentPpi247Epochs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val recentSleepEpisodes = repository.recentSleepEpisodes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val sleepEpisodeReviewState = combine(
         repository.recentSleepEpisodes,
         sleepEpisodeReviewDates,
@@ -181,6 +184,11 @@ class ProbeViewModel(
         viewModelScope.launch {
             morningRead.filterNotNull().collect { snapshot ->
                 repository.recordMorningPredictionSnapshot(snapshot)
+            }
+        }
+        viewModelScope.launch {
+            currentState.filterNotNull().collect { read ->
+                repository.recordCurrentStateSnapshot(read)
             }
         }
         refreshFoodImportForDate(checkInDate)

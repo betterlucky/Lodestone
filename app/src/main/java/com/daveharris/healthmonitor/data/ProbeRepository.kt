@@ -72,16 +72,44 @@ class ProbeRepository(
     val appSettings = dao.observeAppSettings()
     val morningPredictionSnapshots = dao.observeMorningPredictionSnapshots()
     val recentSleepEpisodes = dao.observeRecentSleepEpisodes()
+    /**
+     * Lodestone model-v1 read (persistence spine + caution + capped confidence).
+     * The honest forecast that supersedes the legacy sleep-recovery score. Observes
+     * EVERY table deriveCurrentState() reads — lived outcomes (the spine),
+     * exertion summaries, and autonomic epochs — so a fresh check-in or sync
+     * recomputes it reactively.
+     */
+    val currentState: Flow<CurrentStateRead?> = combine(
+        dao.observeDailyCheckIns(),
+        dao.observeRecentDailySummaries(),
+        dao.observeRecentPpi247Epochs()
+    ) { _, _, _ -> runCatching { deriveCurrentState() }.getOrNull() }
+
+    /**
+     * Sleep/PPI provenance snapshot (for Signals) with the model forecast overlaid
+     * onto its legacy status/confidence. Derived from [currentState] so it inherits
+     * the model's full reactivity (notably: refreshes when a new outcome is logged),
+     * and so deriveCurrentState() runs once, not per flow.
+     */
     val morningRead = combine(
-        dao.observeLatestSleepRecord(),
-        dao.observeLatestNightlyRechargeRecord(),
-        dao.observeRecentPpi247Epochs(),
-        dao.observeRecentWakeMarkers(),
-        dao.observeRecentSleepEpisodes()
-    ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
-        deriveMorningRead(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
+        combine(
+            dao.observeLatestSleepRecord(),
+            dao.observeLatestNightlyRechargeRecord(),
+            dao.observeRecentPpi247Epochs(),
+            dao.observeRecentWakeMarkers(),
+            dao.observeRecentSleepEpisodes()
+        ) { sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes ->
+            MorningReadProvenanceInputs(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
+        },
+        currentState
+    ) { p, modelRead ->
+        deriveMorningRead(
+            p.sleepRow, p.nightlyRow, p.ppi247Epochs, p.wakeMarkers, p.sleepEpisodes,
+            currentState = modelRead
+        )
     }
     val recentWakeMarkers = dao.observeRecentWakeMarkers()
+    val recentPpi247Epochs = dao.observeRecentPpi247Epochs()
 
     init {
         scope.launch {
@@ -358,6 +386,113 @@ class ProbeRepository(
         return insertedCount
     }
 
+    /**
+     * Model-v1 feature extraction + rule. Pure model in [CurrentStateModel]; this
+     * method owns the I/O. See docs/lodestone-model-v1.md §Inputs.
+     */
+    suspend fun deriveCurrentState(
+        today: String = LocalDate.now(ZoneId.systemDefault()).toString()
+    ): CurrentStateRead {
+        val todayDate = runCatching { LocalDate.parse(today) }.getOrNull()
+
+        // --- Persistence spine: recent lived outcomes, newest first ---
+        // Bound by `today` so historical/backfill reads never see future outcomes
+        // (a later evening outcome must not leak into an older day's forecast).
+        val checkIns = dao.getRecentDailyCheckInsAsOf(today, CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS)
+            .sortedByDescending { it.sourceDate }
+        val recentOutcomes = checkIns.mapNotNull { CurrentStateFeatures.outcomeLevel(it.eveningOutcome) }
+        val latestCheckIn = checkIns.firstOrNull { CurrentStateFeatures.outcomeLevel(it.eveningOutcome) != null }
+        val latestOutcome = latestCheckIn?.let { CurrentStateFeatures.outcomeLevel(it.eveningOutcome) }
+        val latestOutcomeDate = latestCheckIn?.sourceDate
+        val outcomeAgeDays = CurrentStateFeatures.daysBetween(latestOutcomeDate, today)
+
+        // --- Exertion: moderate/vigorous active minutes on D-1 / D-2 ---
+        val d1 = todayDate?.minusDays(1)?.toString()
+        val d2 = todayDate?.minusDays(2)?.toString()
+        val recentSummaries = dao.getDailySummariesForDates(listOfNotNull(d1, d2)).groupBy { it.sourceDate }
+        fun mvFor(date: String?): Int? = date?.let { d ->
+            recentSummaries[d]?.firstNotNullOfOrNull { CurrentStateFeatures.mvActiveMinutes(it.rawPayloadJson) }
+        }
+        val mvD1 = mvFor(d1)
+        val mvD2 = mvFor(d2)
+
+        // --- 24h HRV CV (today, whole-day good epochs; no sleep window) ---
+        val todayEpochs = dao.getPpi247EpochsForDate(today)
+        val goodRmssdToday = todayEpochs.filter { it.epochQuality == "good" && it.rmssdMs != null }.map { it.rmssdMs!! }
+        val hrvCv24h = CurrentStateFeatures.hrvCv24h(goodRmssdToday)
+
+        // --- Adaptive personal thresholds over a trailing window ---
+        val trailingDates = if (todayDate != null) {
+            (1..CurrentStateFeatures.ADAPTIVE_TRAILING_DAYS).map { todayDate.minusDays(it.toLong()).toString() }
+        } else emptyList()
+        val trailingExertion = dao.getDailySummariesForDates(trailingDates)
+            .groupBy { it.sourceDate }
+            .values
+            .mapNotNull { rows -> rows.firstNotNullOfOrNull { CurrentStateFeatures.mvActiveMinutes(it.rawPayloadJson) } }
+            .map { it.toDouble() }
+        val trailingCv = dao.getPpi247EpochsForDates(trailingDates)
+            .filter { it.epochQuality == "good" && it.rmssdMs != null }
+            .groupBy { it.sourceDate }
+            .values
+            .mapNotNull { epochs -> CurrentStateFeatures.hrvCv24h(epochs.map { it.rmssdMs!! }) }
+        val exertionThreshold = CurrentStateModel.adaptiveUpperTier(
+            trailingExertion, CurrentStateFeatures.PROVISIONAL_MV_MINUTES_THRESHOLD
+        )?.toInt()
+        val cvThreshold = CurrentStateModel.adaptiveUpperTier(
+            trailingCv, CurrentStateFeatures.PROVISIONAL_HRV_CV_THRESHOLD
+        )
+
+        // --- Coverage for confidence ---
+        val goodEpochCount = goodRmssdToday.size
+        val coverageHours = todayEpochs
+            .filter { it.epochQuality == "good" }
+            .sumOf { (it.epochEndEpochMs - it.epochStartEpochMs).coerceAtLeast(0L) } / 3_600_000.0
+        // Proxy for "we have enough personal autonomic history to have a baseline".
+        val baselineReady = trailingCv.size >= CurrentStateModel.MIN_HISTORY_FOR_ADAPTIVE
+        val lastSyncAgeHours = todayEpochs.maxOfOrNull { it.updatedAtEpochMs }
+            ?.let { (System.currentTimeMillis() - it) / 3_600_000.0 }
+
+        val coverage = DataCoverage(
+            hasRecentOutcome = latestOutcome != null &&
+                (outcomeAgeDays == null || outcomeAgeDays <= CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS),
+            outcomeAgeDays = outcomeAgeDays,
+            hasAutonomic = goodEpochCount >= CurrentStateFeatures.MIN_GOOD_EPOCHS_FOR_CV,
+            ppiCoverageHours = if (todayEpochs.isEmpty()) null else coverageHours,
+            baselineReady = baselineReady,
+            lastSyncAgeHours = lastSyncAgeHours
+        )
+
+        return CurrentStateModel.deriveCurrentStateRead(
+            CurrentStateInputs(
+                today = today,
+                latestOutcome = latestOutcome,
+                latestOutcomeDate = latestOutcomeDate,
+                recentOutcomes = recentOutcomes,
+                exertionMvMinutesD1 = mvD1,
+                exertionMvMinutesD2 = mvD2,
+                exertionThresholdMvMinutes = exertionThreshold,
+                hrvCv24h = hrvCv24h,
+                hrvCvThreshold = cvThreshold,
+                coverage = coverage
+            )
+        )
+    }
+
+    suspend fun recordCurrentStateSnapshot(
+        read: CurrentStateRead,
+        snapshotOrigin: String = CURRENT_STATE_ORIGIN_OBSERVED
+    ) {
+        predictionSnapshotMutex.withLock {
+            val entity = read.toCurrentStateSnapshotEntity(
+                snapshotOrigin = snapshotOrigin,
+                issuedAtEpochMs = System.currentTimeMillis()
+            )
+            val latest = dao.getLatestCurrentStateSnapshot(read.sourceDate, snapshotOrigin)
+            if (latest?.isSameRead(entity) == true) return@withLock
+            dao.insertCurrentStateSnapshot(entity)
+        }
+    }
+
     suspend fun recordMorningPredictionSnapshot(
         snapshot: MorningReadSnapshot,
         snapshotOrigin: String = MORNING_PREDICTION_ORIGIN_OBSERVED
@@ -426,7 +561,8 @@ class ProbeRepository(
             wakeMarkers = wakeMarkers,
             sleepEpisodes = sleepEpisodes,
             expectedSourceDate = sourceDate,
-            allowProvisional = allowProvisional
+            allowProvisional = allowProvisional,
+            currentState = runCatching { deriveCurrentState(sourceDate) }.getOrNull()
         )
     }
 
@@ -2720,7 +2856,8 @@ class ProbeRepository(
         wakeMarkers: List<WakeMarkerEntity>,
         sleepEpisodes: List<SleepEpisodeEntity> = emptyList(),
         expectedSourceDate: String = LocalDate.now(ZoneId.systemDefault()).toString(),
-        allowProvisional: Boolean = true
+        allowProvisional: Boolean = true,
+        currentState: CurrentStateRead? = null
     ): MorningReadSnapshot? {
         if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty() && sleepEpisodes.isEmpty()) return null
 
@@ -2735,7 +2872,8 @@ class ProbeRepository(
         if (primaryEpisodeWindow == null && hasConfirmedNoMainSleep(expectedSourceDate, sleepEpisodes)) {
             return noMainSleepMorningRead(
                 sourceDate = expectedSourceDate,
-                baselineReady = latestBaselineReady
+                baselineReady = latestBaselineReady,
+                currentState = currentState
             )
         }
         if (sleepRow?.sourceDate != expectedSourceDate) {
@@ -2757,19 +2895,7 @@ class ProbeRepository(
                 ppi247Autonomic = ppi247Autonomic,
                 hasRawPpi = hasRawPpi
             )
-            val scoreResult = scoreMorningRead(
-                durationMinutes = provisionalDurationMinutes,
-                autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
-                autonomicSource = pendingSource,
-                ppi247Autonomic = ppi247Autonomic,
-                cycleCount = null,
-                wakePhases = null,
-                baselineReady = latestBaselineReady,
-                recoveryAvailable = false,
-                ansAvailable = false,
-                ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
-                missingPpiReason = "No usable raw PPI is available yet."
-            )
+            val scoreResult = currentState.toScoreResult()
             val provisionalStatus = provisionalStatus(
                 scoreResult = scoreResult,
                 provisionalWindow = provisionalWindow,
@@ -2845,19 +2971,7 @@ class ProbeRepository(
                 ppi247Autonomic = ppi247Autonomic,
                 hasRawPpi = hasRawPpi
             )
-            val scoreResult = scoreMorningRead(
-                durationMinutes = provisionalDurationMinutes,
-                autonomicRmssd = ppi247Autonomic?.averageRmssdMs,
-                autonomicSource = pendingSource,
-                ppi247Autonomic = ppi247Autonomic,
-                cycleCount = null,
-                wakePhases = null,
-                baselineReady = latestBaselineReady,
-                recoveryAvailable = false,
-                ansAvailable = false,
-                ppiWindowLabel = provisionalWindow?.label ?: "provisional sleep window",
-                missingPpiReason = "No usable raw PPI is available yet."
-            )
+            val scoreResult = currentState.toScoreResult()
             val provisionalStatus = provisionalStatus(
                 scoreResult = scoreResult,
                 provisionalWindow = provisionalWindow,
@@ -2937,20 +3051,8 @@ class ProbeRepository(
             else -> MorningReadSource.SLEEP_CONTEXT_ONLY.key
         }
 
-        val scoreResult = scoreMorningRead(
-            durationMinutes = scoringDurationMinutes,
-            autonomicRmssd = autonomicRmssd,
-            autonomicSource = autonomicSource,
-            ppi247Autonomic = ppi247Autonomic,
-            cycleCount = cycleCount,
-            wakePhases = wakePhases,
-            baselineReady = baselineReady,
-            recoveryAvailable = recoveryAvailable,
-            ansAvailable = ansAvailable,
-            ppiWindowLabel = primaryWindow?.label?.takeIf { usePrimaryWindow } ?: "resolved sleep window",
-            missingPpiReason = "No usable raw PPI overlapped the resolved sleep window."
-        )
-        val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
+        val scoreResult = currentState.toScoreResult()
+        val status: TrafficLightStatus? = scoreResult.status
         val contextReasons = primaryWindow?.let {
             finalSleepReportContextReasons(
                 primaryWindow = it,
@@ -2984,7 +3086,8 @@ class ProbeRepository(
             nightlyRmssd = autonomicRmssd,
             baselineReady = baselineReady,
             recoveryAvailable = recoveryAvailable,
-            summary = "${status.name.lowercase().replaceFirstChar { it.titlecase() }} ($confidence confidence)",
+            summary = status?.let { "${it.name.lowercase().replaceFirstChar { c -> c.titlecase() }} ($confidence confidence)" }
+                ?: "Awaiting a recent check-in to forecast from.",
             reasons = reasons,
             isInterim = false,
             sleepDataReady = true,
@@ -3021,23 +3124,12 @@ class ProbeRepository(
 
     private fun noMainSleepMorningRead(
         sourceDate: String,
-        baselineReady: Boolean
+        baselineReady: Boolean,
+        currentState: CurrentStateRead? = null
     ): MorningReadSnapshot {
         val autonomicSource = MorningReadSource.USER_CONFIRMED_NO_SLEEP.key
-        val scoreResult = scoreMorningRead(
-            durationMinutes = 0,
-            autonomicRmssd = null,
-            autonomicSource = autonomicSource,
-            ppi247Autonomic = null,
-            cycleCount = null,
-            wakePhases = null,
-            baselineReady = baselineReady,
-            recoveryAvailable = false,
-            ansAvailable = false,
-            ppiWindowLabel = "no main sleep",
-            missingPpiReason = "No main sleep window was selected, so overnight PPI was not aligned to a fabricated window."
-        )
-        val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
+        val scoreResult = currentState.toScoreResult()
+        val status: TrafficLightStatus? = scoreResult.status
         return MorningReadSnapshot(
             sourceDate = sourceDate,
             status = status,
@@ -3047,7 +3139,8 @@ class ProbeRepository(
             nightlyRmssd = null,
             baselineReady = baselineReady,
             recoveryAvailable = false,
-            summary = "${status.name.lowercase().replaceFirstChar { it.titlecase() }} (user confirmed no sleep)",
+            summary = status?.let { "${it.name.lowercase().replaceFirstChar { c -> c.titlecase() }} (user confirmed no sleep)" }
+                ?: "No main sleep; awaiting a recent check-in.",
             reasons = listOf("You marked this day as having no main sleep window.") + scoreResult.reasons,
             isInterim = false,
             sleepDataReady = true,
@@ -3101,119 +3194,18 @@ class ProbeRepository(
             else -> "Interim: $fallback"
         }
 
-    private fun scoreMorningRead(
-        durationMinutes: Int?,
-        autonomicRmssd: Double?,
-        autonomicSource: String,
-        ppi247Autonomic: Ppi247WindowSummary?,
-        cycleCount: Int?,
-        wakePhases: Int?,
-        baselineReady: Boolean,
-        recoveryAvailable: Boolean,
-        ansAvailable: Boolean,
-        ppiWindowLabel: String,
-        missingPpiReason: String
-    ): MorningScoreResult {
-        var score = 0.0
-        var scoredInputs = 0
-        val reasons = mutableListOf<String>()
-
-        if (durationMinutes == null) {
-            reasons += "Sleep duration is not available yet."
-        } else {
-            scoredInputs += 1
-            when {
-                durationMinutes >= 450 -> {
-                    score += 1.0
-                    reasons += "Sleep duration looked solid at ${durationMinutes / 60}h ${durationMinutes % 60}m."
-                }
-                durationMinutes >= 390 -> reasons += "Sleep duration looked acceptable at ${durationMinutes / 60}h ${durationMinutes % 60}m."
-                durationMinutes >= 330 -> {
-                    score -= 0.8
-                    reasons += "Sleep duration looked short at ${durationMinutes / 60}h ${durationMinutes % 60}m."
-                }
-                else -> {
-                    score -= 1.5
-                    reasons += "Sleep duration looked very short at ${durationMinutes.div(60)}h ${durationMinutes.rem(60)}m."
-                }
-            }
-        }
-
-        if (autonomicRmssd == null) {
-            reasons += "Overnight autonomic data is unavailable."
-        } else {
-            scoredInputs += 1
-            when {
-                autonomicRmssd >= 75 -> {
-                    score += 1.0
-                    reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked strong at ${autonomicRmssd.toInt()}."
-                }
-                autonomicRmssd >= 60 -> reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked broadly OK at ${autonomicRmssd.toInt()}."
-                autonomicRmssd >= 45 -> {
-                    score -= 0.8
-                    reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked somewhat suppressed at ${autonomicRmssd.toInt()}."
-                }
-                else -> {
-                    score -= 1.5
-                    reasons += "${autonomicSourceLabel(autonomicSource)} RMSSD looked low at ${autonomicRmssd.toInt()}."
-                }
-            }
-        }
-
-        if (ppi247Autonomic != null) {
-            reasons += "24/7 PPI covered ${formatHours(ppi247Autonomic.coverageHours)} of the $ppiWindowLabel (${ppi247Autonomic.goodEpochCount} good epochs)."
-            ppi247Autonomic.lateMinusEarlyRmssdMs?.let { delta ->
-                when {
-                    delta >= 8.0 -> {
-                        score += 0.25
-                        reasons += "Overnight RMSSD rose toward morning."
-                    }
-                    delta <= -8.0 -> {
-                        score -= 0.35
-                        reasons += "Overnight RMSSD fell toward morning."
-                    }
-                }
-            }
-            if (ppi247Autonomic.poorEpochCount > ppi247Autonomic.goodEpochCount / 4) {
-                score -= 0.15
-                reasons += "24/7 PPI had some flagged contact/error windows."
-            }
-        } else {
-            reasons += missingPpiReason
-        }
-
-        if (wakePhases != null && wakePhases >= 40) {
-            score -= 0.4
-            reasons += "Sleep looked fragmented with many wake phases."
-        }
-        if (cycleCount != null && cycleCount >= 6) {
-            score += 0.2
-        }
-
-        if (baselineReady) {
-            score += 0.25
-        } else {
-            reasons += "Baseline history is not fully ready yet."
-        }
-        if (ppi247Autonomic == null && (!recoveryAvailable || !ansAvailable)) {
-            score -= 0.15
-            reasons += "Polar's higher-level overnight interpretation is still immature."
-        } else if (ppi247Autonomic != null && (!recoveryAvailable || !ansAvailable)) {
-            reasons += "Nightly Recharge interpretation is immature, but raw PPI is available."
-        }
-
-        val status = if (scoredInputs == 0) {
-            null
-        } else {
-            when {
-                score >= 1.5 -> TrafficLightStatus.GOOD
-                score >= 0.0 -> TrafficLightStatus.OK
-                score >= -1.25 -> TrafficLightStatus.UNSTEADY
-                else -> TrafficLightStatus.CRASH
-            }
-        }
-        return MorningScoreResult(status = status, reasons = reasons)
-    }
+    /**
+     * Adapter: express the model-v1 [CurrentStateRead] as the legacy score-carrier
+     * the snapshot branches consume. Replaces the deleted sleep-recovery scorer
+     * `scoreMorningRead`, which was empirically non-predictive and reproduced the
+     * Visible cognitive-dissonance failure (see docs/lodestone-model-v1.md). The
+     * forecast now comes from lived-function persistence + caution, not sleep.
+     */
+    private fun CurrentStateRead?.toScoreResult(): MorningScoreResult =
+        MorningScoreResult(
+            status = this?.forecastLevel,
+            reasons = this?.reasons.orEmpty()
+        )
 
     private fun summarizePpi247ForSleepWindow(
         sourceDate: String?,
@@ -3646,6 +3638,44 @@ class ProbeRepository(
             reasonsJson = GsonProvider.gson.toJson(reasons)
         )
 
+    private fun CurrentStateRead.toCurrentStateSnapshotEntity(
+        snapshotOrigin: String,
+        issuedAtEpochMs: Long
+    ): CurrentStateSnapshotEntity =
+        CurrentStateSnapshotEntity(
+            sourceDate = sourceDate,
+            issuedAtEpochMs = issuedAtEpochMs,
+            snapshotOrigin = snapshotOrigin,
+            modelVersion = CURRENT_STATE_MODEL_VERSION,
+            forecastLevel = forecastLevel?.name,
+            forecastBasis = forecastBasis.name,
+            cautionLevel = caution.level.name,
+            cautionKind = caution.kind.name,
+            cautionReasonsJson = GsonProvider.gson.toJson(caution.reasons),
+            confidenceLevel = confidence.name,
+            recentOutcomeLevel = recentOutcomeLevel?.name,
+            recentOutcomeDate = recentOutcomeDate,
+            exertionLoadRecent = exertionLoadRecentMvMinutes,
+            hrvCv24h = hrvCv24h,
+            reasonsJson = GsonProvider.gson.toJson(reasons)
+        )
+
+    private fun CurrentStateSnapshotEntity.isSameRead(other: CurrentStateSnapshotEntity): Boolean =
+        sourceDate == other.sourceDate &&
+            snapshotOrigin == other.snapshotOrigin &&
+            modelVersion == other.modelVersion &&
+            forecastLevel == other.forecastLevel &&
+            forecastBasis == other.forecastBasis &&
+            cautionLevel == other.cautionLevel &&
+            cautionKind == other.cautionKind &&
+            cautionReasonsJson == other.cautionReasonsJson &&
+            confidenceLevel == other.confidenceLevel &&
+            recentOutcomeLevel == other.recentOutcomeLevel &&
+            recentOutcomeDate == other.recentOutcomeDate &&
+            exertionLoadRecent == other.exertionLoadRecent &&
+            hrvCv24h == other.hrvCv24h &&
+            reasonsJson == other.reasonsJson
+
     private fun MorningPredictionSnapshotEntity.isSamePrediction(
         other: MorningPredictionSnapshotEntity
     ): Boolean =
@@ -3666,28 +3696,6 @@ class ProbeRepository(
             rawPpiCoverageHours == other.rawPpiCoverageHours &&
             summary == other.summary &&
             reasonsJson == other.reasonsJson
-
-    private fun autonomicSourceLabel(source: String): String =
-        when (MorningReadSource.fromKey(source)) {
-            MorningReadSource.PPI247_SLEEP_WINDOW -> "24/7 PPI"
-            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "Calibrated-window PPI"
-            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "Manual-window PPI"
-            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred-window PPI"
-            MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "Manual sleep window"
-            MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Calibrated-window PPI"
-            MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "Manual-window PPI"
-            MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred-window PPI"
-            MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY -> "Edited-window PPI"
-            MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY -> "Confirmed-window PPI"
-            MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY -> "Manual-window PPI"
-            MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "Confirmed-window PPI"
-            MorningReadSource.USER_CONFIRMED_NO_SLEEP -> "No-sleep"
-            MorningReadSource.NIGHTLY_RECHARGE_SUMMARY -> "Nightly Recharge"
-            else -> "Overnight"
-        }
-
-    private fun formatHours(hours: Double): String =
-        "${String.format(java.util.Locale.UK, "%.1f", hours)}h"
 
     private fun formatSignedMinutes(value: Int): String {
         val sign = if (value >= 0) "+" else "-"
@@ -3798,7 +3806,21 @@ private const val RAW_PPI_REST_CANDIDATE_SOURCE = "raw_ppi_rest_candidate"
 private const val MORNING_MODEL_VERSION = "morning_v1_primary_ppi_window_2026-05-15"
 const val MORNING_PREDICTION_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
 private const val MORNING_PREDICTION_ORIGIN_BACKFILLED = "BACKFILLED_RECALCULATED"
+
+// Model-v1 (current-state) — persistence + caution + capped confidence.
+private const val CURRENT_STATE_MODEL_VERSION = "current_state_v1_persistence_caution_2026-06-13"
+const val CURRENT_STATE_ORIGIN_OBSERVED = "OBSERVED_IN_APP"
+private const val CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS = 10
 private val AUTOS_FILE_NAME_REGEX = Regex("""AUTOS\d{3}\.BPB""")
+
+/** Reactive inputs for the sleep/PPI provenance snapshot (see [ProbeRepository.morningRead]). */
+private data class MorningReadProvenanceInputs(
+    val sleepRow: SleepNightRawEntity?,
+    val nightlyRow: NightlyRechargeRawEntity?,
+    val ppi247Epochs: List<Ppi247EpochEntity>,
+    val wakeMarkers: List<WakeMarkerEntity>,
+    val sleepEpisodes: List<SleepEpisodeEntity>
+)
 
 private class SyncNotificationsNotReadyException :
     IllegalStateException("Sync notifications not enabled")

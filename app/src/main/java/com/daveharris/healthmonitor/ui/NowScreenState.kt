@@ -2,6 +2,9 @@ package com.daveharris.healthmonitor.ui
 
 import com.daveharris.healthmonitor.ACTIVE_BEDTIME_MARKER_DURATION
 import com.daveharris.healthmonitor.ACTIVE_WAKE_MARKER_DURATION
+import com.daveharris.healthmonitor.data.CautionLevel
+import com.daveharris.healthmonitor.data.ConfidenceLevel
+import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.MorningReadSource
@@ -203,6 +206,7 @@ private const val RECENT_REST_WINDOW_HOURS = 18L
 fun buildNowScreenState(
     today: String,
     morningRead: MorningReadSnapshot?,
+    currentStateRead: CurrentStateRead? = null,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -268,7 +272,10 @@ fun buildNowScreenState(
         today = today,
         dailyCheckIns = dailyCheckIns
     )
-    val stateStability = buildStateStability(relevantMorningRead, noMainSleep)
+    // Gate by today like morningRead, so a stale read from another day never
+    // surfaces a forecast/caution labelled as today's.
+    val relevantCurrentState = currentStateRead?.takeIf { it.sourceDate == today }
+    val stateStability = buildStateStability(relevantCurrentState)
     val autonomicContext = buildAutonomicContext(relevantMorningRead, noMainSleep)
     val currentState = buildCurrentState(
         morningRead = relevantMorningRead,
@@ -801,37 +808,39 @@ private fun buildSignalRobustness(
     )
 }
 
-private fun buildStateStability(
-    morningRead: MorningReadSnapshot?,
-    noMainSleep: Boolean
-): NowStateStability {
-    if (noMainSleep) {
-        return NowStateStability(
-            availability = NowDataAvailability.NOT_APPLICABLE,
-            label = "Not applicable",
-            detail = "No main sleep is saved for this date."
-        )
-    }
-    val goodEpochs = morningRead?.rawPpiGoodEpochCount
-    val coverageHours = morningRead?.rawPpiCoverageHours
-    if (goodEpochs == null || coverageHours == null) {
+/**
+ * Model-v1 replacement for the deleted fake `buildStateStability` (which
+ * mislabelled PPI data coverage as "stability"). Stability is now the honest
+ * pairing the naming contract calls for: the caution signal (brittleness /
+ * push-risk) sitting BESIDE the forecast, qualified by confidence (data support).
+ * See docs/lodestone-naming-contract.md §3 and docs/lodestone-model-v1.md §2-3.
+ */
+private fun buildStateStability(currentState: CurrentStateRead?): NowStateStability {
+    if (currentState == null) {
         return NowStateStability(
             availability = NowDataAvailability.MISSING,
             label = "TBC",
-            detail = "Need enough PPI coverage before describing stability."
+            detail = "Not enough recent data to describe stability yet."
         )
     }
-    val poorEpochs = morningRead.rawPpiPoorEpochCount ?: 0
-    val label = when {
-        goodEpochs < 12 || coverageHours < 3.0 -> "Brittle"
-        poorEpochs > goodEpochs / 3 -> "Brittle"
-        poorEpochs > 0 || coverageHours < 5.0 -> "Mixed"
-        else -> "Stable"
+    val caution = currentState.caution
+    if (caution.level == CautionLevel.ELEVATED) {
+        return NowStateStability(
+            availability = NowDataAvailability.PRESENT,
+            label = "Caution",
+            detail = caution.reasons.firstOrNull()
+                ?: "Recent load or instability is up — easing may be wise."
+        )
+    }
+    val confidenceNote = when (currentState.confidence) {
+        ConfidenceLevel.LOW -> "Limited supporting data — read this lightly."
+        ConfidenceLevel.MEDIUM -> "Reasonably supported by recent data."
+        ConfidenceLevel.HIGH -> "Well supported by recent data."
     }
     return NowStateStability(
         availability = NowDataAvailability.PRESENT,
-        label = label,
-        detail = "$goodEpochs usable PPI windows across ${String.format(java.util.Locale.UK, "%.1fh", coverageHours)}."
+        label = "No caution flag",
+        detail = confidenceNote
     )
 }
 
