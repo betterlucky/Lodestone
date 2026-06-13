@@ -106,10 +106,12 @@ noted not built. Do not gate anything on the prospective PEM checkbox.
   `current_state_snapshot` (persisted history), per the naming contract.
 - New columns (stems): `forecastLevel`, `cautionLevel`, `cautionReasonsJson`,
   `exertionLoadRecent`, `hrvCv24h`, `confidenceLevel`, plus provenance/source.
-- **Room migration:** add the new table; keep `morning_prediction_snapshot`
-  readable so existing History rows survive (read-only legacy), or migrate them
-  with `forecastLevel` populated from the old `status` where sensible. Decide at
-  implementation; do not destroy history.
+- **Room migration (decided):** additive only — migration 27→28 adds
+  `current_state_snapshot` and leaves `morning_prediction_snapshot` intact as
+  read-only legacy so existing History rows survive. We do **not** copy old rows
+  into the new table (the old `status` is the discredited sleep score; back-filling
+  it as `forecastLevel` would launder the very thing we're replacing). History
+  reads both tables until the redesign moves it onto `current_state_snapshot`.
 
 ## Validation loop (standing)
 Port the leave-one-out backtest (`/tmp/hmexports/deepdive2.py`) into a repo

@@ -742,7 +742,7 @@ class NowScreenStateTest {
         buildNowScreenState(
             today = "2026-05-31",
             morningRead = morningRead,
-            currentState = currentState,
+            currentStateRead = currentState,
             syncRuns = syncRuns,
             wakeMarkers = wakeMarkers,
             dailyCheckIns = dailyCheckIns,

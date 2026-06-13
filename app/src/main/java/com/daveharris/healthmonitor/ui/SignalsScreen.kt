@@ -56,7 +56,7 @@ fun SignalsScreen(
     val nowState = buildNowScreenState(
         today = today,
         morningRead = morningRead,
-        currentState = currentState,
+        currentStateRead = currentState,
         syncRuns = syncRuns,
         wakeMarkers = wakeMarkers,
         dailyCheckIns = dailyCheckIns,

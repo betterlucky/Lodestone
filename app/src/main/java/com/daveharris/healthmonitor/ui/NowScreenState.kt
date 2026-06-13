@@ -206,7 +206,7 @@ private const val RECENT_REST_WINDOW_HOURS = 18L
 fun buildNowScreenState(
     today: String,
     morningRead: MorningReadSnapshot?,
-    currentState: CurrentStateRead? = null,
+    currentStateRead: CurrentStateRead? = null,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -272,7 +272,10 @@ fun buildNowScreenState(
         today = today,
         dailyCheckIns = dailyCheckIns
     )
-    val stateStability = buildStateStability(currentState)
+    // Gate by today like morningRead, so a stale read from another day never
+    // surfaces a forecast/caution labelled as today's.
+    val relevantCurrentState = currentStateRead?.takeIf { it.sourceDate == today }
+    val stateStability = buildStateStability(relevantCurrentState)
     val autonomicContext = buildAutonomicContext(relevantMorningRead, noMainSleep)
     val currentState = buildCurrentState(
         morningRead = relevantMorningRead,

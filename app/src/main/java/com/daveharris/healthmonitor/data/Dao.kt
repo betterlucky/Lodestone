@@ -828,8 +828,8 @@ interface ProbeDao {
         snapshotOrigin: String
     ): CurrentStateSnapshotEntity?
 
-    @Query("SELECT * FROM daily_check_in ORDER BY sourceDate DESC LIMIT :limit")
-    suspend fun getRecentDailyCheckIns(limit: Int): List<DailyCheckInEntity>
+    @Query("SELECT * FROM daily_check_in WHERE sourceDate <= :asOf ORDER BY sourceDate DESC LIMIT :limit")
+    suspend fun getRecentDailyCheckInsAsOf(asOf: String, limit: Int): List<DailyCheckInEntity>
 
     @Query("SELECT * FROM daily_summary_raw WHERE sourceDate IN (:sourceDates)")
     suspend fun getDailySummariesForDates(sourceDates: List<String>): List<DailySummaryRawEntity>

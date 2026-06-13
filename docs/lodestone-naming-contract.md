@@ -67,7 +67,7 @@ name rather than mechanically renamed.
 | `scoreMorningRead` / `MorningScoreResult` | → replaced by `CurrentStateModel` (persistence + caution) | model-v1 | sleep-score engine deleted; new module `CurrentStateModel.kt` |
 | `provisional*MorningRead*`, `noMainSleepMorningRead` | `provisional*CurrentStateRead*`, `noMainSleepCurrentStateRead` | model-v1 | |
 | `MorningReadSource` | `AnalysisWindowSource` | model-v1 | aligns with redesign doc "active analysis-window provenance"; keep enum values |
-| snapshot columns `nightlyRmssd`, `sleepDurationMinutes`, `rawPpi*`, `overnightAutonomicSource`, `isInterim`, `sleepDataReady` | new schema TBD in model-v1 plan; stems: `recentSfLevel`, `cautionLevel`, `exertionLoadRecent`, `hrvCv24h`, `confidenceLevel` | model-v1 | old columns kept read-only for history during migration |
+| snapshot columns `nightlyRmssd`, `sleepDurationMinutes`, `rawPpi*`, `overnightAutonomicSource`, `isInterim`, `sleepDataReady` | new schema (implemented): stems `forecastLevel`, `forecastBasis`, `cautionLevel`, `cautionKind`, `cautionReasonsJson`, `confidenceLevel`, `recentOutcomeLevel`, `exertionLoadRecent`, `hrvCv24h` (matches `docs/lodestone-model-v1.md` and `CurrentStateSnapshotEntity`) | model-v1 | old columns kept read-only for history during migration |
 | `MorningReadScheduler.kt` | `CurrentStateScheduler.kt` | sweep | peripheral |
 
 ### Now UI (the `Now` tab)

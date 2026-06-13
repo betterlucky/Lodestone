@@ -381,7 +381,9 @@ class ProbeRepository(
         val todayDate = runCatching { LocalDate.parse(today) }.getOrNull()
 
         // --- Persistence spine: recent lived outcomes, newest first ---
-        val checkIns = dao.getRecentDailyCheckIns(CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS)
+        // Bound by `today` so historical/backfill reads never see future outcomes
+        // (a later evening outcome must not leak into an older day's forecast).
+        val checkIns = dao.getRecentDailyCheckInsAsOf(today, CURRENT_STATE_RECENT_OUTCOME_LOOKBACK_DAYS)
             .sortedByDescending { it.sourceDate }
         val recentOutcomes = checkIns.mapNotNull { CurrentStateFeatures.outcomeLevel(it.eveningOutcome) }
         val latestCheckIn = checkIns.firstOrNull { CurrentStateFeatures.outcomeLevel(it.eveningOutcome) != null }
@@ -3035,7 +3037,7 @@ class ProbeRepository(
         }
 
         val scoreResult = currentState.toScoreResult()
-        val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
+        val status: TrafficLightStatus? = scoreResult.status
         val contextReasons = primaryWindow?.let {
             finalSleepReportContextReasons(
                 primaryWindow = it,
@@ -3069,7 +3071,8 @@ class ProbeRepository(
             nightlyRmssd = autonomicRmssd,
             baselineReady = baselineReady,
             recoveryAvailable = recoveryAvailable,
-            summary = "${status.name.lowercase().replaceFirstChar { it.titlecase() }} ($confidence confidence)",
+            summary = status?.let { "${it.name.lowercase().replaceFirstChar { c -> c.titlecase() }} ($confidence confidence)" }
+                ?: "Awaiting a recent check-in to forecast from.",
             reasons = reasons,
             isInterim = false,
             sleepDataReady = true,
@@ -3111,7 +3114,7 @@ class ProbeRepository(
     ): MorningReadSnapshot {
         val autonomicSource = MorningReadSource.USER_CONFIRMED_NO_SLEEP.key
         val scoreResult = currentState.toScoreResult()
-        val status = scoreResult.status ?: TrafficLightStatus.UNSTEADY
+        val status: TrafficLightStatus? = scoreResult.status
         return MorningReadSnapshot(
             sourceDate = sourceDate,
             status = status,
@@ -3121,7 +3124,8 @@ class ProbeRepository(
             nightlyRmssd = null,
             baselineReady = baselineReady,
             recoveryAvailable = false,
-            summary = "${status.name.lowercase().replaceFirstChar { it.titlecase() }} (user confirmed no sleep)",
+            summary = status?.let { "${it.name.lowercase().replaceFirstChar { c -> c.titlecase() }} (user confirmed no sleep)" }
+                ?: "No main sleep; awaiting a recent check-in.",
             reasons = listOf("You marked this day as having no main sleep window.") + scoreResult.reasons,
             isInterim = false,
             sleepDataReady = true,
