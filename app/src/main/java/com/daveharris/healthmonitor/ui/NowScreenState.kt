@@ -184,6 +184,7 @@ data class NowScreenState(
     val today: String,
     val activeMorningRead: MorningReadSnapshot?,
     val activeAnalysisWindow: NowAnalysisWindowProvenance,
+    val recentRest: NowDataPoint,
     val currentState: NowCurrentState,
     val functionalContext: NowFunctionalContext,
     val signalRobustness: NowSignalRobustness,
@@ -196,6 +197,8 @@ data class NowScreenState(
     val readinessStatus: TodayReadinessStatus,
     val journalFocus: NowJournalFocus
 )
+
+private const val RECENT_REST_WINDOW_HOURS = 18L
 
 fun buildNowScreenState(
     today: String,
@@ -237,6 +240,12 @@ fun buildNowScreenState(
         sleepEpisodeReviewState = sleepEpisodeReviewState,
         noMainSleep = noMainSleep,
         markerStatus = markerStatus
+    )
+    val recentRest = buildRecentRestSummary(
+        activeAnalysisWindow = activeAnalysisWindow,
+        sleepEpisodeReviewState = sleepEpisodeReviewState,
+        noMainSleep = noMainSleep,
+        nowEpochMs = nowEpochMs
     )
     val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
     val hasPpi = relevantMorningRead.hasPpiSignal()
@@ -302,6 +311,7 @@ fun buildNowScreenState(
         today = today,
         activeMorningRead = activeMorningRead,
         activeAnalysisWindow = activeAnalysisWindow,
+        recentRest = recentRest,
         currentState = currentState,
         functionalContext = functionalContext,
         signalRobustness = signalRobustness,
@@ -314,6 +324,113 @@ fun buildNowScreenState(
         readinessStatus = readinessStatus,
         journalFocus = journalFocus
     )
+}
+
+private data class RestSummaryInterval(
+    val startEpochMs: Long,
+    val endEpochMs: Long
+)
+
+private fun buildRecentRestSummary(
+    activeAnalysisWindow: NowAnalysisWindowProvenance,
+    sleepEpisodeReviewState: SleepEpisodeReviewState,
+    noMainSleep: Boolean,
+    nowEpochMs: Long
+): NowDataPoint {
+    if (noMainSleep || activeAnalysisWindow.sourceType == NowAnalysisWindowSourceType.NO_MAIN_SLEEP) {
+        return NowDataPoint(
+            label = "Recent rest",
+            availability = NowDataAvailability.NOT_APPLICABLE,
+            detail = "No saved sleep/rest"
+        )
+    }
+    val windowStart = nowEpochMs - Duration.ofHours(RECENT_REST_WINDOW_HOURS).toMillis()
+    val intervals = buildList {
+        activeAnalysisWindow.toRestSummaryInterval()?.let { add(it) }
+        sleepEpisodeReviewState.activeDateGroup
+            ?.items
+            .orEmpty()
+            .filter { item -> !item.isNoSleep && !item.isCandidate }
+            .mapNotNull { item ->
+                val start = item.startEpochMs
+                val end = item.endEpochMs
+                if (start != null && end != null && end > start) {
+                    RestSummaryInterval(start, end)
+                } else {
+                    null
+                }
+            }
+            .forEach { add(it) }
+    }
+        .distinct()
+
+    val totalMs = intervals
+        .mapNotNull { interval ->
+            val clippedStart = interval.startEpochMs.coerceAtLeast(windowStart)
+            val clippedEnd = interval.endEpochMs.coerceAtMost(nowEpochMs)
+            if (clippedEnd > clippedStart) {
+                RestSummaryInterval(clippedStart, clippedEnd)
+            } else {
+                null
+            }
+        }
+        .mergeRestSummaryIntervals()
+        .sumOf { interval -> interval.endEpochMs - interval.startEpochMs }
+    val minutes = (totalMs / 60_000L).toInt()
+    if (minutes > 0) {
+        return NowDataPoint(
+            label = "Recent rest",
+            availability = NowDataAvailability.PRESENT,
+            detail = "${durationMinutesLabel(minutes)} (last ${RECENT_REST_WINDOW_HOURS}h)"
+        )
+    }
+    if (totalMs > 0L) {
+        return NowDataPoint(
+            label = "Recent rest",
+            availability = NowDataAvailability.PRESENT,
+            detail = "Under 1m (last ${RECENT_REST_WINDOW_HOURS}h)"
+        )
+    }
+    val fallbackDuration = activeAnalysisWindow.durationLabel
+        .takeUnless { it == "Duration unknown" || it == "Not applicable" }
+    return if (fallbackDuration != null) {
+        NowDataPoint(
+            label = "Recent rest",
+            availability = NowDataAvailability.PARTIAL,
+            detail = "$fallbackDuration (last ${RECENT_REST_WINDOW_HOURS}h)"
+        )
+    } else {
+        NowDataPoint(
+            label = "Recent rest",
+            availability = NowDataAvailability.MISSING,
+            detail = "TBC"
+        )
+    }
+}
+
+private fun NowAnalysisWindowProvenance.toRestSummaryInterval(): RestSummaryInterval? {
+    val start = startEpochMs
+    val end = endEpochMs
+    return if (start != null && end != null && end > start) {
+        RestSummaryInterval(start, end)
+    } else {
+        null
+    }
+}
+
+private fun List<RestSummaryInterval>.mergeRestSummaryIntervals(): List<RestSummaryInterval> {
+    if (isEmpty()) return emptyList()
+    val sorted = sortedBy { it.startEpochMs }
+    val merged = mutableListOf<RestSummaryInterval>()
+    sorted.forEach { interval ->
+        val previous = merged.lastOrNull()
+        if (previous == null || interval.startEpochMs > previous.endEpochMs) {
+            merged += interval
+        } else if (interval.endEpochMs > previous.endEpochMs) {
+            merged[merged.lastIndex] = previous.copy(endEpochMs = interval.endEpochMs)
+        }
+    }
+    return merged
 }
 
 private fun buildCurrentState(
@@ -330,9 +447,9 @@ private fun buildCurrentState(
             kind = NowCurrentStateKind.NO_MAIN_SLEEP,
             availability = NowDataAvailability.PRESENT,
             status = null,
-            label = "No main sleep recorded",
-            qualifier = "Sleep window not applicable",
-            message = "No main sleep is saved for this date, so Lodestone will not invent a sleep window."
+            label = "No sleep/rest recorded",
+            qualifier = "No saved window",
+            message = "No sleep/rest window is saved for this date, so Lodestone will not invent one."
         )
         markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> NowCurrentState(
             kind = NowCurrentStateKind.SLEEP_MARKED,
@@ -1170,7 +1287,7 @@ private fun buildTodayReadinessStatus(
         hrvDetail = hrvDetailForState(morningRead, noMainSleep, analysisWindow),
         dataQuality = dataQuality,
         connectionPrompt = if (syncRunning) {
-            "Keep the phone close to the Loop until PPI finishes."
+            "Keep the phone close to the Loop until sync finishes."
         } else {
             null
         },
@@ -1448,7 +1565,7 @@ private fun catchUpPrompt(today: String, morningRead: MorningReadSnapshot?): Str
     val todayDate = runCatching { java.time.LocalDate.parse(today) }.getOrNull() ?: return null
     val missingDays = java.time.temporal.ChronoUnit.DAYS.between(latestReadDate, todayDate)
     return if (missingDays > 0) {
-        "Last morning signal was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
+        "Last forecast refresh was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
     } else {
         null
     }

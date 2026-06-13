@@ -26,7 +26,7 @@ class JournalScreenTest {
 
     @Test
     fun primaryTabsRetireJournalDestination() {
-        assertEquals(listOf("Now", "History"), primaryProbeTabTitles())
+        assertEquals(listOf("Now", "Signals", "History"), primaryProbeTabTitles())
     }
 
     @OptIn(ExperimentalMaterial3Api::class)

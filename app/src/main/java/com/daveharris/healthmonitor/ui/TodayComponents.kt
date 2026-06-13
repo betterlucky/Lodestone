@@ -286,7 +286,7 @@ private fun catchUpPrompt(today: String, morningRead: MorningReadSnapshot?): Str
     val todayDate = runCatching { LocalDate.parse(today) }.getOrNull() ?: return null
     val missingDays = java.time.temporal.ChronoUnit.DAYS.between(latestReadDate, todayDate)
     return if (missingDays > 0) {
-        "Last morning signal was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
+        "Last forecast refresh was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
     } else {
         null
     }
@@ -396,7 +396,7 @@ fun TodayHeroCard(
                     dailyForecastHeroFacts(nowState).forEach { HeroPill(it) }
                 }
                 Text(
-                    nowState.currentState.message,
+                    dailyForecastHeroMessage(nowState),
                     color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.90f),
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -410,7 +410,7 @@ internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
         heroAttentionFact(nowState)?.let { add(it) }
         heroQualifierFact(nowState)?.let { add(it) }
         heroStabilityFact(nowState)?.let { add(it) }
-        add("Confidence: ${nowState.signalRobustness.label}")
+        add(heroConfidenceFact(nowState))
         add(heroFreshnessFact(nowState))
         add(heroSleepRestFact(nowState))
     }.distinct().take(MAX_DAILY_FORECAST_FACTS)
@@ -418,8 +418,58 @@ internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
 private const val MAX_DAILY_FORECAST_FACTS = 5
 private const val DEFAULT_DAILY_FORECAST_QUALIFIER = "Ready"
 
+internal fun dailyForecastHeroMessage(nowState: NowScreenState): String =
+    when {
+        nowState.currentState.qualifier.contains("function", ignoreCase = true) ->
+            "Recent outcomes suggest a lower-function spell. Keep today conservative until function has clearly improved."
+        nowState.currentState.kind == NowCurrentStateKind.WAITING_FOR_DATA &&
+            nowState.functionalContext.availability != NowDataAvailability.MISSING ->
+            "No fresh Loop data yet. Lodestone can still lean on recent check-ins, but confidence is lower."
+        nowState.currentState.kind == NowCurrentStateKind.WAITING_FOR_DATA ->
+            "Tap Check in to refresh the forecast. Without fresh data, Lodestone can only use saved context."
+        nowState.currentState.kind == NowCurrentStateKind.SYNCING ->
+            "Sync is running. Keep the phone and Loop close until the forecast refreshes."
+        nowState.currentState.kind == NowCurrentStateKind.SLEEP_MARKED ->
+            "Bedtime is saved. Check in when you are ready to refresh the forecast."
+        nowState.currentState.kind == NowCurrentStateKind.NEEDS_WINDOW ->
+            "Some body-signal data needs sleep/rest context before it can support the forecast. Recent check-ins still matter."
+        nowState.currentState.kind == NowCurrentStateKind.LOW_CONFIDENCE_READ ->
+            "Today's read is partial, so treat the forecast as cautious pacing guidance."
+        nowState.currentState.kind == NowCurrentStateKind.NO_MAIN_SLEEP ->
+            "No sleep/rest window is saved for this date, so Lodestone will not invent one."
+        else ->
+            "Use this as pacing guidance. Recent function, rest, and signal quality all stay part of the read."
+    }
+
+internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
+    when {
+        nowState.currentState.kind == NowCurrentStateKind.SYNCING ->
+            "Keep the phone and Loop close while sync completes."
+        nowState.deviceConnection.availability == NowDataAvailability.MISSING ->
+            "Check in can refresh Loop data once a device is selected. Recent check-ins still provide functional context."
+        nowState.signalRobustness.availability == NowDataAvailability.MISSING &&
+            nowState.functionalContext.availability != NowDataAvailability.MISSING ->
+            "Check in refreshes Loop data when available. Until then, the forecast leans on recent check-ins."
+        else ->
+            "Check in refreshes the forecast and syncs the Loop."
+    }
+
 private fun heroQualifierFact(nowState: NowScreenState): String? =
-    nowState.currentState.qualifier.takeUnless { it == DEFAULT_DAILY_FORECAST_QUALIFIER }
+    when {
+        nowState.currentState.qualifier == DEFAULT_DAILY_FORECAST_QUALIFIER -> null
+        nowState.currentState.kind == NowCurrentStateKind.NEEDS_WINDOW -> "Needs context"
+        nowState.currentState.kind == NowCurrentStateKind.NO_MAIN_SLEEP -> "No saved window"
+        nowState.currentState.qualifier.contains("function", ignoreCase = true) -> "Mixed evidence"
+        nowState.currentState.qualifier.contains("signal", ignoreCase = true) -> "No body signal"
+        else -> scrubHeroQualifier(nowState.currentState.qualifier)
+    }
+
+private fun scrubHeroQualifier(qualifier: String): String =
+    when {
+        qualifier.contains("PPI", ignoreCase = true) -> "Needs context"
+        qualifier.contains("autonomic", ignoreCase = true) -> "Mixed evidence"
+        else -> qualifier
+    }
 
 private fun heroAttentionFact(nowState: NowScreenState): String? {
     val needsDeviceContext = nowState.readinessStatus.connectionPrompt != null ||
@@ -441,20 +491,22 @@ private fun heroStabilityFact(nowState: NowScreenState): String? =
         null
     }
 
+private fun heroConfidenceFact(nowState: NowScreenState): String =
+    when {
+        nowState.signalRobustness.availability == NowDataAvailability.MISSING &&
+            nowState.functionalContext.availability != NowDataAvailability.MISSING ->
+            "Confidence: check-ins only"
+        nowState.signalRobustness.availability == NowDataAvailability.MISSING ->
+            "Confidence: low"
+        else ->
+            "Confidence: ${nowState.signalRobustness.label}"
+    }
+
 private fun heroFreshnessFact(nowState: NowScreenState): String =
     "Last sync: ${nowState.freshness.loopSync.detail}"
 
 private fun heroSleepRestFact(nowState: NowScreenState): String =
-    when {
-        nowState.activeAnalysisWindow.sourceType == NowAnalysisWindowSourceType.NO_MAIN_SLEEP ->
-            "Sleep/rest: no primary"
-        nowState.activeAnalysisWindow.durationLabel == "Duration unknown" ->
-            "Sleep/rest: TBC"
-        nowState.activeAnalysisWindow.durationLabel == "Not applicable" ->
-            "Sleep/rest: n/a"
-        else ->
-            "Sleep/rest: ${nowState.activeAnalysisWindow.durationLabel}"
-    }
+    "Recent rest: ${nowState.recentRest.detail}"
 
 @Composable
 private fun HeroPill(label: String) {
@@ -592,7 +644,7 @@ private val NowEvidenceDetail.title: String
         NowEvidenceDetail.SIGNAL -> "Signal detail"
         NowEvidenceDetail.SLEEP_REST -> "Sleep/rest evidence"
         NowEvidenceDetail.DATA_QUALITY -> "Data quality"
-        NowEvidenceDetail.HRV -> "Overnight HRV detail"
+        NowEvidenceDetail.HRV -> "HRV detail"
     }
 
 @Composable
@@ -783,7 +835,7 @@ fun HrvTrajectoryDialog(
     val trend = hrvTrendSummary(points)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Overnight HRV trajectory") },
+        title = { Text("HRV trajectory") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
