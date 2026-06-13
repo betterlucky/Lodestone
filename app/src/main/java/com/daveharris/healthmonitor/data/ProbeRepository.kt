@@ -82,6 +82,7 @@ class ProbeRepository(
         deriveMorningRead(sleep, nightly, ppi247Epochs, wakeMarkers, sleepEpisodes)
     }
     val recentWakeMarkers = dao.observeRecentWakeMarkers()
+    val recentPpi247Epochs = dao.observeRecentPpi247Epochs()
 
     init {
         scope.launch {

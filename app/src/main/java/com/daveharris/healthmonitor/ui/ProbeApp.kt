@@ -76,6 +76,8 @@ fun ProbeApp(
     val morningPredictionSnapshots by viewModel.morningPredictionSnapshots.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
     val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
+    val recentPpi247Epochs by viewModel.recentPpi247Epochs.collectAsState()
+    val recentSleepEpisodes by viewModel.recentSleepEpisodes.collectAsState()
     val sleepEpisodeReviewState by viewModel.sleepEpisodeReviewState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val pagerState = rememberPagerState(pageCount = { ProbeTab.entries.size })
@@ -217,6 +219,8 @@ fun ProbeApp(
                                             wakeMarkers = recentWakeMarkers,
                                             dailyCheckIns = dailyCheckIns,
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
+                                            ppi247Epochs = recentPpi247Epochs,
+                                            sleepEpisodes = recentSleepEpisodes,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
                                             onOpenSettings = { showSettings = true }
