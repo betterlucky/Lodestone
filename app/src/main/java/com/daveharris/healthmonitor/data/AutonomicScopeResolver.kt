@@ -27,6 +27,10 @@ object AutonomicScopeResolver {
         }
         val anchorEpochMs = historicDateEndEpochMs
             ?: minOf(nowEpochMs, lastPpiSyncEpochMs ?: nowEpochMs)
+        // Freshness/staleness must age PPI against the moment being viewed: end-of-day
+        // for a historic read, wall-clock now for the live read. Using `now` for a
+        // historic date would always report the data as days stale.
+        val freshnessReferenceEpochMs = historicDateEndEpochMs ?: nowEpochMs
         val (windowStart, windowEnd, provenanceLabel) = when (scope) {
             AutonomicDetailScope.ACTIVE_SLEEP_REST -> {
                 val window = recoveryWindow
@@ -55,7 +59,7 @@ object AutonomicScopeResolver {
             nowEpochMs = nowEpochMs
         )
         val ppiFreshnessMinutes = lastPpiSyncEpochMs?.let { syncMs ->
-            ((nowEpochMs - syncMs).coerceAtLeast(0L) / 60_000L).toInt()
+            ((freshnessReferenceEpochMs - syncMs).coerceAtLeast(0L) / 60_000L).toInt()
         }
         val quality = AutonomicScopeQuality(
             summaryEpochCount = breakdown.summaryEpochCount,
@@ -90,7 +94,7 @@ object AutonomicScopeResolver {
             quality = quality,
             recoveryWindow = recoveryWindow,
             anchorEpochMs = anchorEpochMs,
-            nowEpochMs = nowEpochMs,
+            freshnessReferenceEpochMs = freshnessReferenceEpochMs,
             lastPpiSyncEpochMs = lastPpiSyncEpochMs
         )
         val familyBanner = when (family) {
@@ -155,7 +159,7 @@ object AutonomicScopeResolver {
         quality: AutonomicScopeQuality,
         recoveryWindow: AutonomicRecoveryWindow?,
         anchorEpochMs: Long,
-        nowEpochMs: Long,
+        freshnessReferenceEpochMs: Long,
         lastPpiSyncEpochMs: Long?
     ): List<String> {
         val lines = mutableListOf<String>()
@@ -183,7 +187,7 @@ object AutonomicScopeResolver {
                 lines += "Includes sleep/rest time — not the same as the active recovery curve."
             }
         }
-        val staleMinutes = lastPpiSyncEpochMs?.let { ((nowEpochMs - it) / 60_000L).toInt() }
+        val staleMinutes = lastPpiSyncEpochMs?.let { ((freshnessReferenceEpochMs - it) / 60_000L).toInt() }
         if (staleMinutes != null && staleMinutes > 120) {
             lines += "PPI may be stale; check in to refresh."
         }

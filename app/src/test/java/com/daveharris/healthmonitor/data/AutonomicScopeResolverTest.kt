@@ -228,6 +228,52 @@ class AutonomicScopeResolverTest {
             }
     }
 
+    @Test
+    fun rollingScopeIncludesEpochOverlappingLeftEdge() {
+        val anchor = baseEpochMs + 2 * 60 * 60_000L
+        val windowStart = anchor - 60 * 60_000L
+        val epochs = listOf(
+            // Starts before the window but ends 3 min inside it — should count.
+            epoch(start = windowStart - 2 * 60_000L, quality = "good", rmssd = 44.0),
+            // Ends before the window opens — must stay excluded.
+            epoch(start = windowStart - 10 * 60_000L, quality = "good", rmssd = 50.0)
+        )
+
+        val summary = AutonomicScopeResolver.resolve(
+            scope = AutonomicDetailScope.ROLLING_1H,
+            epochs = epochs,
+            recoveryWindow = recoveryWindow,
+            sleepEpisodes = emptyList(),
+            lastPpiSyncEpochMs = anchor,
+            nowEpochMs = anchor
+        )
+
+        assertEquals(1, summary.quality.summaryEpochCount)
+        assertEquals(1, summary.trajectoryPoints.size)
+    }
+
+    @Test
+    fun historicFreshnessAgesPpiAgainstTheDateAnchorNotWallClock() {
+        val dateEnd = AutonomicScopeResolver.historicDateEndEpochMs("2026-06-13")!!
+        val window = recoveryWindow.copy(
+            startEpochMs = dateEnd - 6 * 60 * 60_000L,
+            endEpochMs = dateEnd - 60 * 60_000L
+        )
+
+        val summary = AutonomicScopeResolver.resolve(
+            scope = AutonomicDetailScope.ACTIVE_SLEEP_REST,
+            epochs = emptyList(),
+            recoveryWindow = window,
+            sleepEpisodes = emptyList(),
+            lastPpiSyncEpochMs = dateEnd - 90 * 60_000L,
+            nowEpochMs = dateEnd + 100L * 24 * 60 * 60_000L,
+            historicDateEndEpochMs = dateEnd
+        )
+
+        // 90 min before end-of-day, not ~100 days against wall-clock now.
+        assertEquals(90, summary.quality.ppiFreshnessMinutes)
+    }
+
     private fun epoch(
         start: Long,
         quality: String,

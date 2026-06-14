@@ -23,7 +23,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -81,9 +80,7 @@ data class SignalConfidenceSummary(
 
 enum class NowEvidenceDetail {
     SIGNAL,
-    SLEEP_REST,
-    DATA_QUALITY,
-    HRV
+    DATA_QUALITY
 }
 
 fun signalConfidenceSummary(
@@ -303,77 +300,10 @@ private fun formatHeroDate(value: String): String =
     }.getOrDefault(value)
 
 @Composable
-fun MorningSignalSection(
-    nowState: NowScreenState,
-    onOpenEvidence: (NowEvidenceDetail) -> Unit
-) {
-    val morningRead = nowState.activeMorningRead
-    val tone = statusTone(nowState.currentState.status)
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = tone.copy(alpha = if (nowState.currentState.status == null) 0.06f else 0.10f)
-        ),
-        border = BorderStroke(1.dp, tone.copy(alpha = 0.18f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Current signal", fontWeight = FontWeight.SemiBold)
-            if (morningRead == null) {
-                Text(nowState.currentState.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (nowState.currentState.signalConfidence.missingInputs.isNotEmpty()) {
-                    DetailRow("Needed", nowState.currentState.signalConfidence.missingInputs.joinToString())
-                }
-                DetailRow("Sleep/rest", nowState.activeAnalysisWindow.label)
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Daily forecast", nowState.currentState.status?.let { labelForStatus(it.name) } ?: "TBC")
-                    DetailRow("Functional context", nowState.functionalContext.label)
-                    DetailRow("Autonomic context", nowState.autonomicContext.label)
-                    if (nowState.stateStability.availability == NowDataAvailability.PRESENT) {
-                        DetailRow("Stability", nowState.stateStability.label)
-                    }
-                    if (nowState.signalRobustness.missingInputs.isNotEmpty()) {
-                        DetailRow("Needed", nowState.signalRobustness.missingInputs.joinToString())
-                    }
-                }
-                nowState.currentStateRead?.reasons.orEmpty().take(3).forEach { reason ->
-                    Text("* $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
-                    Text(nowState.functionalContext.detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                EvidenceChip("Signal", { onOpenEvidence(NowEvidenceDetail.SIGNAL) })
-                EvidenceChip("Sleep/rest", { onOpenEvidence(NowEvidenceDetail.SLEEP_REST) })
-                EvidenceChip("Data quality", { onOpenEvidence(NowEvidenceDetail.DATA_QUALITY) })
-                EvidenceChip("HRV detail", { onOpenEvidence(NowEvidenceDetail.HRV) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun EvidenceChip(
-    label: String,
-    onClick: () -> Unit
-) {
-    FilterChip(
-        selected = false,
-        onClick = onClick,
-        label = { Text(label) }
-    )
-}
-
-@Composable
 fun NowEvidenceDetailSheet(
     detail: NowEvidenceDetail,
     nowState: NowScreenState,
-    onDismiss: () -> Unit,
-    onOpenHrvTrajectory: () -> Unit
+    onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -389,9 +319,7 @@ fun NowEvidenceDetailSheet(
             Text(detail.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             when (detail) {
                 NowEvidenceDetail.SIGNAL -> SignalEvidenceContent(nowState)
-                NowEvidenceDetail.SLEEP_REST -> SleepRestEvidenceContent(nowState)
                 NowEvidenceDetail.DATA_QUALITY -> DataQualityEvidenceContent(nowState)
-                NowEvidenceDetail.HRV -> HrvEvidenceContent(nowState, onOpenHrvTrajectory)
             }
         }
     }
@@ -399,10 +327,8 @@ fun NowEvidenceDetailSheet(
 
 private val NowEvidenceDetail.title: String
     get() = when (this) {
-        NowEvidenceDetail.SIGNAL -> "Signal detail"
-        NowEvidenceDetail.SLEEP_REST -> "Sleep/rest evidence"
+        NowEvidenceDetail.SIGNAL -> "Forecast evidence"
         NowEvidenceDetail.DATA_QUALITY -> "Data quality"
-        NowEvidenceDetail.HRV -> "Autonomic detail"
     }
 
 @Composable
@@ -424,25 +350,6 @@ private fun SignalEvidenceContent(nowState: NowScreenState) {
 }
 
 @Composable
-private fun SleepRestEvidenceContent(nowState: NowScreenState) {
-    val window = nowState.activeAnalysisWindow
-    val morningRead = nowState.activeMorningRead
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        DetailRow("Window", window.label)
-        DetailRow("Reason", window.reason)
-        DetailRow("Time", window.timeRangeLabel)
-        DetailRow("Duration", window.durationLabel)
-        DetailRow("Confidence", window.confidenceLabel)
-        DetailRow("Selected by user", if (window.selectedByUser) "Yes" else "No")
-        DetailRow("Marker", nowState.markerStatus.detail)
-        morningRead?.let {
-            DetailRow("Loop report", morningReadReportStateLabel(it))
-            DetailRow("Sleep total", formatDurationMinutes(it.sleepDurationMinutes))
-        }
-    }
-}
-
-@Composable
 private fun DataQualityEvidenceContent(nowState: NowScreenState) {
     val robustness = nowState.signalRobustness
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -455,36 +362,6 @@ private fun DataQualityEvidenceContent(nowState: NowScreenState) {
         DetailRow("Nightly Recharge", robustness.nightlyRecharge.detail)
         DetailRow("Last sync", nowState.freshness.loopSync.detail)
         DetailRow("Marker", nowState.markerStatus.detail)
-    }
-}
-
-@Composable
-private fun HrvEvidenceContent(
-    nowState: NowScreenState,
-    onOpenHrvTrajectory: () -> Unit
-) {
-    val morningRead = nowState.activeMorningRead
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (morningRead == null) {
-            SupportText(nowState.currentState.hrvDetail)
-        } else {
-            DetailRow("Signal basis", morningReadBasisLabel(morningRead, nowState.currentState.stage))
-            DetailRow("Window", morningRead.analysisWindowLabel())
-            DetailRow("Usable windows", (morningRead.rawPpiGoodEpochCount ?: 0).toString())
-            DetailRow(
-                "Coverage",
-                morningRead.rawPpiCoverageHours?.let { String.format(java.util.Locale.UK, "%.1fh", it) } ?: "n/a"
-            )
-            if ((morningRead.rawPpiPoorEpochCount ?: 0) > 0) {
-                DetailRow("Flagged windows", morningRead.rawPpiPoorEpochCount.toString())
-            }
-            TextButton(
-                onClick = onOpenHrvTrajectory,
-                enabled = morningRead.hrvTrajectory.isNotEmpty()
-            ) {
-                Text("Open autonomic detail")
-            }
-        }
     }
 }
 
@@ -547,13 +424,6 @@ private fun stabilityLabel(morningRead: AnalysisWindowEvidence?): String? {
         else -> "Stable"
     }
 }
-
-private fun morningReadReportStateLabel(morningRead: AnalysisWindowEvidence): String =
-    when {
-        morningRead.sleepDataReady -> "Loop report attached"
-        morningRead.isInterim -> "Loop report pending"
-        else -> "Pending"
-    }
 
 private fun autonomicSourceDisplayLabel(source: String): String =
     when (AnalysisWindowSource.fromKey(source)) {

@@ -10,15 +10,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -62,7 +65,7 @@ fun NowAnalysisWindowProvenance.toAutonomicRecoveryWindow(): AutonomicRecoveryWi
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AutonomicDetailDialog(
+fun AutonomicDetailSheet(
     recoveryWindow: AutonomicRecoveryWindow?,
     epochs: List<Ppi247EpochEntity>,
     sleepEpisodes: List<SleepEpisodeEntity>,
@@ -91,71 +94,73 @@ fun AutonomicDetailDialog(
             "Past ${selectedScope.lookbackHours} hours · descriptive only"
     }
 
-    AlertDialog(
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                AutonomicScopeSelector(
-                    selectedScope = selectedScope,
-                    onScopeSelected = { selectedScope = it }
-                )
-                BannerNote(
-                    text = summary.familyBanner,
-                    tint = if (summary.planningInfluence == AutonomicPlanningInfluence.DESCRIPTIVE_ONLY) {
-                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
-                    } else {
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
-                    },
-                    textColor = if (summary.planningInfluence == AutonomicPlanningInfluence.DESCRIPTIVE_ONLY) {
-                        MaterialTheme.colorScheme.onSecondaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    }
-                )
-                summary.cautionLines.forEach { line ->
-                    SupportText(line)
-                }
-                if (summary.emptyStateMessage != null) {
-                    SupportText(summary.emptyStateMessage)
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            AutonomicScopeSelector(
+                selectedScope = selectedScope,
+                onScopeSelected = { selectedScope = it }
+            )
+            BannerNote(
+                text = summary.familyBanner,
+                tint = if (summary.planningInfluence == AutonomicPlanningInfluence.DESCRIPTIVE_ONLY) {
+                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.72f)
                 } else {
-                    AutonomicTrajectoryChart(
-                        points = summary.trajectoryPoints,
-                        sleepRestShading = summary.sleepRestShading
-                    )
-                    AutonomicScopeQualityPanel(summary)
-                    if (summary.showShapeSummary) {
-                        AutonomicShapeSummary(
-                            points = summary.trajectoryPoints,
-                            indicative = summary.shapeSummaryIndicative,
-                            showStrainLabels = summary.showStrainLabels
-                        )
-                    }
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                },
+                textColor = if (summary.planningInfluence == AutonomicPlanningInfluence.DESCRIPTIVE_ONLY) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onPrimaryContainer
                 }
-                summary.alternateEpisodeLink?.let { link ->
-                    SupportText(link.label)
-                }
-                SupportText("Faint line = raw RMSSD, bold line = rolling median, straight line = linear trend. Qualitative context, not a diagnosis.")
+            )
+            summary.cautionLines.forEach { line ->
+                SupportText(line)
             }
-        },
-        confirmButton = {
+            if (summary.emptyStateMessage != null) {
+                SupportText(summary.emptyStateMessage)
+            } else {
+                AutonomicTrajectoryChart(
+                    points = summary.trajectoryPoints,
+                    sleepRestShading = summary.sleepRestShading
+                )
+                AutonomicScopeQualityPanel(summary)
+                if (summary.showShapeSummary) {
+                    AutonomicShapeSummary(
+                        points = summary.trajectoryPoints,
+                        indicative = summary.shapeSummaryIndicative,
+                        showStrainLabels = summary.showStrainLabels
+                    )
+                }
+            }
+            summary.alternateEpisodeLink?.let { link ->
+                SupportText(link.label)
+            }
+            SupportText("Faint line = raw RMSSD, bold line = rolling median, straight line = linear trend. Qualitative context, not a diagnosis.")
             TextButton(onClick = onDismiss) {
                 Text("Close")
             }
         }
-    )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -176,7 +181,7 @@ private fun AutonomicScopeSelector(
             label = { Text("Scope") },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
             modifier = Modifier
-                .menuAnchor()
+                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                 .fillMaxWidth()
         )
         ExposedDropdownMenu(
@@ -270,9 +275,6 @@ private fun AutonomicTrajectoryChart(
     val firstTime = points.firstOrNull()?.epochStartEpochMs ?: 0L
     val lastTime = points.lastOrNull()?.epochStartEpochMs ?: firstTime + 1L
     val timeSpan = (lastTime - firstTime).coerceAtLeast(1L).toFloat()
-    val chartStart = sleepRestShading?.minOfOrNull { it.startEpochMs } ?: firstTime
-    val chartEnd = sleepRestShading?.maxOfOrNull { it.endEpochMs } ?: lastTime
-    val chartSpan = (chartEnd - chartStart).coerceAtLeast(1L).toFloat()
 
     Canvas(
         modifier = Modifier
@@ -286,9 +288,11 @@ private fun AutonomicTrajectoryChart(
         val right = size.width - 10.dp.toPx()
         val top = 14.dp.toPx()
         val bottom = size.height - 28.dp.toPx()
+        // Shading must share the curves' time axis (firstTime/timeSpan); a separate
+        // shading-derived axis would misalign the shaded rest spans against the RMSSD lines.
         sleepRestShading.orEmpty().forEach { range ->
-            val startX = left + ((range.startEpochMs - chartStart).toFloat() / chartSpan) * (right - left)
-            val endX = left + ((range.endEpochMs - chartStart).toFloat() / chartSpan) * (right - left)
+            val startX = left + ((range.startEpochMs - firstTime).toFloat() / timeSpan) * (right - left)
+            val endX = left + ((range.endEpochMs - firstTime).toFloat() / timeSpan) * (right - left)
             drawRect(
                 color = shadeColor,
                 topLeft = Offset(startX.coerceIn(left, right), top),
