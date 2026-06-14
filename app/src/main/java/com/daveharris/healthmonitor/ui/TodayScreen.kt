@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
@@ -99,8 +100,14 @@ fun DataScreen(
             )
         }
         item {
-            SectionCard(title = "Check in", subtitle = "Sync current data") {
-                SupportText(dailyForecastCheckInMessage(nowState))
+            val journalFocused = nowState.journalFocus.shouldFocusJournal
+            SectionCard(
+                title = if (journalFocused) "How has today gone?" else "Check in",
+                subtitle = if (journalFocused) "A quick journal keeps the forecast honest" else "Sync current data"
+            ) {
+                SupportText(
+                    if (journalFocused) nowState.journalFocus.detail else dailyForecastCheckInMessage(nowState)
+                )
                 todayStatus.catchUpPrompt?.let { SupportText(it) }
                 if (shouldShowLoopAttention(nowState, runtime, viewModel.isBusy)) {
                     BannerNote(
@@ -109,20 +116,41 @@ fun DataScreen(
                         textColor = MaterialTheme.colorScheme.onTertiaryContainer
                     )
                 }
+                // One obvious action. The evening journal gate promotes Journal to the
+                // primary; otherwise Check in (sync) leads. Markers and the secondary
+                // action stay available but demoted (redesign: hero = at most one action).
+                if (journalFocused) {
+                    Button(
+                        onClick = openJournalForToday,
+                        enabled = actionsEnabled,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Open today's journal")
+                    }
+                } else {
+                    Button(
+                        onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
+                        enabled = actionsEnabled && nowState.primaryActions.checkIn.enabled,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Check in")
+                    }
+                }
                 ButtonRow {
-                    if (nowState.journalFocus.shouldFocusJournal) {
+                    if (journalFocused) {
+                        OutlinedButton(
+                            onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
+                            enabled = actionsEnabled && nowState.primaryActions.checkIn.enabled
+                        ) {
+                            Text("Sync now")
+                        }
+                    } else {
                         OutlinedButton(
                             onClick = openJournalForToday,
                             enabled = actionsEnabled
                         ) {
                             Text("Journal")
                         }
-                    }
-                    Button(
-                        onClick = { if (actionsEnabled) viewModel.runCheckInSync() },
-                        enabled = actionsEnabled && nowState.primaryActions.checkIn.enabled
-                    ) {
-                        Text("Check in")
                     }
                     if (nowState.primaryActions.catchUp.visible) {
                         OutlinedButton(
@@ -141,24 +169,13 @@ fun DataScreen(
                         }
                     }
                     if (nowState.primaryActions.waking.visible) {
-                        Button(
+                        OutlinedButton(
                             onClick = { if (actionsEnabled) markerEditor = MarkerTimeEditorKind.WAKING },
                             enabled = actionsEnabled && nowState.primaryActions.waking.enabled
                         ) {
                             Text("Waking marker")
                         }
                     }
-                    if (!nowState.journalFocus.shouldFocusJournal) {
-                        OutlinedButton(
-                            onClick = openJournalForToday,
-                            enabled = actionsEnabled
-                        ) {
-                            Text("Journal")
-                        }
-                    }
-                }
-                if (nowState.journalFocus.shouldFocusJournal) {
-                    SupportText(nowState.journalFocus.detail)
                 }
             }
         }
