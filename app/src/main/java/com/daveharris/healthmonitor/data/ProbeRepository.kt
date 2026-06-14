@@ -2812,7 +2812,13 @@ class ProbeRepository(
         expectedSourceDate: String = LocalDate.now(ZoneId.systemDefault()).toString(),
         allowProvisional: Boolean = true
     ): AnalysisWindowEvidence? {
-        if (sleepRow == null && nightlyRow == null && ppi247Epochs.isEmpty() && sleepEpisodes.isEmpty()) return null
+        if (
+            sleepRow == null &&
+            nightlyRow == null &&
+            ppi247Epochs.isEmpty() &&
+            sleepEpisodes.isEmpty() &&
+            wakeMarkers.isEmpty()
+        ) return null
 
         val todayPpiEpochs = ppi247Epochs.filter { it.sourceDate == expectedSourceDate }
         val primaryEpisodeWindow = selectedPrimaryReadinessEpisode(expectedSourceDate, sleepEpisodes)
@@ -2840,7 +2846,12 @@ class ProbeRepository(
                     epochs = ppi247Epochs
                 )
             }
-            val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
+            // Detect raw PPI by overlap with the provisional window (not by source date):
+            // usable overnight epochs often sit on D-1, which `todayPpiEpochs` excludes.
+            val hasRawPpi = ppi247Autonomic != null ||
+                provisionalWindow?.let { w ->
+                    ppi247Epochs.any { it.epochStartEpochMs < w.endEpochMs && it.epochEndEpochMs > w.startEpochMs }
+                } ?: todayPpiEpochs.isNotEmpty()
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
             val pendingSource = provisionalAnalysisWindowSource(
                 provisionalWindow = provisionalWindow,
@@ -2892,7 +2903,12 @@ class ProbeRepository(
                     epochs = ppi247Epochs
                 )
             }
-            val hasRawPpi = todayPpiEpochs.isNotEmpty() || ppi247Autonomic != null
+            // Detect raw PPI by overlap with the provisional window (not by source date):
+            // usable overnight epochs often sit on D-1, which `todayPpiEpochs` excludes.
+            val hasRawPpi = ppi247Autonomic != null ||
+                provisionalWindow?.let { w ->
+                    ppi247Epochs.any { it.epochStartEpochMs < w.endEpochMs && it.epochEndEpochMs > w.startEpochMs }
+                } ?: todayPpiEpochs.isNotEmpty()
             val provisionalDurationMinutes = provisionalWindow?.durationMinutes
             val pendingSource = provisionalAnalysisWindowSource(
                 provisionalWindow = provisionalWindow,
