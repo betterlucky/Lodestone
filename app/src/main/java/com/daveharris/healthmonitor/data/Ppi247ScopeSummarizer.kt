@@ -59,7 +59,9 @@ internal object Ppi247ScopeSummarizer {
                     }
                     summaryEpochs += epoch
                     chartPoints += HrvTrajectoryPoint(
-                        epochStartEpochMs = epoch.epochStartEpochMs,
+                        // Clamp to the window so a left-edge overlapping epoch (rolling
+                        // scopes admit these) doesn't plot the curve before windowStart.
+                        epochStartEpochMs = maxOf(epoch.epochStartEpochMs, windowStartEpochMs),
                         rmssdMs = epoch.rmssdMs,
                         epochQuality = epoch.epochQuality
                     )

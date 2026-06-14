@@ -291,11 +291,15 @@ private fun AutonomicTrajectoryChart(
         // Shading must share the curves' time axis (firstTime/timeSpan); a separate
         // shading-derived axis would misalign the shaded rest spans against the RMSSD lines.
         sleepRestShading.orEmpty().forEach { range ->
-            val startX = left + ((range.startEpochMs - firstTime).toFloat() / timeSpan) * (right - left)
-            val endX = left + ((range.endEpochMs - firstTime).toFloat() / timeSpan) * (right - left)
+            // Clamp both edges before measuring width, else a span reaching past the
+            // axis renders wider than its real overlap and misaligns with the curve.
+            val startX = (left + ((range.startEpochMs - firstTime).toFloat() / timeSpan) * (right - left))
+                .coerceIn(left, right)
+            val endX = (left + ((range.endEpochMs - firstTime).toFloat() / timeSpan) * (right - left))
+                .coerceIn(left, right)
             drawRect(
                 color = shadeColor,
-                topLeft = Offset(startX.coerceIn(left, right), top),
+                topLeft = Offset(startX, top),
                 size = androidx.compose.ui.geometry.Size(
                     width = (endX - startX).coerceAtLeast(0f),
                     height = bottom - top

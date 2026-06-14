@@ -250,6 +250,8 @@ class AutonomicScopeResolverTest {
 
         assertEquals(1, summary.quality.summaryEpochCount)
         assertEquals(1, summary.trajectoryPoints.size)
+        // Its plotted timestamp is clamped to the window start, not its raw pre-window start.
+        assertEquals(windowStart, summary.trajectoryPoints.first().epochStartEpochMs)
     }
 
     @Test

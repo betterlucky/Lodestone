@@ -23,6 +23,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.daveharris.healthmonitor.data.AutonomicDetailScope
 import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
@@ -112,6 +113,13 @@ fun SignalsScreen(
             epochs = ppi247Epochs,
             sleepEpisodes = sleepEpisodes,
             lastPpiSyncEpochMs = lastPpiSyncEpochMs,
+            // Without a recovery window the default ACTIVE_SLEEP_REST scope only shows
+            // an empty state; open on a rolling scope so the PPI-only case lands on data.
+            initialScope = if (recoveryWindow != null) {
+                AutonomicDetailScope.ACTIVE_SLEEP_REST
+            } else {
+                AutonomicDetailScope.ROLLING_1H
+            },
             onDismiss = { showAutonomicDetail = false }
         )
     }
