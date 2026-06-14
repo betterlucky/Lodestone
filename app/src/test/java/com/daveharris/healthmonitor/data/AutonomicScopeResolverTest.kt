@@ -142,8 +142,8 @@ class AutonomicScopeResolverTest {
         )
 
         assertNotNull(summary.sleepRestShading)
-        assertEquals(1, summary.sleepRestShading!!.size)
-        assertNull(summary.sleepRestShading!!.first().let { it.endEpochMs - it.startEpochMs }.takeIf { it <= 0L })
+        assertEquals(1, summary.sleepRestShading.size)
+        assertNull(summary.sleepRestShading.first().let { it.endEpochMs - it.startEpochMs }.takeIf { it <= 0L })
     }
 
     @Test
@@ -193,8 +193,8 @@ class AutonomicScopeResolverTest {
         )
 
         assertNotNull(summary.alternateEpisodeLink)
-        assertEquals(2L, summary.alternateEpisodeLink!!.episodeId)
-        assertTrue(summary.alternateEpisodeLink!!.label.startsWith("Also: rest window"))
+        assertEquals(2L, summary.alternateEpisodeLink.episodeId)
+        assertTrue(summary.alternateEpisodeLink.label.startsWith("Also: rest window"))
     }
 
     @Test
