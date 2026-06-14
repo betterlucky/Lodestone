@@ -9,7 +9,7 @@ class TodayComponentsTest {
     @Test
     fun dataQualityWaitsWhenMorningInputsAreAbsent() {
         val summary = signalConfidenceSummary(
-            stage = TodayReadinessStage.NOT_STARTED,
+            stage = NowSignalStage.NOT_STARTED,
             morningRead = null
         )
 
@@ -21,7 +21,7 @@ class TodayComponentsTest {
     @Test
     fun dataQualityTreatsUsablePpiWindowAsReadyWithSupportingComparisonGap() {
         val summary = signalConfidenceSummary(
-            stage = TodayReadinessStage.INITIAL_PPI,
+            stage = NowSignalStage.INITIAL_PPI,
             morningRead = morningRead(
                 sleepDataReady = false,
                 isInterim = true,
@@ -39,7 +39,7 @@ class TodayComponentsTest {
     @Test
     fun dataQualityStillBlocksWhenPpiHasNoUsableWindow() {
         val summary = signalConfidenceSummary(
-            stage = TodayReadinessStage.INITIAL_PPI,
+            stage = NowSignalStage.INITIAL_PPI,
             morningRead = morningRead(
                 sleepDataReady = false,
                 isInterim = true,
@@ -56,7 +56,7 @@ class TodayComponentsTest {
     @Test
     fun dataQualityStaysPartialWhenPpiCoverageIsThin() {
         val summary = signalConfidenceSummary(
-            stage = TodayReadinessStage.INITIAL_PPI,
+            stage = NowSignalStage.INITIAL_PPI,
             morningRead = morningRead(
                 sleepDataReady = false,
                 isInterim = true,
@@ -73,7 +73,7 @@ class TodayComponentsTest {
     @Test
     fun dataQualityReadyWhenCoreInputsArePresent() {
         val summary = signalConfidenceSummary(
-            stage = TodayReadinessStage.UPDATE_COMPLETE,
+            stage = NowSignalStage.UPDATE_COMPLETE,
             morningRead = morningRead(
                 sleepDataReady = true,
                 source = "ppi247_sleep_window",

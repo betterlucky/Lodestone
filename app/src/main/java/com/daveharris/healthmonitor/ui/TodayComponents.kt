@@ -58,7 +58,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
-enum class TodayReadinessStage {
+enum class NowSignalStage {
     SLEEP_TIME,
     STARTING_SYNC,
     INITIAL_PPI,
@@ -79,21 +79,6 @@ data class SignalConfidenceSummary(
     val supportingGaps: List<String>
 )
 
-data class TodayReadinessStatus(
-    val stage: TodayReadinessStage,
-    val title: String,
-    val sleepReport: String,
-    val ppiReceipt: String,
-    val message: String,
-    val hrvDetail: String,
-    val dataQuality: SignalConfidenceSummary,
-    val connectionPrompt: String? = null,
-    val heroPrompt: String? = null,
-    val catchUpPrompt: String? = null,
-    val lastUsedLabel: String? = null,
-    val lastLoopSyncLabel: String? = null
-)
-
 enum class NowEvidenceDetail {
     SIGNAL,
     SLEEP_REST,
@@ -102,7 +87,7 @@ enum class NowEvidenceDetail {
 }
 
 fun signalConfidenceSummary(
-    stage: TodayReadinessStage,
+    stage: NowSignalStage,
     morningRead: AnalysisWindowEvidence?,
     hasFinalSleep: Boolean = morningRead?.sleepDataReady == true,
     hasPpi: Boolean = morningRead.hasPpiSignal(),
@@ -127,7 +112,7 @@ fun signalConfidenceSummary(
         }
     }
     return when {
-        stage == TodayReadinessStage.SLEEP_TIME || stage == TodayReadinessStage.STARTING_SYNC ->
+        stage == NowSignalStage.SLEEP_TIME || stage == NowSignalStage.STARTING_SYNC ->
             SignalConfidenceSummary(SignalConfidenceState.WAITING, "Waiting", coreMissing, supportingGaps)
         coreMissing.isEmpty() ->
             SignalConfidenceSummary(
@@ -250,15 +235,16 @@ internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
     }
 
 private fun heroAttentionFact(nowState: NowScreenState): String? {
-    val needsDeviceContext = nowState.readinessStatus.connectionPrompt != null ||
-        nowState.deviceConnection.availability in setOf(
-            NowDataAvailability.MISSING,
-            NowDataAvailability.PENDING
-        )
+    // A live sync prompt wins the hero pill — surface it ahead of a generic device line.
+    nowState.currentState.connectionPrompt?.let { return it }
+    val needsDeviceContext = nowState.deviceConnection.availability in setOf(
+        NowDataAvailability.MISSING,
+        NowDataAvailability.PENDING
+    )
     return if (needsDeviceContext) {
         nowState.deviceConnection.detail
     } else {
-        nowState.readinessStatus.heroPrompt
+        nowState.currentState.heroPrompt
     }
 }
 
@@ -322,7 +308,6 @@ fun MorningSignalSection(
     onOpenEvidence: (NowEvidenceDetail) -> Unit
 ) {
     val morningRead = nowState.activeMorningRead
-    val todayStatus = nowState.readinessStatus
     val tone = statusTone(nowState.currentState.status)
     Card(
         shape = RoundedCornerShape(24.dp),
@@ -335,8 +320,8 @@ fun MorningSignalSection(
             Text("Current signal", fontWeight = FontWeight.SemiBold)
             if (morningRead == null) {
                 Text(nowState.currentState.message, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (todayStatus.dataQuality.missingInputs.isNotEmpty()) {
-                    DetailRow("Needed", todayStatus.dataQuality.missingInputs.joinToString())
+                if (nowState.currentState.signalConfidence.missingInputs.isNotEmpty()) {
+                    DetailRow("Needed", nowState.currentState.signalConfidence.missingInputs.joinToString())
                 }
                 DetailRow("Sleep/rest", nowState.activeAnalysisWindow.label)
             } else {
@@ -481,9 +466,9 @@ private fun HrvEvidenceContent(
     val morningRead = nowState.activeMorningRead
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (morningRead == null) {
-            SupportText(nowState.readinessStatus.hrvDetail)
+            SupportText(nowState.currentState.hrvDetail)
         } else {
-            DetailRow("Signal basis", morningReadBasisLabel(morningRead, nowState.readinessStatus))
+            DetailRow("Signal basis", morningReadBasisLabel(morningRead, nowState.currentState.stage))
             DetailRow("Window", morningRead.analysisWindowLabel())
             DetailRow("Usable windows", (morningRead.rawPpiGoodEpochCount ?: 0).toString())
             DetailRow(
@@ -505,7 +490,7 @@ private fun HrvEvidenceContent(
 
 fun morningReadBasisLabel(
     morningRead: AnalysisWindowEvidence?,
-    todayStatus: TodayReadinessStatus
+    stage: NowSignalStage
 ): String =
     when {
         morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT ->
@@ -528,7 +513,7 @@ fun morningReadBasisLabel(
             "Loop sleep context only"
         morningRead?.isInterim == true ->
             "Current signal, Loop report pending"
-        todayStatus.stage == TodayReadinessStage.SLEEP_TIME ->
+        stage == NowSignalStage.SLEEP_TIME ->
             "Waiting for wake sync"
         else ->
             "Waiting for morning data"
@@ -612,15 +597,7 @@ fun HrvTrajectoryDialog(
                 Text(
                     morningReadBasisLabel(
                         morningRead = morningRead,
-                        todayStatus = TodayReadinessStatus(
-                            stage = TodayReadinessStage.UPDATE_COMPLETE,
-                            title = "",
-                            sleepReport = "",
-                            ppiReceipt = "",
-                            message = "",
-                            hrvDetail = "",
-                            dataQuality = signalConfidenceSummary(TodayReadinessStage.UPDATE_COMPLETE, morningRead)
-                        )
+                        stage = NowSignalStage.UPDATE_COMPLETE
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

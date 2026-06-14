@@ -65,7 +65,6 @@ fun DataScreen(
         journalFocusMode = viewModel.journalFocusMode,
         journalFocusFixedTimeMinutes = viewModel.journalFocusFixedTimeMinutes
     )
-    val todayStatus = nowState.readinessStatus
     var markerEditor by remember { mutableStateOf<MarkerTimeEditorKind?>(null) }
     val openJournalForToday = {
         if (actionsEnabled) {
@@ -110,7 +109,7 @@ fun DataScreen(
                 SupportText(
                     if (journalFocused) nowState.journalFocus.detail else dailyForecastCheckInMessage(nowState)
                 )
-                todayStatus.catchUpPrompt?.let { SupportText(it) }
+                nowState.freshness.catchUpPrompt?.let { SupportText(it) }
                 if (shouldShowLoopAttention(nowState, runtime, viewModel.isBusy)) {
                     BannerNote(
                         text = loopAttentionText(nowState),
@@ -192,7 +191,7 @@ private fun shouldShowLoopAttention(
     when {
         nowState.deviceConnection.availability == NowDataAvailability.MISSING -> true
         nowState.deviceConnection.availability == NowDataAvailability.PENDING -> true
-        nowState.readinessStatus.connectionPrompt != null -> true
+        nowState.currentState.connectionPrompt != null -> true
         isBusy -> true
         runtime.connectionPhase == "connecting" -> true
         else -> false
@@ -200,7 +199,7 @@ private fun shouldShowLoopAttention(
 
 private fun loopAttentionText(nowState: NowScreenState): String =
     when {
-        nowState.readinessStatus.connectionPrompt != null -> nowState.readinessStatus.connectionPrompt
+        nowState.currentState.connectionPrompt != null -> nowState.currentState.connectionPrompt
         nowState.deviceConnection.detail == "Bluetooth off" -> "Bluetooth is off. Turn it on before syncing with the Loop."
         nowState.deviceConnection.detail == "No Loop selected" -> "No Loop selected. Choose a Loop in Settings before syncing."
         nowState.deviceConnection.availability == NowDataAvailability.MISSING -> nowState.deviceConnection.detail
