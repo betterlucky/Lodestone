@@ -56,7 +56,6 @@ class MorningReadSignalTest {
             nightlyRmssd = null,
             baselineReady = false,
             isInterim = true,
-            sleepDataReady = false,
             rawPpiGoodEpochCount = goodEpochs,
             rawPpiPoorEpochCount = null,
             rawPpiCoverageHours = null,

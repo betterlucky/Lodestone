@@ -872,7 +872,6 @@ class NowScreenStateTest {
             nightlyRmssd = nightlyRmssd,
             baselineReady = true,
             isInterim = isInterim,
-            sleepDataReady = sleepDataReady,
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,
             rawPpiPoorEpochCount = 0,
             rawPpiCoverageHours = rawPpiCoverageHours,
