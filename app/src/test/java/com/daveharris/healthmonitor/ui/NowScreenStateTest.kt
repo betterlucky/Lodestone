@@ -8,7 +8,7 @@ import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.ForecastBasis
 import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.SleepEpisodeConfidences
 import com.daveharris.healthmonitor.data.SleepEpisodeEntity
 import com.daveharris.healthmonitor.data.SleepEpisodeKinds
@@ -50,13 +50,14 @@ class NowScreenStateTest {
                 source = "raw_ppi_calibrated_window_pending_sleep_report",
                 rawPpiGoodEpochCount = 36,
                 rawPpiCoverageHours = 4.5
-            )
+            ),
+            currentState = modelRead()
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertEquals("Likely OK", state.currentState.label)
         assertEquals("Ready", state.currentState.qualifier)
-        assertTrue(state.currentState.message.contains("pending for comparison"))
+        assertTrue(state.currentState.message.contains("pacing guidance"))
         assertEquals(NowDataAvailability.PRESENT, state.currentState.availability)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
         assertEquals("Loop sleep report pending for comparison", state.signalRobustness.sleepReport.detail)
@@ -69,7 +70,7 @@ class NowScreenStateTest {
     }
 
     @Test
-    fun ppiWithoutUsableWindowNeedsWindowInsteadOfWaitingForFinalReport() {
+    fun missingSleepWindowDoesNotGateTheForecast() {
         val state = nowState(
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -77,19 +78,20 @@ class NowScreenStateTest {
                 source = "raw_ppi_pending_manual_sleep_window",
                 rawPpiGoodEpochCount = 28,
                 rawPpiCoverageHours = 4.0
-            )
+            ),
+            currentState = modelRead()
         )
 
-        assertEquals(NowCurrentStateKind.NEEDS_WINDOW, state.currentState.kind)
-        assertEquals("Needs sleep/rest window", state.currentState.label)
-        assertTrue(state.currentState.message.contains("usable sleep/rest window"))
+        // Forecast-first: a missing sleep/rest window is a SignalConfidence/provenance
+        // concern, not a forecast blocker. The model read still drives a READY forecast.
+        assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertEquals(NowAnalysisWindowSourceType.PENDING, state.activeAnalysisWindow.sourceType)
         assertTrue("Sleep/rest window" in state.readinessStatus.dataQuality.missingInputs)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
 
     @Test
-    fun thinPpiCoverageKeepsCurrentStateLimited() {
+    fun thinPpiCoverageDoesNotLimitTheForecast() {
         val state = nowState(
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -97,16 +99,16 @@ class NowScreenStateTest {
                 source = "raw_ppi_calibrated_window_pending_sleep_report",
                 rawPpiGoodEpochCount = 8,
                 rawPpiCoverageHours = 2.5
-            )
+            ),
+            currentState = modelRead()
         )
 
-        assertEquals(NowCurrentStateKind.LOW_CONFIDENCE_READ, state.currentState.kind)
+        // Forecast-first: thin PPI coverage no longer downgrades the forecast (the old
+        // sleep-score gating is gone); coverage now lives in SignalConfidence. Model
+        // confidence/caution drives any caveat — see stateStabilityReflectsCautionAndConfidence().
+        assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertEquals("Likely OK", state.currentState.label)
-        assertTrue(state.currentState.message.contains("coverage is thin"))
-        assertEquals("Limited confidence", state.currentState.qualifier)
-        // Stability is no longer derived from PPI thinness (fake `buildStateStability`
-        // deleted); it now comes from the model's caution + confidence — covered by
-        // stateStabilityReflectsCautionAndConfidence().
+        assertEquals("Ready", state.currentState.qualifier)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
 
@@ -119,13 +121,14 @@ class NowScreenStateTest {
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
                 nightlyRmssd = 48.0
-            )
+            ),
+            currentState = modelRead()
         )
 
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertEquals("Likely OK", state.currentState.label)
         assertEquals("Ready", state.currentState.qualifier)
-        assertTrue(state.currentState.message.contains("pacing context"))
+        assertTrue(state.currentState.message.contains("pacing guidance"))
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.sleepReport.availability)
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.availability)
         assertEquals(NowAnalysisWindowSourceType.LOOP_REPORT, state.activeAnalysisWindow.sourceType)
@@ -158,9 +161,11 @@ class NowScreenStateTest {
 
         val facts = dailyForecastHeroFacts(state)
 
+        // A healthy read (caution NONE, confidence not LOW): no caution/confidence pill —
+        // confidence is shown ONLY when degraded. Freshness + recent rest still surface.
         assertFalse("Ready" in facts)
-        assertTrue("Stability: No caution flag" in facts)
-        assertTrue("Confidence: Well supported" in facts)
+        assertFalse(facts.any { it.startsWith("Caution") })
+        assertFalse(facts.any { it.startsWith("Confidence") })
         assertTrue("Last sync: 2h ago" in facts)
         assertTrue("Recent rest: 7h (last 18h)" in facts)
         assertTrue(facts.size <= 5)
@@ -187,6 +192,7 @@ class NowScreenStateTest {
     fun dailyForecastHeroCopyUsesCheckInOnlyCaveatWhenWearableDataMissing() {
         val state = nowState(
             morningRead = null,
+            currentState = modelRead(forecast = TrafficLightStatus.UNSTEADY, confidence = ConfidenceLevel.LOW),
             dailyCheckIns = listOf(
                 checkIn(
                     sourceDate = "2026-05-30",
@@ -196,12 +202,14 @@ class NowScreenStateTest {
             )
         )
 
-        val message = dailyForecastHeroMessage(state)
+        val checkInMessage = dailyForecastCheckInMessage(state)
         val facts = dailyForecastHeroFacts(state)
 
-        assertTrue(message.contains("recent check-ins"))
+        // No Loop signal, but recent check-ins exist: the forecast leans on them, the
+        // check-in copy says so, and confidence surfaces as degraded ("check-ins only").
+        assertTrue(checkInMessage.contains("recent check-ins"))
         assertTrue("Confidence: check-ins only" in facts)
-        assertNoNowJargon(message)
+        assertNoNowJargon(dailyForecastHeroMessage(state))
         facts.forEach(::assertNoNowJargon)
     }
 
@@ -213,9 +221,9 @@ class NowScreenStateTest {
                 source = "ppi247_sleep_window",
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
-                nightlyRmssd = 48.0,
-                status = TrafficLightStatus.GOOD
+                nightlyRmssd = 48.0
             ),
+            currentState = modelRead(forecast = TrafficLightStatus.GOOD),
             syncRuns = listOf(
                 SyncRunEntity(
                     deviceId = "loop-1",
@@ -240,7 +248,6 @@ class NowScreenStateTest {
         val facts = dailyForecastHeroFacts(state)
 
         assertTrue("Bluetooth off" in facts)
-        assertTrue("Mixed evidence" in facts)
         assertTrue(facts.size <= 5)
     }
 
@@ -253,12 +260,12 @@ class NowScreenStateTest {
                 rawPpiGoodEpochCount = 12,
                 rawPpiCoverageHours = 4.0,
                 nightlyRmssd = 62.0,
-                status = TrafficLightStatus.GOOD,
                 hrvTrajectory = trajectory(
                     48.0, 50.0, 52.0, 54.0, 55.0, 58.0,
                     62.0, 65.0, 70.0, 76.0, 82.0, 88.0
                 )
-            )
+            ),
+            currentState = modelRead(forecast = TrafficLightStatus.GOOD)
         )
 
         assertEquals(TrafficLightStatus.GOOD, state.currentState.status)
@@ -269,16 +276,19 @@ class NowScreenStateTest {
     }
 
     @Test
-    fun recentLowerFunctionJournalContextMakesPlanningStateMoreCautiousThanAutonomicSignal() {
+    fun recentLowerFunctionIsReflectedInForecastAndContext() {
+        // Anti-Visible is encoded in the model: a recent lower-function spell means the
+        // model forecast itself reads UNSTEADY (not a cheerful read recombined down).
+        // functionalContext remains as supporting detail beside it.
         val state = nowState(
             morningRead = morningRead(
                 sleepDataReady = true,
                 source = "ppi247_sleep_window",
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
-                nightlyRmssd = 64.0,
-                status = TrafficLightStatus.GOOD
+                nightlyRmssd = 64.0
             ),
+            currentState = modelRead(forecast = TrafficLightStatus.UNSTEADY),
             dailyCheckIns = listOf(
                 checkIn(
                     sourceDate = "2026-05-30",
@@ -289,27 +299,22 @@ class NowScreenStateTest {
             )
         )
 
-        assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
-        assertEquals(TrafficLightStatus.UNSTEADY, state.functionalContext.status)
         assertEquals(TrafficLightStatus.UNSTEADY, state.currentState.status)
-        assertEquals("Mixed autonomic/function evidence", state.currentState.qualifier)
-        assertTrue(state.currentState.message.contains("Autonomic signal looks steady"))
-        assertTrue(state.currentState.message.contains("not proof you are recovered"))
+        assertEquals(TrafficLightStatus.UNSTEADY, state.functionalContext.status)
         assertTrue(state.functionalContext.detail.contains("lower-function spell"))
-        assertTrue(state.readinessStatus.message.contains("lower-function spell"))
     }
 
     @Test
-    fun recentStableJournalOutcomeAllowsOnlyCautiousRecoveryAfterLowerFunctionSpell() {
+    fun recentStableJournalOutcomeReflectsCautiousRecoveryContext() {
         val state = nowState(
             morningRead = morningRead(
                 sleepDataReady = true,
                 source = "ppi247_sleep_window",
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25,
-                nightlyRmssd = 88.0,
-                status = TrafficLightStatus.GOOD
+                nightlyRmssd = 88.0
             ),
+            currentState = modelRead(forecast = TrafficLightStatus.OK),
             dailyCheckIns = listOf(
                 checkIn(
                     sourceDate = "2026-05-30",
@@ -323,9 +328,8 @@ class NowScreenStateTest {
             )
         )
 
-        assertEquals(TrafficLightStatus.GOOD, state.activeMorningRead?.status)
-        assertEquals(TrafficLightStatus.OK, state.functionalContext.status)
         assertEquals(TrafficLightStatus.OK, state.currentState.status)
+        assertEquals(TrafficLightStatus.OK, state.functionalContext.status)
         assertEquals("Ready", state.currentState.qualifier)
         assertTrue(state.functionalContext.detail.contains("cautious recovery"))
         assertTrue(state.functionalContext.detail.contains("recent Unsteady"))
@@ -423,8 +427,10 @@ class NowScreenStateTest {
             wakeMarkers = listOf(marker("2026-05-31", "2026-05-31T00:30:00", "manual_going_to_bed"))
         )
 
+        // Forecast-first: a bedtime marker is a window/provenance note, not a forecast
+        // blocker. With no model read here, the forecast is simply awaiting a check-in.
         assertEquals(NowMarkerState.ACTIVE_BEDTIME, state.markerStatus.state)
-        assertEquals(NowCurrentStateKind.SLEEP_MARKED, state.currentState.kind)
+        assertEquals(NowCurrentStateKind.WAITING_FOR_DATA, state.currentState.kind)
         assertEquals(NowAnalysisWindowSourceType.PENDING, state.activeAnalysisWindow.sourceType)
         assertEquals("Analysis window pending", state.activeAnalysisWindow.label)
         assertTrue(state.activeAnalysisWindow.reason.contains("Bedtime is marked"))
@@ -441,6 +447,7 @@ class NowScreenStateTest {
                 rawPpiGoodEpochCount = 64,
                 rawPpiCoverageHours = 7.25
             ),
+            currentState = modelRead(),
             wakeMarkers = listOf(marker("2026-05-31", "2026-05-31T00:30:00", "manual_going_to_bed"))
         )
 
@@ -460,12 +467,12 @@ class NowScreenStateTest {
                 rawPpiGoodEpochCount = 40,
                 rawPpiCoverageHours = 5.0
             ),
+            currentState = modelRead(),
             wakeMarkers = listOf(marker("2026-05-31", "2026-05-31T00:30:00", "manual_going_to_bed"))
         )
 
         assertEquals(NowMarkerState.RESOLVED_BEDTIME, state.markerStatus.state)
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
-        assertTrue(state.currentState.message.contains("pending for comparison"))
         assertTrue(state.activeMorningRead != null)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
@@ -626,7 +633,9 @@ class NowScreenStateTest {
             )
         )
 
-        assertEquals(NowCurrentStateKind.NO_MAIN_SLEEP, state.currentState.kind)
+        // Forecast-first: "no main sleep" is an explicit window decision, not a forecast
+        // state. With no model read, the forecast awaits a check-in; the window stays NO_MAIN_SLEEP.
+        assertEquals(NowCurrentStateKind.WAITING_FOR_DATA, state.currentState.kind)
         assertEquals(NowAnalysisWindowSourceType.NO_MAIN_SLEEP, state.activeAnalysisWindow.sourceType)
         assertEquals("No main sleep", state.activeAnalysisWindow.label)
         assertTrue(state.activeAnalysisWindow.selectedByUser)
@@ -724,7 +733,7 @@ class NowScreenStateTest {
     }
 
     private fun nowState(
-        morningRead: MorningReadSnapshot? = null,
+        morningRead: AnalysisWindowEvidence? = null,
         currentState: CurrentStateRead? = null,
         syncRuns: List<SyncRunEntity> = emptyList(),
         wakeMarkers: List<WakeMarkerEntity> = emptyList(),
@@ -812,20 +821,14 @@ class NowScreenStateTest {
         rawPpiCoverageHours: Double?,
         isInterim: Boolean = false,
         nightlyRmssd: Double? = null,
-        status: TrafficLightStatus = TrafficLightStatus.OK,
         hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
-    ): MorningReadSnapshot =
-        MorningReadSnapshot(
+    ): AnalysisWindowEvidence =
+        AnalysisWindowEvidence(
             sourceDate = "2026-05-31",
-            status = status,
-            confidence = "medium",
             overnightAutonomicSource = source,
             sleepDurationMinutes = if (sleepDataReady) 420 else null,
             nightlyRmssd = nightlyRmssd,
             baselineReady = true,
-            recoveryAvailable = true,
-            summary = "summary",
-            reasons = emptyList(),
             isInterim = isInterim,
             sleepDataReady = sleepDataReady,
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,

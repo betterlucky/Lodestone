@@ -39,7 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 
 @Composable
@@ -133,78 +133,6 @@ fun SectionCard(
                 Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             content()
-        }
-    }
-}
-
-@Composable
-fun MorningReadCard(morningRead: MorningReadSnapshot) {
-    if (morningRead.isInterim) {
-        Card(
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
-            ),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
-        ) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Morning signal", fontWeight = FontWeight.SemiBold)
-                    StatusBadge("Pending", null)
-                }
-                Text(
-                    "Morning data is still pending. Check back after Polar releases the sleep report.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        return
-    }
-
-    val tone = statusTone(morningRead.status)
-    var expanded by remember { mutableStateOf(false) }
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = tone.copy(alpha = 0.10f)
-        ),
-        border = BorderStroke(1.dp, tone.copy(alpha = 0.20f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Morning signal", fontWeight = FontWeight.SemiBold)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        morningRead.confidence.replaceFirstChar { it.titlecase() },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
-                    )
-                    StatusBadge(labelForStatus(morningRead.status?.name ?: "unknown"), morningRead.status)
-                }
-            }
-            morningRead.reasons.take(2).forEach { reason ->
-                Text("• $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(onClick = { expanded = !expanded }) {
-                Text(if (expanded) "Hide details" else "Show details")
-            }
-            if (expanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DetailRow("Date", morningRead.sourceDate ?: "unknown")
-                    DetailRow("Source", morningRead.overnightAutonomicSource)
-                    DetailRow("Sleep", formatDurationMinutes(morningRead.sleepDurationMinutes))
-                    DetailRow("RMSSD", morningRead.nightlyRmssd?.toInt()?.toString() ?: "n/a")
-                    DetailRow("Raw PPI", "${morningRead.rawPpiGoodEpochCount ?: 0} good epochs")
-                }
-            }
         }
     }
 }

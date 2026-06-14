@@ -36,7 +36,7 @@ import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
-import com.daveharris.healthmonitor.data.MorningReadSource
+import com.daveharris.healthmonitor.data.AnalysisWindowSource
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 
 @Composable
@@ -396,7 +396,7 @@ private fun robustnessLabel(prediction: MorningPredictionSnapshotEntity?): Strin
 private fun historyWindowSourceLabel(prediction: MorningPredictionSnapshotEntity?): String {
     if (prediction == null) return "No active window recorded"
     val source = prediction.overnightAutonomicSource.replace('_', ' ')
-    val morningReadSource = MorningReadSource.fromKey(prediction.overnightAutonomicSource)
+    val morningReadSource = AnalysisWindowSource.fromKey(prediction.overnightAutonomicSource)
     val state = when {
         prediction.sleepDataReady -> "Loop report attached"
         morningReadSource?.hasEstablishedSleepWindow == true -> "Loop report pending for comparison"

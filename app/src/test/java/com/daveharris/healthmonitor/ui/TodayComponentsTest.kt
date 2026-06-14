@@ -1,7 +1,6 @@
 package com.daveharris.healthmonitor.ui
 
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
-import com.daveharris.healthmonitor.data.TrafficLightStatus
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -96,18 +95,13 @@ class TodayComponentsTest {
         rawPpiCoverageHours: Double?,
         isInterim: Boolean = false,
         nightlyRmssd: Double? = null
-    ): MorningReadSnapshot =
-        MorningReadSnapshot(
+    ): AnalysisWindowEvidence =
+        AnalysisWindowEvidence(
             sourceDate = "2026-05-26",
-            status = TrafficLightStatus.OK,
-            confidence = "medium",
             overnightAutonomicSource = source,
             sleepDurationMinutes = if (sleepDataReady) 420 else null,
             nightlyRmssd = nightlyRmssd,
             baselineReady = true,
-            recoveryAvailable = true,
-            summary = "summary",
-            reasons = emptyList(),
             isInterim = isInterim,
             sleepDataReady = sleepDataReady,
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,

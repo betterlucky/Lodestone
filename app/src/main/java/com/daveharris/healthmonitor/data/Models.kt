@@ -50,17 +50,18 @@ enum class SyncRunProfile(
     FULL("manual sync", "manual sync completed")
 }
 
-data class MorningReadSnapshot(
+/**
+ * Sleep/PPI provenance for the active analysis window — the evidence Signals shows
+ * (window source, duration, autonomic coverage, HRV trajectory). It carries NO
+ * forecast: the forecast is [CurrentStateRead], derived natively by the model.
+ * See docs/lodestone-redesign-architecture.md §"Active Analysis Window".
+ */
+data class AnalysisWindowEvidence(
     val sourceDate: String?,
-    val status: TrafficLightStatus?,
-    val confidence: String,
     val overnightAutonomicSource: String,
     val sleepDurationMinutes: Int?,
     val nightlyRmssd: Double?,
     val baselineReady: Boolean,
-    val recoveryAvailable: Boolean,
-    val summary: String,
-    val reasons: List<String>,
     val isInterim: Boolean = false,
     val sleepDataReady: Boolean = !isInterim && sleepDurationMinutes != null,
     val rawPpiGoodEpochCount: Int? = null,
@@ -69,7 +70,7 @@ data class MorningReadSnapshot(
     val hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
 )
 
-internal fun MorningReadSnapshot?.hasUsableMorningPpiSignal(): Boolean =
+internal fun AnalysisWindowEvidence?.hasUsableMorningPpiSignal(): Boolean =
     (this?.rawPpiGoodEpochCount ?: 0) >= MIN_MORNING_PPI_GOOD_EPOCHS
 
 data class HrvTrajectoryPoint(
@@ -78,7 +79,7 @@ data class HrvTrajectoryPoint(
     val epochQuality: String
 )
 
-enum class MorningReadSource(
+enum class AnalysisWindowSource(
     val key: String,
     val hasEstablishedSleepWindow: Boolean = false
 ) {
@@ -102,7 +103,7 @@ enum class MorningReadSource(
     AWAITING_SLEEP_DATA("awaiting_sleep_data");
 
     companion object {
-        fun fromKey(key: String?): MorningReadSource? =
+        fun fromKey(key: String?): AnalysisWindowSource? =
             entries.firstOrNull { it.key == key }
     }
 }

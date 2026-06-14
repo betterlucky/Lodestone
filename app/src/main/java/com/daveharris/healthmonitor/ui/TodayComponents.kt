@@ -45,8 +45,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.HrvTrajectoryPoint
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.MorningReadSource
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowSource
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
+import com.daveharris.healthmonitor.data.CautionLevel
+import com.daveharris.healthmonitor.data.ConfidenceLevel
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.data.WakeMarkerSources
@@ -100,7 +102,7 @@ enum class NowEvidenceDetail {
 
 fun todayReadinessStatus(
     today: String,
-    morningRead: MorningReadSnapshot?,
+    morningRead: AnalysisWindowEvidence?,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
@@ -279,7 +281,7 @@ private fun relativeAgeLabel(nowEpochMs: Long, eventEpochMs: Long): String {
     return "$value$unit ago"
 }
 
-private fun catchUpPrompt(today: String, morningRead: MorningReadSnapshot?): String? {
+private fun catchUpPrompt(today: String, morningRead: AnalysisWindowEvidence?): String? {
     val latestReadDate = morningRead?.sourceDate
         ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         ?: return null
@@ -294,7 +296,7 @@ private fun catchUpPrompt(today: String, morningRead: MorningReadSnapshot?): Str
 
 fun todayDataQualitySummary(
     stage: TodayReadinessStage,
-    morningRead: MorningReadSnapshot?,
+    morningRead: AnalysisWindowEvidence?,
     hasFinalSleep: Boolean = morningRead?.sleepDataReady == true,
     hasPpi: Boolean = morningRead.hasPpiSignal(),
     hasUsableWindow: Boolean = morningRead.hasEstablishedSleepWindow(),
@@ -408,43 +410,19 @@ fun TodayHeroCard(
 internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
     buildList {
         heroAttentionFact(nowState)?.let { add(it) }
-        heroQualifierFact(nowState)?.let { add(it) }
-        heroStabilityFact(nowState)?.let { add(it) }
-        add(heroConfidenceFact(nowState))
+        heroCautionFact(nowState)?.let { add(it) }
+        heroConfidenceFact(nowState)?.let { add(it) }
         add(heroFreshnessFact(nowState))
         add(heroSleepRestFact(nowState))
     }.distinct().take(MAX_DAILY_FORECAST_FACTS)
 
 private const val MAX_DAILY_FORECAST_FACTS = 5
-private const val DEFAULT_DAILY_FORECAST_QUALIFIER = "Ready"
 
 internal fun dailyForecastHeroMessage(nowState: NowScreenState): String =
-    when {
-        nowState.currentState.qualifier.contains("function", ignoreCase = true) ->
-            "Recent outcomes suggest a lower-function spell. Keep today conservative until function has clearly improved."
-        nowState.currentState.kind == NowCurrentStateKind.WAITING_FOR_DATA &&
-            nowState.functionalContext.availability != NowDataAvailability.MISSING ->
-            "No fresh Loop data yet. Lodestone can still lean on recent check-ins, but confidence is lower."
-        nowState.currentState.kind == NowCurrentStateKind.WAITING_FOR_DATA ->
-            "Tap Check in to refresh the forecast. Without fresh data, Lodestone can only use saved context."
-        nowState.currentState.kind == NowCurrentStateKind.SYNCING ->
-            "Sync is running. Keep the phone and Loop close until the forecast refreshes."
-        nowState.currentState.kind == NowCurrentStateKind.SLEEP_MARKED ->
-            "Bedtime is saved. Check in when you are ready to refresh the forecast."
-        nowState.currentState.kind == NowCurrentStateKind.NEEDS_WINDOW ->
-            "Some body-signal data needs sleep/rest context before it can support the forecast. Recent check-ins still matter."
-        nowState.currentState.kind == NowCurrentStateKind.LOW_CONFIDENCE_READ ->
-            "Today's read is partial, so treat the forecast as cautious pacing guidance."
-        nowState.currentState.kind == NowCurrentStateKind.NO_MAIN_SLEEP ->
-            "No sleep/rest window is saved for this date, so Lodestone will not invent one."
-        else ->
-            "Use this as pacing guidance. Recent function, rest, and signal quality all stay part of the read."
-    }
+    nowState.currentState.message
 
 internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
     when {
-        nowState.currentState.kind == NowCurrentStateKind.SYNCING ->
-            "Keep the phone and Loop close while sync completes."
         nowState.deviceConnection.availability == NowDataAvailability.MISSING ->
             "Check in can refresh Loop data once a device is selected. Recent check-ins still provide functional context."
         nowState.signalRobustness.availability == NowDataAvailability.MISSING &&
@@ -452,23 +430,6 @@ internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
             "Check in refreshes Loop data when available. Until then, the forecast leans on recent check-ins."
         else ->
             "Check in refreshes the forecast and syncs the Loop."
-    }
-
-private fun heroQualifierFact(nowState: NowScreenState): String? =
-    when {
-        nowState.currentState.qualifier == DEFAULT_DAILY_FORECAST_QUALIFIER -> null
-        nowState.currentState.kind == NowCurrentStateKind.NEEDS_WINDOW -> "Needs context"
-        nowState.currentState.kind == NowCurrentStateKind.NO_MAIN_SLEEP -> "No saved window"
-        nowState.currentState.qualifier.contains("function", ignoreCase = true) -> "Mixed evidence"
-        nowState.currentState.qualifier.contains("signal", ignoreCase = true) -> "No body signal"
-        else -> scrubHeroQualifier(nowState.currentState.qualifier)
-    }
-
-private fun scrubHeroQualifier(qualifier: String): String =
-    when {
-        qualifier.contains("PPI", ignoreCase = true) -> "Needs context"
-        qualifier.contains("autonomic", ignoreCase = true) -> "Mixed evidence"
-        else -> qualifier
     }
 
 private fun heroAttentionFact(nowState: NowScreenState): String? {
@@ -484,22 +445,26 @@ private fun heroAttentionFact(nowState: NowScreenState): String? {
     }
 }
 
-private fun heroStabilityFact(nowState: NowScreenState): String? =
-    if (nowState.stateStability.availability == NowDataAvailability.PRESENT) {
-        "Stability: ${nowState.stateStability.label}"
-    } else {
-        null
-    }
+// Caution sits beside the forecast and only surfaces when ELEVATED (naming contract:
+// heroStabilityFact -> heroCautionFact).
+private fun heroCautionFact(nowState: NowScreenState): String? =
+    nowState.currentStateRead?.caution
+        ?.takeIf { it.level == CautionLevel.ELEVATED }
+        ?.let { "Caution: ${it.reasons.firstOrNull() ?: "ease off; payback can land a couple of days out"}" }
 
-private fun heroConfidenceFact(nowState: NowScreenState): String =
+// Confidence is shown ONLY when degraded — never over-claim during data collection.
+// "Degraded" = a genuinely low model read or no Loop signal at all; the normal capped
+// MEDIUM ceiling is not surfaced.
+private fun heroConfidenceFact(nowState: NowScreenState): String? =
     when {
         nowState.signalRobustness.availability == NowDataAvailability.MISSING &&
             nowState.functionalContext.availability != NowDataAvailability.MISSING ->
             "Confidence: check-ins only"
         nowState.signalRobustness.availability == NowDataAvailability.MISSING ->
             "Confidence: low"
-        else ->
-            "Confidence: ${nowState.signalRobustness.label}"
+        nowState.currentStateRead?.confidence == ConfidenceLevel.LOW ->
+            "Confidence: low"
+        else -> null
     }
 
 private fun heroFreshnessFact(nowState: NowScreenState): String =
@@ -530,15 +495,15 @@ private fun formatHeroDate(value: String): String =
         LocalDate.parse(value).format(DateTimeFormatter.ofPattern("EEE d MMM yyyy", java.util.Locale.UK))
     }.getOrDefault(value)
 
-private fun ppiReceiptLabel(morningRead: MorningReadSnapshot?): String = when {
+private fun ppiReceiptLabel(morningRead: AnalysisWindowEvidence?): String = when {
     morningRead?.rawPpiGoodEpochCount != null -> {
         val coverage = morningRead.rawPpiCoverageHours?.let {
             String.format(java.util.Locale.UK, ", %.1fh aligned", it)
         }.orEmpty()
         "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
     }
-    morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "Received, missing bedtime marker"
-    morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "Received, missing sleep/rest window"
+    morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "Received, missing bedtime marker"
+    morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "Received, missing sleep/rest window"
     morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, Loop report pending"
     else -> "Not received yet"
 }
@@ -550,11 +515,11 @@ fun MorningSignalSection(
 ) {
     val morningRead = nowState.activeMorningRead
     val todayStatus = nowState.readinessStatus
-    val tone = statusTone(nowState.currentState.status ?: morningRead?.status)
+    val tone = statusTone(nowState.currentState.status)
     Card(
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(
-            containerColor = tone.copy(alpha = if (morningRead?.status == null) 0.06f else 0.10f)
+            containerColor = tone.copy(alpha = if (nowState.currentState.status == null) 0.06f else 0.10f)
         ),
         border = BorderStroke(1.dp, tone.copy(alpha = 0.18f))
     ) {
@@ -578,7 +543,7 @@ fun MorningSignalSection(
                         DetailRow("Needed", nowState.signalRobustness.missingInputs.joinToString())
                     }
                 }
-                morningRead.reasons.take(3).forEach { reason ->
+                nowState.currentStateRead?.reasons.orEmpty().take(3).forEach { reason ->
                     Text("* $reason", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
@@ -659,9 +624,7 @@ private fun SignalEvidenceContent(nowState: NowScreenState) {
         DetailRow("Stability", nowState.stateStability.detail)
         morningRead?.let {
             DetailRow("Date", it.sourceDate ?: "unknown")
-            DetailRow("Autonomic signal", it.status?.let { status -> labelForStatus(status.name) } ?: "TBC")
             DetailRow("Signal source", autonomicSourceDisplayLabel(it.overnightAutonomicSource))
-            DetailRow("Model confidence", it.confidence.replaceFirstChar { char -> char.titlecase() })
             DetailRow("RMSSD", it.nightlyRmssd?.toInt()?.toString() ?: "n/a")
         }
     }
@@ -733,23 +696,23 @@ private fun HrvEvidenceContent(
 }
 
 fun morningReadBasisLabel(
-    morningRead: MorningReadSnapshot?,
+    morningRead: AnalysisWindowEvidence?,
     todayStatus: TodayReadinessStatus
 ): String =
     when {
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT ->
             "Calibrated sleep window + PPI, Loop report pending"
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT ->
             "Manual sleep window + PPI, Loop report pending"
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT ->
             "PPI-inferred sleep window, Loop report pending"
-        morningRead?.morningReadSource() == MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT ->
             "Manual sleep window, autonomic unavailable"
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Calibrated sleep window + PPI, Loop report as context"
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "Manual sleep window + PPI, Loop report as context"
-        morningRead?.morningReadSource() == MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
+        morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT ->
             "PPI-inferred sleep window, Loop report as context"
         morningRead?.sleepDataReady == true && morningRead.hasPpiSignal() ->
             "PPI aligned to Loop sleep report"
@@ -763,24 +726,24 @@ fun morningReadBasisLabel(
             "Waiting for morning data"
     }
 
-internal fun MorningReadSnapshot.analysisWindowLabel(): String =
+internal fun AnalysisWindowEvidence.analysisWindowLabel(): String =
     when (morningReadSource()) {
-        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
-        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
-        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred sleep window"
-        MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
-        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "calibrated primary window"
-        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "manual primary window"
-        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred primary window"
-        MorningReadSource.PPI247_SLEEP_WINDOW -> "Loop sleep report window"
-        MorningReadSource.SLEEP_CONTEXT_ONLY -> "Loop sleep context"
+        AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "calibrated sleep window"
+        AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
+        AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "PPI-inferred sleep window"
+        AnalysisWindowSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "manual marker-derived sleep window"
+        AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "calibrated primary window"
+        AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "manual primary window"
+        AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "PPI-inferred primary window"
+        AnalysisWindowSource.PPI247_SLEEP_WINDOW -> "Loop sleep report window"
+        AnalysisWindowSource.SLEEP_CONTEXT_ONLY -> "Loop sleep context"
         else -> if (sleepDataReady) "resolved sleep window" else "sleep/rest window"
     }
 
-private fun MorningReadSnapshot.morningReadSource(): MorningReadSource? =
-    MorningReadSource.fromKey(overnightAutonomicSource)
+private fun AnalysisWindowEvidence.morningReadSource(): AnalysisWindowSource? =
+    AnalysisWindowSource.fromKey(overnightAutonomicSource)
 
-private fun stabilityLabel(morningRead: MorningReadSnapshot?): String? {
+private fun stabilityLabel(morningRead: AnalysisWindowEvidence?): String? {
     val goodEpochs = morningRead?.rawPpiGoodEpochCount ?: return null
     val poorEpochs = morningRead.rawPpiPoorEpochCount ?: 0
     val coverageHours = morningRead.rawPpiCoverageHours ?: return null
@@ -792,7 +755,7 @@ private fun stabilityLabel(morningRead: MorningReadSnapshot?): String? {
     }
 }
 
-private fun morningReadReportStateLabel(morningRead: MorningReadSnapshot): String =
+private fun morningReadReportStateLabel(morningRead: AnalysisWindowEvidence): String =
     when {
         morningRead.sleepDataReady -> "Loop report attached"
         morningRead.isInterim -> "Loop report pending"
@@ -800,31 +763,31 @@ private fun morningReadReportStateLabel(morningRead: MorningReadSnapshot): Strin
     }
 
 private fun autonomicSourceDisplayLabel(source: String): String =
-    when (MorningReadSource.fromKey(source)) {
-        MorningReadSource.USER_CONFIRMED_NO_SLEEP -> "User confirmed no main sleep"
-        MorningReadSource.EDITED_SLEEP_EPISODE_PRIMARY -> "Edited sleep episode (primary)"
-        MorningReadSource.MIXED_SLEEP_EPISODE_PRIMARY -> "Mixed sleep episode (primary)"
-        MorningReadSource.MANUAL_SLEEP_EPISODE_PRIMARY -> "Manual sleep episode (primary)"
-        MorningReadSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "Confirmed sleep episode (primary)"
-        MorningReadSource.PPI247_SLEEP_WINDOW -> "24/7 PPI aligned to sleep"
-        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, calibrated sleep window"
-        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, manual sleep window"
-        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, inferred sleep window"
-        MorningReadSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "Manual sleep window, no autonomic signal"
-        MorningReadSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, calibrated primary window"
-        MorningReadSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, manual primary window"
-        MorningReadSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, inferred primary window"
-        MorningReadSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "24/7 PPI, waiting for bedtime marker"
-        MorningReadSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "24/7 PPI, waiting for sleep/rest window"
-        MorningReadSource.NIGHTLY_RECHARGE_SUMMARY -> "Nightly Recharge summary"
-        MorningReadSource.SLEEP_CONTEXT_ONLY -> "Sleep/context only"
-        MorningReadSource.AWAITING_SLEEP_DATA -> "Awaiting sleep data"
+    when (AnalysisWindowSource.fromKey(source)) {
+        AnalysisWindowSource.USER_CONFIRMED_NO_SLEEP -> "User confirmed no main sleep"
+        AnalysisWindowSource.EDITED_SLEEP_EPISODE_PRIMARY -> "Edited sleep episode (primary)"
+        AnalysisWindowSource.MIXED_SLEEP_EPISODE_PRIMARY -> "Mixed sleep episode (primary)"
+        AnalysisWindowSource.MANUAL_SLEEP_EPISODE_PRIMARY -> "Manual sleep episode (primary)"
+        AnalysisWindowSource.CONFIRMED_SLEEP_EPISODE_PRIMARY -> "Confirmed sleep episode (primary)"
+        AnalysisWindowSource.PPI247_SLEEP_WINDOW -> "24/7 PPI aligned to sleep"
+        AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, calibrated sleep window"
+        AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, manual sleep window"
+        AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PENDING_SLEEP_REPORT -> "24/7 PPI, inferred sleep window"
+        AnalysisWindowSource.MARKER_SLEEP_WINDOW_PENDING_SLEEP_REPORT -> "Manual sleep window, no autonomic signal"
+        AnalysisWindowSource.RAW_PPI_CALIBRATED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, calibrated primary window"
+        AnalysisWindowSource.RAW_PPI_MANUAL_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, manual primary window"
+        AnalysisWindowSource.RAW_PPI_INFERRED_WINDOW_PRIMARY_WITH_SLEEP_REPORT -> "24/7 PPI, inferred primary window"
+        AnalysisWindowSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "24/7 PPI, waiting for bedtime marker"
+        AnalysisWindowSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "24/7 PPI, waiting for sleep/rest window"
+        AnalysisWindowSource.NIGHTLY_RECHARGE_SUMMARY -> "Nightly Recharge summary"
+        AnalysisWindowSource.SLEEP_CONTEXT_ONLY -> "Sleep/context only"
+        AnalysisWindowSource.AWAITING_SLEEP_DATA -> "Awaiting sleep data"
         else -> source
     }
 
 @Composable
 fun HrvTrajectoryDialog(
-    morningRead: MorningReadSnapshot,
+    morningRead: AnalysisWindowEvidence,
     onDismiss: () -> Unit
 ) {
     val points = morningRead.hrvTrajectory.sortedBy { it.epochStartEpochMs }

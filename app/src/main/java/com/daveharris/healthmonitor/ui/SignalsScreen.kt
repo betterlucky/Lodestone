@@ -25,7 +25,7 @@ import com.daveharris.healthmonitor.data.AutonomicDetailScope
 import com.daveharris.healthmonitor.data.AutonomicScopeResolver
 import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.Ppi247EpochEntity
 import com.daveharris.healthmonitor.data.SleepEpisodeEntity
 import com.daveharris.healthmonitor.data.SyncRunEntity
@@ -37,7 +37,7 @@ import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 fun SignalsScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
-    morningRead: MorningReadSnapshot?,
+    morningRead: AnalysisWindowEvidence?,
     currentState: CurrentStateRead?,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
@@ -50,7 +50,7 @@ fun SignalsScreen(
     onOpenSettings: () -> Unit
 ) {
     val today = resolveLodestoneDisplayDate(
-        latestMorningReadSourceDate = morningRead?.sourceDate,
+        latestAnalysisWindowSourceDate = morningRead?.sourceDate,
         wakeMarkers = wakeMarkers
     ).sourceDate
     val nowState = buildNowScreenState(

@@ -22,7 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.CurrentStateRead
-import com.daveharris.healthmonitor.data.MorningReadSnapshot
+import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.SyncRunEntity
 import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
@@ -32,7 +32,7 @@ import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 fun DataScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
-    morningRead: MorningReadSnapshot?,
+    morningRead: AnalysisWindowEvidence?,
     currentState: CurrentStateRead?,
     syncRuns: List<SyncRunEntity>,
     wakeMarkers: List<WakeMarkerEntity>,
@@ -44,7 +44,7 @@ fun DataScreen(
     onOpenSettings: () -> Unit
 ) {
     val today = resolveLodestoneDisplayDate(
-        latestMorningReadSourceDate = morningRead?.sourceDate,
+        latestAnalysisWindowSourceDate = morningRead?.sourceDate,
         wakeMarkers = wakeMarkers
     ).sourceDate
     val nowState = buildNowScreenState(

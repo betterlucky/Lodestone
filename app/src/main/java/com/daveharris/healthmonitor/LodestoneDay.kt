@@ -15,13 +15,13 @@ data class LodestoneDayResolution(
 
 fun resolveLodestoneDisplayDate(
     nowEpochMs: Long = System.currentTimeMillis(),
-    latestMorningReadSourceDate: String?,
+    latestAnalysisWindowSourceDate: String?,
     wakeMarkers: List<WakeMarkerEntity>,
     zoneId: ZoneId = ZoneId.systemDefault()
 ): LodestoneDayResolution {
     val now = Instant.ofEpochMilli(nowEpochMs).atZone(zoneId)
     val wallDate = now.toLocalDate()
-    val latestMorningDate = latestMorningReadSourceDate?.let {
+    val latestMorningDate = latestAnalysisWindowSourceDate?.let {
         runCatching { LocalDate.parse(it) }.getOrNull()
     }
     val latestMarker = wakeMarkers
