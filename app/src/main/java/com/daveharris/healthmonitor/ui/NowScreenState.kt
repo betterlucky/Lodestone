@@ -90,7 +90,20 @@ data class NowCurrentState(
     val status: TrafficLightStatus?,
     val label: String,
     val qualifier: String,
-    val message: String
+    val message: String,
+    // Signal-acquisition context, folded in from the former TodayReadinessStatus.
+    // buildCurrentState produces the forecast core with these at neutral defaults;
+    // withSignalContext always overwrites them before the state reaches the UI.
+    val stage: NowSignalStage = NowSignalStage.NOT_STARTED,
+    val hrvDetail: String = "",
+    val signalConfidence: SignalConfidenceSummary = SignalConfidenceSummary(
+        state = SignalConfidenceState.WAITING,
+        label = "Waiting",
+        missingInputs = emptyList(),
+        supportingGaps = emptyList()
+    ),
+    val connectionPrompt: String? = null,
+    val heroPrompt: String? = null
 )
 
 data class NowFunctionalContext(
@@ -199,7 +212,6 @@ data class NowScreenState(
     val markerStatus: NowMarkerStatus,
     val primaryActions: NowPrimaryActions,
     val deviceConnection: NowDataPoint,
-    val readinessStatus: TodayReadinessStatus,
     val journalFocus: NowJournalFocus
 )
 
@@ -282,6 +294,15 @@ fun buildNowScreenState(
     val currentState = buildCurrentState(
         currentStateRead = relevantCurrentState,
         syncRunning = syncRunning
+    ).withSignalContext(
+        signalRobustness = signalRobustness,
+        markerStatus = markerStatus,
+        morningRead = relevantMorningRead,
+        hasFinalSleep = hasFinalSleep,
+        hasPpi = hasPpi,
+        syncRunning = syncRunning,
+        noMainSleep = noMainSleep,
+        analysisWindow = activeAnalysisWindow
     )
     val primaryActions = buildPrimaryActions(
         markerMode = markerMode,
@@ -291,18 +312,6 @@ fun buildNowScreenState(
         catchUpPrompt = catchUpPrompt
     )
     val deviceConnection = buildDeviceConnection(runtime, selectedDeviceId)
-    val readinessStatus = buildTodayReadinessStatus(
-        currentState = currentState,
-        signalRobustness = signalRobustness,
-        markerStatus = markerStatus,
-        freshness = freshness,
-        morningRead = relevantMorningRead,
-        hasFinalSleep = hasFinalSleep,
-        hasPpi = hasPpi,
-        syncRunning = syncRunning,
-        noMainSleep = noMainSleep,
-        analysisWindow = activeAnalysisWindow
-    )
     val journalFocus = buildJournalFocus(
         today = today,
         analysisWindow = activeAnalysisWindow,
@@ -326,7 +335,6 @@ fun buildNowScreenState(
         markerStatus = markerStatus,
         primaryActions = primaryActions,
         deviceConnection = deviceConnection,
-        readinessStatus = readinessStatus,
         journalFocus = journalFocus
     )
 }
@@ -1128,26 +1136,31 @@ private fun buildDeviceConnection(
         else -> NowDataPoint("Device", NowDataAvailability.PARTIAL, runtime.connectionPhase.replaceFirstChar { it.titlecase() })
     }
 
-private fun buildTodayReadinessStatus(
-    currentState: NowCurrentState,
+/**
+ * Folds the former TodayReadinessStatus into the forecast core: the signal-acquisition
+ * stage, signal-confidence summary, HRV detail, and the device/hero attention prompts now
+ * ride on [NowCurrentState] itself rather than a parallel status object. Catch-up/freshness
+ * labels are read directly from [NowFreshness] at the call site, so they are not duplicated
+ * here.
+ */
+private fun NowCurrentState.withSignalContext(
     signalRobustness: NowSignalRobustness,
     markerStatus: NowMarkerStatus,
-    freshness: NowFreshness,
     morningRead: AnalysisWindowEvidence?,
     hasFinalSleep: Boolean,
     hasPpi: Boolean,
     syncRunning: Boolean,
     noMainSleep: Boolean,
     analysisWindow: NowAnalysisWindowProvenance
-): TodayReadinessStatus {
+): NowCurrentState {
     val stage = when {
-        markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> TodayReadinessStage.SLEEP_TIME
-        syncRunning -> TodayReadinessStage.STARTING_SYNC
-        hasFinalSleep || noMainSleep || currentState.kind == NowCurrentStateKind.READY -> TodayReadinessStage.UPDATE_COMPLETE
-        hasPpi -> TodayReadinessStage.INITIAL_PPI
-        else -> TodayReadinessStage.NOT_STARTED
+        markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> NowSignalStage.SLEEP_TIME
+        syncRunning -> NowSignalStage.STARTING_SYNC
+        hasFinalSleep || noMainSleep || kind == NowCurrentStateKind.READY -> NowSignalStage.UPDATE_COMPLETE
+        hasPpi -> NowSignalStage.INITIAL_PPI
+        else -> NowSignalStage.NOT_STARTED
     }
-    val dataQuality = if (noMainSleep) {
+    val signalConfidence = if (noMainSleep) {
         SignalConfidenceSummary(
             state = SignalConfidenceState.PARTIAL,
             label = "Sleep not applicable",
@@ -1163,14 +1176,10 @@ private fun buildTodayReadinessStatus(
             hasUsableWindow = noMainSleep || morningRead.hasEstablishedSleepWindow()
         )
     }
-    return TodayReadinessStatus(
+    return copy(
         stage = stage,
-        title = currentState.label,
-        sleepReport = signalRobustness.sleepReport.detail,
-        ppiReceipt = signalRobustness.ppi.detail,
-        message = currentState.message,
         hrvDetail = hrvDetailForState(morningRead, noMainSleep, analysisWindow),
-        dataQuality = dataQuality,
+        signalConfidence = signalConfidence,
         connectionPrompt = if (syncRunning) {
             "Keep the phone close to the Loop until sync finishes."
         } else {
@@ -1180,10 +1189,7 @@ private fun buildTodayReadinessStatus(
             syncRunning -> "Stay near Loop"
             markerStatus.state == NowMarkerState.STALE_BEDTIME -> "Marker stale"
             else -> null
-        },
-        catchUpPrompt = freshness.catchUpPrompt,
-        lastUsedLabel = freshness.lastUsed.detail.takeUnless { freshness.lastUsed.availability == NowDataAvailability.MISSING },
-        lastLoopSyncLabel = freshness.loopSync.detail.takeUnless { freshness.loopSync.availability == NowDataAvailability.MISSING }
+        }
     )
 }
 

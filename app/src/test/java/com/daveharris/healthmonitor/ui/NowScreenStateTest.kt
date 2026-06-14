@@ -64,9 +64,9 @@ class NowScreenStateTest {
         assertEquals(NowDataAvailability.PRESENT, state.signalRobustness.ppi.availability)
         assertEquals(NowAnalysisWindowSourceType.MODEL_ESTIMATE, state.activeAnalysisWindow.sourceType)
         assertEquals("calibrated sleep window", state.activeAnalysisWindow.label)
-        assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
-        assertTrue(state.readinessStatus.dataQuality.missingInputs.isEmpty())
-        assertTrue("Loop sleep report comparison" in state.readinessStatus.dataQuality.supportingGaps)
+        assertTrue(state.currentState.hrvDetail.contains(state.activeAnalysisWindow.label))
+        assertTrue(state.currentState.signalConfidence.missingInputs.isEmpty())
+        assertTrue("Loop sleep report comparison" in state.currentState.signalConfidence.supportingGaps)
     }
 
     @Test
@@ -86,7 +86,7 @@ class NowScreenStateTest {
         // concern, not a forecast blocker. The model read still drives a READY forecast.
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertEquals(NowAnalysisWindowSourceType.PENDING, state.activeAnalysisWindow.sourceType)
-        assertTrue("Sleep/rest window" in state.readinessStatus.dataQuality.missingInputs)
+        assertTrue("Sleep/rest window" in state.currentState.signalConfidence.missingInputs)
         assertEquals(NowDataAvailability.PARTIAL, state.signalRobustness.sleepReport.availability)
     }
 
@@ -404,7 +404,7 @@ class NowScreenStateTest {
         assertEquals("7h 30m", state.activeAnalysisWindow.durationLabel)
         assertEquals("7h 30m (last 18h)", state.recentRest.detail)
         assertTrue(state.activeAnalysisWindow.selectedByUser)
-        assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
+        assertTrue(state.currentState.hrvDetail.contains(state.activeAnalysisWindow.label))
     }
 
     @Test
@@ -534,7 +534,7 @@ class NowScreenStateTest {
         assertEquals(NowAnalysisWindowSourceType.MARKER_DERIVED, state.activeAnalysisWindow.sourceType)
         assertEquals("manual marker-derived sleep window", state.activeAnalysisWindow.label)
         assertFalse(state.activeAnalysisWindow.selectedByUser)
-        assertTrue(state.readinessStatus.hrvDetail.contains(state.activeAnalysisWindow.label))
+        assertTrue(state.currentState.hrvDetail.contains(state.activeAnalysisWindow.label))
     }
 
     @Test
@@ -568,7 +568,7 @@ class NowScreenStateTest {
         assertEquals(NowAnalysisWindowSourceType.UNKNOWN, state.activeAnalysisWindow.sourceType)
         assertEquals("resolved sleep window", state.activeAnalysisWindow.label)
         assertTrue(state.activeAnalysisWindow.reason.contains("unclassified"))
-        assertTrue(state.readinessStatus.hrvDetail.contains("unclassified"))
+        assertTrue(state.currentState.hrvDetail.contains("unclassified"))
     }
 
     @Test
@@ -686,6 +686,64 @@ class NowScreenStateTest {
         // No model read supplied in this fixture -> stability simply unavailable.
         assertEquals(NowDataAvailability.MISSING, state.stateStability.availability)
         assertTrue(state.primaryActions.checkIn.enabled)
+    }
+
+    // 2b-iv fold: the former TodayReadinessStatus now rides on NowCurrentState. These lock
+    // the signal-acquisition stage, confidence summary, and attention prompts to currentState.
+    @Test
+    fun syncRunningSurfacesSignalContextPromptsOnCurrentState() {
+        val state = nowState(isBusy = true)
+
+        assertEquals(NowSignalStage.STARTING_SYNC, state.currentState.stage)
+        assertEquals(
+            "Keep the phone close to the Loop until sync finishes.",
+            state.currentState.connectionPrompt
+        )
+        assertEquals("Stay near Loop", state.currentState.heroPrompt)
+    }
+
+    @Test
+    fun staleBedtimeMarkerSurfacesHeroPromptOnCurrentState() {
+        val state = nowState(
+            morningRead = null,
+            wakeMarkers = listOf(marker("2026-05-31", "2026-05-30T02:30:00", "manual_going_to_bed"))
+        )
+
+        assertEquals(NowMarkerState.STALE_BEDTIME, state.markerStatus.state)
+        assertEquals("Marker stale", state.currentState.heroPrompt)
+        assertNull(state.currentState.connectionPrompt)
+    }
+
+    @Test
+    fun noMainSleepSignalConfidenceIsSleepNotApplicable() {
+        val state = nowState(
+            sleepEpisodeReviewState = buildSleepEpisodeReviewState(
+                activeDate = "2026-05-31",
+                reviewDates = listOf("2026-05-31"),
+                episodes = listOf(noMainSleepEpisode()),
+                zoneId = zone
+            )
+        )
+
+        assertEquals(SignalConfidenceState.PARTIAL, state.currentState.signalConfidence.state)
+        assertEquals("Sleep not applicable", state.currentState.signalConfidence.label)
+    }
+
+    @Test
+    fun resolvedReadReachesUpdateCompleteStage() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25
+            ),
+            currentState = modelRead()
+        )
+
+        assertEquals(NowSignalStage.UPDATE_COMPLETE, state.currentState.stage)
+        assertNull(state.currentState.heroPrompt)
+        assertNull(state.currentState.connectionPrompt)
     }
 
     @Test
