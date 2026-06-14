@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -339,7 +340,8 @@ fun todayDataQualitySummary(
 @Composable
 fun TodayHeroCard(
     nowState: NowScreenState,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenSignalsSection: (SignalsSection) -> Unit = {}
 ) {
     Card(
         shape = RoundedCornerShape(30.dp),
@@ -395,7 +397,9 @@ fun TodayHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    dailyForecastHeroFacts(nowState).forEach { HeroPill(it) }
+                    dailyForecastHeroFacts(nowState).forEach { fact ->
+                        HeroPill(fact = fact, onClick = onOpenSignalsSection)
+                    }
                 }
                 Text(
                     dailyForecastHeroMessage(nowState),
@@ -407,14 +411,21 @@ fun TodayHeroCard(
     }
 }
 
-internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
+// A hero pill: its label plus the Signals section it drills into (table-of-contents
+// intent). A null target makes the pill non-interactive context only.
+data class HeroFact(
+    val label: String,
+    val target: SignalsSection?
+)
+
+internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<HeroFact> =
     buildList {
-        heroAttentionFact(nowState)?.let { add(it) }
-        heroCautionFact(nowState)?.let { add(it) }
-        heroConfidenceFact(nowState)?.let { add(it) }
-        add(heroFreshnessFact(nowState))
-        add(heroSleepRestFact(nowState))
-    }.distinct().take(MAX_DAILY_FORECAST_FACTS)
+        heroAttentionFact(nowState)?.let { add(HeroFact(it, SignalsSection.SIGNAL_DETAIL)) }
+        heroCautionFact(nowState)?.let { add(HeroFact(it, SignalsSection.CURRENT_SIGNAL)) }
+        heroConfidenceFact(nowState)?.let { add(HeroFact(it, SignalsSection.SIGNAL_DETAIL)) }
+        add(HeroFact(heroFreshnessFact(nowState), SignalsSection.SIGNAL_DETAIL))
+        add(HeroFact(heroSleepRestFact(nowState), SignalsSection.SLEEP_REST))
+    }.distinctBy { it.label }.take(MAX_DAILY_FORECAST_FACTS)
 
 private const val MAX_DAILY_FORECAST_FACTS = 5
 
@@ -474,16 +485,20 @@ private fun heroSleepRestFact(nowState: NowScreenState): String =
     "Recent rest: ${nowState.recentRest.detail}"
 
 @Composable
-private fun HeroPill(label: String) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
-            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f))
-            .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f), RoundedCornerShape(100.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp)
-    ) {
+private fun HeroPill(
+    fact: HeroFact,
+    onClick: (SignalsSection) -> Unit
+) {
+    val pillShape = RoundedCornerShape(100.dp)
+    val base = Modifier
+        .clip(pillShape)
+        .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f))
+        .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f), pillShape)
+    val target = fact.target
+    val modifier = if (target != null) base.clickable { onClick(target) } else base
+    Box(modifier = modifier.padding(horizontal = 12.dp, vertical = 7.dp)) {
         Text(
-            label,
+            fact.label,
             color = MaterialTheme.colorScheme.onPrimary,
             fontWeight = FontWeight.SemiBold
         )

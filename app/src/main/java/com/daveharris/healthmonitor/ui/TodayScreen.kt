@@ -42,7 +42,8 @@ fun DataScreen(
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
     onOpenJournal: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenSignalsSection: (SignalsSection) -> Unit = {}
 ) {
     val today = resolveLodestoneDisplayDate(
         latestAnalysisWindowSourceDate = morningRead?.sourceDate,
@@ -96,7 +97,8 @@ fun DataScreen(
         item {
             TodayHeroCard(
                 nowState = nowState,
-                onOpenSettings = onOpenSettings
+                onOpenSettings = onOpenSettings,
+                onOpenSignalsSection = onOpenSignalsSection
             )
         }
         item {

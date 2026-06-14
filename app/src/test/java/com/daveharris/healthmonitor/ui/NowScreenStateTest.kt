@@ -159,17 +159,58 @@ class NowScreenStateTest {
             )
         )
 
-        val facts = dailyForecastHeroFacts(state)
+        val labels = dailyForecastHeroFacts(state).map { it.label }
 
         // A healthy read (caution NONE, confidence not LOW): no caution/confidence pill —
         // confidence is shown ONLY when degraded. Freshness + recent rest still surface.
-        assertFalse("Ready" in facts)
-        assertFalse(facts.any { it.startsWith("Caution") })
-        assertFalse(facts.any { it.startsWith("Confidence") })
-        assertTrue("Last sync: 2h ago" in facts)
-        assertTrue("Recent rest: 7h (last 18h)" in facts)
-        assertTrue(facts.size <= 5)
-        assertFalse(facts.any { it.contains("Planning", ignoreCase = true) })
+        assertFalse("Ready" in labels)
+        assertFalse(labels.any { it.startsWith("Caution") })
+        assertFalse(labels.any { it.startsWith("Confidence") })
+        assertTrue("Last sync: 2h ago" in labels)
+        assertTrue("Recent rest: 7h (last 18h)" in labels)
+        assertTrue(labels.size <= 5)
+        assertFalse(labels.any { it.contains("Planning", ignoreCase = true) })
+    }
+
+    @Test
+    fun dailyForecastHeroPillsTargetMatchingSignalsSection() {
+        val state = nowState(
+            morningRead = morningRead(
+                sleepDataReady = true,
+                source = "ppi247_sleep_window",
+                rawPpiGoodEpochCount = 64,
+                rawPpiCoverageHours = 7.25,
+                nightlyRmssd = 48.0
+            ),
+            currentState = modelRead(cautionLevel = CautionLevel.ELEVATED),
+            syncRuns = listOf(
+                SyncRunEntity(
+                    deviceId = "loop-1",
+                    firmwareVersion = null,
+                    appVersion = "test",
+                    startedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    endedAtEpochMs = now - 2 * 60 * 60 * 1000,
+                    status = "success",
+                    notes = "check-in"
+                )
+            )
+        )
+
+        val facts = dailyForecastHeroFacts(state)
+
+        // Hero pills are a table of contents into Signals: each drills into its section.
+        assertEquals(
+            SignalsSection.SLEEP_REST,
+            facts.first { it.label.startsWith("Recent rest") }.target
+        )
+        assertEquals(
+            SignalsSection.SIGNAL_DETAIL,
+            facts.first { it.label.startsWith("Last sync") }.target
+        )
+        assertEquals(
+            SignalsSection.CURRENT_SIGNAL,
+            facts.first { it.label.startsWith("Caution") }.target
+        )
     }
 
     @Test
@@ -185,7 +226,7 @@ class NowScreenStateTest {
         )
 
         assertNoNowJargon(dailyForecastHeroMessage(state))
-        dailyForecastHeroFacts(state).forEach(::assertNoNowJargon)
+        dailyForecastHeroFacts(state).forEach { assertNoNowJargon(it.label) }
     }
 
     @Test
@@ -204,13 +245,14 @@ class NowScreenStateTest {
 
         val checkInMessage = dailyForecastCheckInMessage(state)
         val facts = dailyForecastHeroFacts(state)
+        val labels = facts.map { it.label }
 
         // No Loop signal, but recent check-ins exist: the forecast leans on them, the
         // check-in copy says so, and confidence surfaces as degraded ("check-ins only").
         assertTrue(checkInMessage.contains("recent check-ins"))
-        assertTrue("Confidence: check-ins only" in facts)
+        assertTrue("Confidence: check-ins only" in labels)
         assertNoNowJargon(dailyForecastHeroMessage(state))
-        facts.forEach(::assertNoNowJargon)
+        facts.forEach { assertNoNowJargon(it.label) }
     }
 
     @Test
@@ -245,10 +287,10 @@ class NowScreenStateTest {
             runtime = DeviceRuntimeState(bluetoothPowered = false)
         )
 
-        val facts = dailyForecastHeroFacts(state)
+        val labels = dailyForecastHeroFacts(state).map { it.label }
 
-        assertTrue("Bluetooth off" in facts)
-        assertTrue(facts.size <= 5)
+        assertTrue("Bluetooth off" in labels)
+        assertTrue(labels.size <= 5)
     }
 
     @Test
