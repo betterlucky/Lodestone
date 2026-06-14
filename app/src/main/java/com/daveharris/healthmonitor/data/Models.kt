@@ -63,12 +63,19 @@ data class AnalysisWindowEvidence(
     val nightlyRmssd: Double?,
     val baselineReady: Boolean,
     val isInterim: Boolean = false,
-    val sleepDataReady: Boolean = !isInterim && sleepDurationMinutes != null,
     val rawPpiGoodEpochCount: Int? = null,
     val rawPpiPoorEpochCount: Int? = null,
     val rawPpiCoverageHours: Double? = null,
     val hrvTrajectory: List<HrvTrajectoryPoint> = emptyList()
-)
+) {
+    /**
+     * Derived, not stored: a window is sleep-data-ready exactly when it is final
+     * (not interim) and carries a sleep duration. Computing it here makes the
+     * invariant unbreakable — callers can no longer pass a contradictory value.
+     */
+    val sleepDataReady: Boolean
+        get() = !isInterim && sleepDurationMinutes != null
+}
 
 internal fun AnalysisWindowEvidence?.hasUsableMorningPpiSignal(): Boolean =
     (this?.rawPpiGoodEpochCount ?: 0) >= MIN_MORNING_PPI_GOOD_EPOCHS

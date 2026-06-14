@@ -6,6 +6,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -65,14 +66,14 @@ enum class TodayReadinessStage {
     NOT_STARTED
 }
 
-enum class TodayDataQualityState {
+enum class SignalConfidenceState {
     READY,
     WAITING,
     PARTIAL
 }
 
-data class TodayDataQualitySummary(
-    val state: TodayDataQualityState,
+data class SignalConfidenceSummary(
+    val state: SignalConfidenceState,
     val label: String,
     val missingInputs: List<String>,
     val supportingGaps: List<String>
@@ -85,7 +86,7 @@ data class TodayReadinessStatus(
     val ppiReceipt: String,
     val message: String,
     val hrvDetail: String,
-    val dataQuality: TodayDataQualitySummary,
+    val dataQuality: SignalConfidenceSummary,
     val connectionPrompt: String? = null,
     val heroPrompt: String? = null,
     val catchUpPrompt: String? = null,
@@ -100,208 +101,14 @@ enum class NowEvidenceDetail {
     HRV
 }
 
-fun todayReadinessStatus(
-    today: String,
-    morningRead: AnalysisWindowEvidence?,
-    syncRuns: List<SyncRunEntity>,
-    wakeMarkers: List<WakeMarkerEntity>,
-    dailyCheckIns: List<DailyCheckInEntity>,
-    isBusy: Boolean
-): TodayReadinessStatus {
-    val nowEpochMs = System.currentTimeMillis()
-    val relevantMorningRead = morningRead?.takeIf { it.sourceDate == today }
-    val latestRealMarker = wakeMarkers
-        .filterNot { it.notes == "manual awake command" }
-        .maxByOrNull { it.markerEpochMs }
-    val latestReadinessSync = syncRuns
-        .filter {
-            it.notes?.contains("morning", ignoreCase = true) == true ||
-                it.notes?.contains("check-in", ignoreCase = true) == true
-        }
-        .maxByOrNull { it.startedAtEpochMs }
-    val isSleeping = latestRealMarker?.markerSource == WakeMarkerSources.GOING_TO_BED
-    val syncRunning = isBusy || latestReadinessSync?.status == "running"
-    val hasFinalSleep = relevantMorningRead?.sleepDataReady == true
-    val hasPpi = relevantMorningRead.hasPpiSignal()
-    val hasUsableWindow = relevantMorningRead.hasEstablishedSleepWindow()
-    val hasMarkerOnlyWindow = hasUsableWindow && !hasPpi && relevantMorningRead?.isInterim == true
-    val hasReadyLocalSignal = hasPpi && hasUsableWindow && relevantMorningRead.hasSufficientReadyPpiCoverage()
-    val analysisWindowLabel = relevantMorningRead?.analysisWindowLabel() ?: "sleep/rest window"
-    val catchUpPrompt = catchUpPrompt(today, morningRead)
-    val lastUsedLabel = lastUsedEpochMs(syncRuns, wakeMarkers, dailyCheckIns)
-        ?.let { relativeAgeLabel(nowEpochMs, it) }
-    val lastLoopSyncLabel = syncRuns
-        .filter { it.status == "success" || it.status == "completed" || it.endedAtEpochMs != null }
-        .maxOfOrNull { it.endedAtEpochMs ?: it.startedAtEpochMs }
-        ?.let { relativeAgeLabel(nowEpochMs, it) }
-    val dataQuality = todayDataQualitySummary(
-        stage = when {
-            isSleeping -> TodayReadinessStage.SLEEP_TIME
-            syncRunning -> TodayReadinessStage.STARTING_SYNC
-            hasFinalSleep || hasReadyLocalSignal || hasMarkerOnlyWindow -> TodayReadinessStage.UPDATE_COMPLETE
-            hasPpi -> TodayReadinessStage.INITIAL_PPI
-            else -> TodayReadinessStage.NOT_STARTED
-        },
-        morningRead = relevantMorningRead,
-        hasFinalSleep = hasFinalSleep,
-        hasPpi = hasPpi,
-        hasUsableWindow = hasUsableWindow,
-        hasReadyLocalSignal = hasReadyLocalSignal
-    )
-
-    return when {
-        isSleeping -> TodayReadinessStatus(
-            stage = TodayReadinessStage.SLEEP_TIME,
-            title = "Sleep time",
-            sleepReport = "Cleared for tonight",
-            ppiReceipt = "Waiting for wake sync",
-            message = "Bedtime is marked. Today's old read is hidden until you wake and sync again.",
-            hrvDetail = "Sleep mode is active. Sleep/rest HRV detail will appear after Lodestone syncs the Loop; tap I'm awake when you want to record wake time.",
-            dataQuality = dataQuality,
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-        syncRunning -> TodayReadinessStatus(
-            stage = TodayReadinessStage.STARTING_SYNC,
-            title = "Starting sync",
-            sleepReport = "Checking Loop",
-            ppiReceipt = "Checking Loop",
-            message = "Lodestone is connecting and pulling the morning core data.",
-            hrvDetail = "Sync is running. PPI detail will appear as soon as the Loop returns enough data.",
-            dataQuality = dataQuality,
-            connectionPrompt = "Keep the phone close to the Loop until PPI finishes. If Bluetooth drops, Lodestone will retry instead of storing duplicate data.",
-            heroPrompt = "Stay near Loop",
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-        hasFinalSleep -> TodayReadinessStatus(
-            stage = TodayReadinessStage.UPDATE_COMPLETE,
-            title = "Current signal ready",
-            sleepReport = "Loop report attached",
-            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = if (hasPpi) {
-                "PPI is aligned to the resolved Loop sleep context. Use it as pacing context, not a verdict."
-            } else {
-                "Loop sleep context is attached. Use it as pacing context, not a verdict."
-            },
-            hrvDetail = if (hasPpi) {
-                "Raw PPI has been aligned to the resolved Loop sleep window; use the signal as pacing context."
-            } else {
-                "Loop sleep context is attached; PPI detail will appear after Lodestone syncs enough current Loop data."
-            },
-            dataQuality = dataQuality,
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-        hasReadyLocalSignal -> TodayReadinessStatus(
-            stage = TodayReadinessStage.UPDATE_COMPLETE,
-            title = "Current signal ready",
-            sleepReport = "Loop report pending for comparison",
-            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = "PPI is aligned to a usable sleep/rest window. Loop sleep report is pending for comparison.",
-            hrvDetail = "Raw PPI is aligned to $analysisWindowLabel; use the signal as pacing context. Loop sleep report is pending for comparison.",
-            dataQuality = dataQuality,
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-        hasPpi -> TodayReadinessStatus(
-            stage = TodayReadinessStage.INITIAL_PPI,
-            title = if (hasUsableWindow) "Limited current signal" else "Needs sleep/rest window",
-            sleepReport = if (hasUsableWindow) "Loop report pending for comparison" else "Sleep/rest window needed",
-            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = if (!hasUsableWindow) {
-                "PPI is available, but Lodestone needs a usable sleep/rest window before the current signal is ready."
-            } else {
-                "PPI/window evidence is present, but coverage is thin. Treat this current signal as tentative context."
-            },
-            hrvDetail = if (!hasUsableWindow) {
-                "Tap I'm going to bed before sleep if you want Lodestone to use marker-derived timing for this read."
-            } else {
-                "The current signal is using $analysisWindowLabel, but PPI coverage is still thin."
-            },
-            dataQuality = dataQuality,
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-        hasMarkerOnlyWindow -> TodayReadinessStatus(
-            stage = TodayReadinessStage.UPDATE_COMPLETE,
-            title = "Limited current signal",
-            sleepReport = "Marker window active",
-            ppiReceipt = ppiReceiptLabel(relevantMorningRead),
-            message = "Lodestone has a usable sleep/rest window from markers, but no overnight PPI overlapped it. Treat this as sleep timing context, not an autonomic read.",
-            hrvDetail = "The current signal is using $analysisWindowLabel. PPI detail will appear after Lodestone receives enough aligned overnight Loop data.",
-            dataQuality = dataQuality,
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-        else -> TodayReadinessStatus(
-            stage = TodayReadinessStage.NOT_STARTED,
-            title = "Awaiting morning sync",
-            sleepReport = "Not synced yet",
-            ppiReceipt = "Not received yet",
-            message = "Tap Check in to pull current data, or I'm awake if you want to record wake time now.",
-            hrvDetail = "The raw overnight signal is stored from normal sync, but there is no current-day PPI or resolved sleep-window alignment yet.",
-            dataQuality = dataQuality,
-            catchUpPrompt = catchUpPrompt,
-            lastUsedLabel = lastUsedLabel,
-            lastLoopSyncLabel = lastLoopSyncLabel
-        )
-    }
-}
-
-private fun lastUsedEpochMs(
-    syncRuns: List<SyncRunEntity>,
-    wakeMarkers: List<WakeMarkerEntity>,
-    dailyCheckIns: List<DailyCheckInEntity>
-): Long? =
-    listOfNotNull(
-        syncRuns.maxOfOrNull { it.endedAtEpochMs ?: it.startedAtEpochMs },
-        wakeMarkers
-            .filterNot { it.notes == "manual awake command" }
-            .maxOfOrNull { it.markerEpochMs },
-        dailyCheckIns.maxOfOrNull { it.updatedAtEpochMs }
-    ).maxOrNull()
-
-private fun relativeAgeLabel(nowEpochMs: Long, eventEpochMs: Long): String {
-    val ageMs = (nowEpochMs - eventEpochMs).coerceAtLeast(0L)
-    val minute = 60_000L
-    val hour = 60 * minute
-    val day = 24 * hour
-    val week = 7 * day
-    val month = 30 * day
-    val year = 365 * day
-    val (value, unit) = when {
-        ageMs < hour -> ((ageMs / minute).coerceAtLeast(1L)) to "min"
-        ageMs < day -> (ageMs / hour) to "h"
-        ageMs < week -> (ageMs / day) to "d"
-        ageMs < month -> (ageMs / week) to "wk"
-        ageMs < year -> (ageMs / month) to "mo"
-        else -> (ageMs / year) to "yr"
-    }
-    return "$value$unit ago"
-}
-
-private fun catchUpPrompt(today: String, morningRead: AnalysisWindowEvidence?): String? {
-    val latestReadDate = morningRead?.sourceDate
-        ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
-        ?: return null
-    val todayDate = runCatching { LocalDate.parse(today) }.getOrNull() ?: return null
-    val missingDays = java.time.temporal.ChronoUnit.DAYS.between(latestReadDate, todayDate)
-    return if (missingDays > 0) {
-        "Last forecast refresh was $missingDays day${if (missingDays == 1L) "" else "s"} ago."
-    } else {
-        null
-    }
-}
-
-fun todayDataQualitySummary(
+fun signalConfidenceSummary(
     stage: TodayReadinessStage,
     morningRead: AnalysisWindowEvidence?,
     hasFinalSleep: Boolean = morningRead?.sleepDataReady == true,
     hasPpi: Boolean = morningRead.hasPpiSignal(),
     hasUsableWindow: Boolean = morningRead.hasEstablishedSleepWindow(),
     hasReadyLocalSignal: Boolean = hasPpi && hasUsableWindow && morningRead.hasSufficientReadyPpiCoverage()
-): TodayDataQualitySummary {
+): SignalConfidenceSummary {
     val coreMissing = buildList {
         if (!hasUsableWindow) add("Sleep/rest window")
         if (!hasPpi) add("24/7 PPI epochs")
@@ -321,25 +128,26 @@ fun todayDataQualitySummary(
     }
     return when {
         stage == TodayReadinessStage.SLEEP_TIME || stage == TodayReadinessStage.STARTING_SYNC ->
-            TodayDataQualitySummary(TodayDataQualityState.WAITING, "Waiting", coreMissing, supportingGaps)
+            SignalConfidenceSummary(SignalConfidenceState.WAITING, "Waiting", coreMissing, supportingGaps)
         coreMissing.isEmpty() ->
-            TodayDataQualitySummary(
-                state = if (supportingGaps.isEmpty()) TodayDataQualityState.READY else TodayDataQualityState.PARTIAL,
+            SignalConfidenceSummary(
+                state = if (supportingGaps.isEmpty()) SignalConfidenceState.READY else SignalConfidenceState.PARTIAL,
                 label = if (supportingGaps.isEmpty()) "Ready" else "Ready, supporting gaps",
                 missingInputs = emptyList(),
                 supportingGaps = supportingGaps
             )
         hasPpi || hasFinalSleep ->
-            TodayDataQualitySummary(TodayDataQualityState.PARTIAL, "Partial", coreMissing, supportingGaps)
+            SignalConfidenceSummary(SignalConfidenceState.PARTIAL, "Partial", coreMissing, supportingGaps)
         else ->
-            TodayDataQualitySummary(TodayDataQualityState.WAITING, "Waiting", coreMissing, supportingGaps)
+            SignalConfidenceSummary(SignalConfidenceState.WAITING, "Waiting", coreMissing, supportingGaps)
     }
 }
 
 @Composable
 fun TodayHeroCard(
     nowState: NowScreenState,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenSignalsSection: (SignalsSection) -> Unit = {}
 ) {
     Card(
         shape = RoundedCornerShape(30.dp),
@@ -395,7 +203,9 @@ fun TodayHeroCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    dailyForecastHeroFacts(nowState).forEach { HeroPill(it) }
+                    dailyForecastHeroFacts(nowState).forEach { fact ->
+                        HeroPill(fact = fact, onClick = onOpenSignalsSection)
+                    }
                 }
                 Text(
                     dailyForecastHeroMessage(nowState),
@@ -407,14 +217,21 @@ fun TodayHeroCard(
     }
 }
 
-internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<String> =
+// A hero pill: its label plus the Signals section it drills into (table-of-contents
+// intent). A null target makes the pill non-interactive context only.
+data class HeroFact(
+    val label: String,
+    val target: SignalsSection?
+)
+
+internal fun dailyForecastHeroFacts(nowState: NowScreenState): List<HeroFact> =
     buildList {
-        heroAttentionFact(nowState)?.let { add(it) }
-        heroCautionFact(nowState)?.let { add(it) }
-        heroConfidenceFact(nowState)?.let { add(it) }
-        add(heroFreshnessFact(nowState))
-        add(heroSleepRestFact(nowState))
-    }.distinct().take(MAX_DAILY_FORECAST_FACTS)
+        heroAttentionFact(nowState)?.let { add(HeroFact(it, SignalsSection.SIGNAL_DETAIL)) }
+        heroCautionFact(nowState)?.let { add(HeroFact(it, SignalsSection.CURRENT_SIGNAL)) }
+        heroConfidenceFact(nowState)?.let { add(HeroFact(it, SignalsSection.SIGNAL_DETAIL)) }
+        add(HeroFact(heroFreshnessFact(nowState), SignalsSection.SIGNAL_DETAIL))
+        add(HeroFact(heroSleepRestFact(nowState), SignalsSection.SLEEP_REST))
+    }.distinctBy { it.label }.take(MAX_DAILY_FORECAST_FACTS)
 
 private const val MAX_DAILY_FORECAST_FACTS = 5
 
@@ -474,16 +291,20 @@ private fun heroSleepRestFact(nowState: NowScreenState): String =
     "Recent rest: ${nowState.recentRest.detail}"
 
 @Composable
-private fun HeroPill(label: String) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
-            .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f))
-            .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f), RoundedCornerShape(100.dp))
-            .padding(horizontal = 12.dp, vertical = 7.dp)
-    ) {
+private fun HeroPill(
+    fact: HeroFact,
+    onClick: (SignalsSection) -> Unit
+) {
+    val pillShape = RoundedCornerShape(100.dp)
+    val base = Modifier
+        .clip(pillShape)
+        .background(MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.16f))
+        .border(1.dp, MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f), pillShape)
+    val target = fact.target
+    val modifier = if (target != null) base.clickable { onClick(target) } else base
+    Box(modifier = modifier.padding(horizontal = 12.dp, vertical = 7.dp)) {
         Text(
-            label,
+            fact.label,
             color = MaterialTheme.colorScheme.onPrimary,
             fontWeight = FontWeight.SemiBold
         )
@@ -494,19 +315,6 @@ private fun formatHeroDate(value: String): String =
     runCatching {
         LocalDate.parse(value).format(DateTimeFormatter.ofPattern("EEE d MMM yyyy", java.util.Locale.UK))
     }.getOrDefault(value)
-
-private fun ppiReceiptLabel(morningRead: AnalysisWindowEvidence?): String = when {
-    morningRead?.rawPpiGoodEpochCount != null -> {
-        val coverage = morningRead.rawPpiCoverageHours?.let {
-            String.format(java.util.Locale.UK, ", %.1fh aligned", it)
-        }.orEmpty()
-        "Received (${morningRead.rawPpiGoodEpochCount} usable windows$coverage)"
-    }
-    morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_PENDING_MANUAL_SLEEP_WINDOW -> "Received, missing bedtime marker"
-    morningRead?.morningReadSource() == AnalysisWindowSource.RAW_PPI_PENDING_SLEEP_WINDOW -> "Received, missing sleep/rest window"
-    morningRead?.overnightAutonomicSource?.contains("ppi", ignoreCase = true) == true -> "Received, Loop report pending"
-    else -> "Not received yet"
-}
 
 @Composable
 fun MorningSignalSection(
@@ -811,7 +619,7 @@ fun HrvTrajectoryDialog(
                             ppiReceipt = "",
                             message = "",
                             hrvDetail = "",
-                            dataQuality = todayDataQualitySummary(TodayReadinessStage.UPDATE_COMPLETE, morningRead)
+                            dataQuality = signalConfidenceSummary(TodayReadinessStage.UPDATE_COMPLETE, morningRead)
                         )
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant

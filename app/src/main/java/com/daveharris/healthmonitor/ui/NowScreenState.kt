@@ -1148,14 +1148,14 @@ private fun buildTodayReadinessStatus(
         else -> TodayReadinessStage.NOT_STARTED
     }
     val dataQuality = if (noMainSleep) {
-        TodayDataQualitySummary(
-            state = TodayDataQualityState.PARTIAL,
+        SignalConfidenceSummary(
+            state = SignalConfidenceState.PARTIAL,
             label = "Sleep not applicable",
             missingInputs = signalRobustness.missingInputs,
             supportingGaps = signalRobustness.supportingGaps
         )
     } else {
-        todayDataQualitySummary(
+        signalConfidenceSummary(
             stage = stage,
             morningRead = morningRead,
             hasFinalSleep = hasFinalSleep,

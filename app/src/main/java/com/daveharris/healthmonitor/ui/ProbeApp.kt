@@ -86,6 +86,7 @@ fun ProbeApp(
     val selectedTab = pagerState.currentPage
     var showSettings by remember { mutableStateOf(false) }
     var showJournalCapture by remember { mutableStateOf(false) }
+    var pendingSignalsSection by remember { mutableStateOf<SignalsSection?>(null) }
     var blockPostSwipeTaps by remember { mutableStateOf(false) }
     var hasInitialPagerPage by remember { mutableStateOf(false) }
     val tabFlingBehavior = PagerDefaults.flingBehavior(
@@ -211,7 +212,13 @@ fun ProbeApp(
                                             onOpenJournal = {
                                                 showJournalCapture = true
                                             },
-                                            onOpenSettings = { showSettings = true }
+                                            onOpenSettings = { showSettings = true },
+                                            onOpenSignalsSection = { section ->
+                                                pendingSignalsSection = section
+                                                pagerScope.launch {
+                                                    pagerState.animateScrollToPage(ProbeTab.SIGNALS.ordinal)
+                                                }
+                                            }
                                         )
                                         ProbeTab.SIGNALS -> SignalsScreen(
                                             padding = padding,
@@ -226,7 +233,9 @@ fun ProbeApp(
                                             sleepEpisodes = recentSleepEpisodes,
                                             viewModel = viewModel,
                                             actionsEnabled = !blockPostSwipeTaps,
-                                            onOpenSettings = { showSettings = true }
+                                            onOpenSettings = { showSettings = true },
+                                            scrollToSection = pendingSignalsSection,
+                                            onSectionConsumed = { pendingSignalsSection = null }
                                         )
                                         ProbeTab.HISTORY -> HistoryScreen(
                                             padding = padding,

@@ -8,19 +8,19 @@ import kotlin.test.assertTrue
 class TodayComponentsTest {
     @Test
     fun dataQualityWaitsWhenMorningInputsAreAbsent() {
-        val summary = todayDataQualitySummary(
+        val summary = signalConfidenceSummary(
             stage = TodayReadinessStage.NOT_STARTED,
             morningRead = null
         )
 
-        assertEquals(TodayDataQualityState.WAITING, summary.state)
+        assertEquals(SignalConfidenceState.WAITING, summary.state)
         assertEquals(listOf("Sleep/rest window", "24/7 PPI epochs"), summary.missingInputs)
         assertTrue("Morning-read snapshot" in summary.supportingGaps)
     }
 
     @Test
     fun dataQualityTreatsUsablePpiWindowAsReadyWithSupportingComparisonGap() {
-        val summary = todayDataQualitySummary(
+        val summary = signalConfidenceSummary(
             stage = TodayReadinessStage.INITIAL_PPI,
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -31,14 +31,14 @@ class TodayComponentsTest {
             )
         )
 
-        assertEquals(TodayDataQualityState.PARTIAL, summary.state)
+        assertEquals(SignalConfidenceState.PARTIAL, summary.state)
         assertTrue(summary.missingInputs.isEmpty())
         assertTrue("Loop sleep report comparison" in summary.supportingGaps)
     }
 
     @Test
     fun dataQualityStillBlocksWhenPpiHasNoUsableWindow() {
-        val summary = todayDataQualitySummary(
+        val summary = signalConfidenceSummary(
             stage = TodayReadinessStage.INITIAL_PPI,
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -49,13 +49,13 @@ class TodayComponentsTest {
             )
         )
 
-        assertEquals(TodayDataQualityState.PARTIAL, summary.state)
+        assertEquals(SignalConfidenceState.PARTIAL, summary.state)
         assertEquals(listOf("Sleep/rest window"), summary.missingInputs)
     }
 
     @Test
     fun dataQualityStaysPartialWhenPpiCoverageIsThin() {
-        val summary = todayDataQualitySummary(
+        val summary = signalConfidenceSummary(
             stage = TodayReadinessStage.INITIAL_PPI,
             morningRead = morningRead(
                 sleepDataReady = false,
@@ -66,13 +66,13 @@ class TodayComponentsTest {
             )
         )
 
-        assertEquals(TodayDataQualityState.PARTIAL, summary.state)
+        assertEquals(SignalConfidenceState.PARTIAL, summary.state)
         assertEquals(listOf("Ready local PPI coverage"), summary.missingInputs)
     }
 
     @Test
     fun dataQualityReadyWhenCoreInputsArePresent() {
-        val summary = todayDataQualitySummary(
+        val summary = signalConfidenceSummary(
             stage = TodayReadinessStage.UPDATE_COMPLETE,
             morningRead = morningRead(
                 sleepDataReady = true,
@@ -83,7 +83,7 @@ class TodayComponentsTest {
             )
         )
 
-        assertEquals(TodayDataQualityState.READY, summary.state)
+        assertEquals(SignalConfidenceState.READY, summary.state)
         assertTrue(summary.missingInputs.isEmpty())
         assertTrue(summary.supportingGaps.isEmpty())
     }
@@ -103,7 +103,6 @@ class TodayComponentsTest {
             nightlyRmssd = nightlyRmssd,
             baselineReady = true,
             isInterim = isInterim,
-            sleepDataReady = sleepDataReady,
             rawPpiGoodEpochCount = rawPpiGoodEpochCount,
             rawPpiPoorEpochCount = 0,
             rawPpiCoverageHours = rawPpiCoverageHours

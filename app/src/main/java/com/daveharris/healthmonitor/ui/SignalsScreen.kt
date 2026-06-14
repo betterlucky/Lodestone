@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -18,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -33,6 +35,25 @@ import com.daveharris.healthmonitor.data.WakeMarkerEntity
 import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 
+/**
+ * Anchors the Now hero pills can target so a tap acts as a table of contents into
+ * Signals. [lazyItemIndex] maps each anchor to its [SignalsScreen] LazyColumn item
+ * (the hero card is item 0). Keep this mapping in sync if the section order changes.
+ */
+enum class SignalsSection {
+    CURRENT_SIGNAL,
+    SLEEP_REST,
+    SIGNAL_DETAIL;
+
+    // Explicit, not ordinal-derived, so reordering the enum can't silently
+    // misroute a pill to the wrong section.
+    fun lazyItemIndex(): Int = when (this) {
+        CURRENT_SIGNAL -> 1
+        SLEEP_REST -> 2
+        SIGNAL_DETAIL -> 3
+    }
+}
+
 @Composable
 fun SignalsScreen(
     padding: PaddingValues,
@@ -47,7 +68,9 @@ fun SignalsScreen(
     sleepEpisodes: List<SleepEpisodeEntity>,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    scrollToSection: SignalsSection? = null,
+    onSectionConsumed: () -> Unit = {}
 ) {
     val today = resolveLodestoneDisplayDate(
         latestAnalysisWindowSourceDate = morningRead?.sourceDate,
@@ -129,7 +152,17 @@ fun SignalsScreen(
         )
     }
 
+    val listState = rememberLazyListState()
+    val consumeSection by rememberUpdatedState(onSectionConsumed)
+    LaunchedEffect(scrollToSection) {
+        scrollToSection?.let { section ->
+            listState.animateScrollToItem(section.lazyItemIndex())
+            consumeSection()
+        }
+    }
+
     LazyColumn(
+        state = listState,
         modifier = Modifier
             .fillMaxSize()
             .padding(padding),
