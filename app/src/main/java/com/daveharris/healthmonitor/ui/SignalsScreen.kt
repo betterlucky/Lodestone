@@ -37,15 +37,21 @@ import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 
 /**
  * Anchors the Now hero pills can target so a tap acts as a table of contents into
- * Signals. The order matches the [SignalsScreen] LazyColumn section items (the hero
- * card is item 0, so each anchor maps to its index + 1 via [lazyItemIndex]).
+ * Signals. [lazyItemIndex] maps each anchor to its [SignalsScreen] LazyColumn item
+ * (the hero card is item 0). Keep this mapping in sync if the section order changes.
  */
 enum class SignalsSection {
     CURRENT_SIGNAL,
     SLEEP_REST,
     SIGNAL_DETAIL;
 
-    fun lazyItemIndex(): Int = ordinal + 1
+    // Explicit, not ordinal-derived, so reordering the enum can't silently
+    // misroute a pill to the wrong section.
+    fun lazyItemIndex(): Int = when (this) {
+        CURRENT_SIGNAL -> 1
+        SLEEP_REST -> 2
+        SIGNAL_DETAIL -> 3
+    }
 }
 
 @Composable
