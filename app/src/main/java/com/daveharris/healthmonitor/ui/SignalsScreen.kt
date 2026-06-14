@@ -24,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.AutonomicDetailScope
-import com.daveharris.healthmonitor.data.AutonomicScopeResolver
 import com.daveharris.healthmonitor.data.CurrentStateRead
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
 import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
@@ -94,31 +93,33 @@ fun SignalsScreen(
     )
     val recoveryWindow = nowState.activeAnalysisWindow.toAutonomicRecoveryWindow()
     val lastPpiSyncEpochMs = ppi247Epochs.maxOfOrNull { it.updatedAtEpochMs }
-    val activeScopeSummary = remember(recoveryWindow, ppi247Epochs, sleepEpisodes, lastPpiSyncEpochMs) {
-        AutonomicScopeResolver.resolve(
-            scope = AutonomicDetailScope.ACTIVE_SLEEP_REST,
-            epochs = ppi247Epochs,
-            recoveryWindow = recoveryWindow,
-            sleepEpisodes = sleepEpisodes,
-            lastPpiSyncEpochMs = lastPpiSyncEpochMs
-        )
-    }
+    // Reachable whenever there is something to plot: an active sleep/rest recovery
+    // window, or any 24/7 PPI for the rolling/recent-trend scopes the sheet's selector
+    // can switch to. Don't gate it off the recovery scope alone.
+    val autonomicDetailAvailable = recoveryWindow != null || ppi247Epochs.isNotEmpty()
     var showAutonomicDetail by remember { mutableStateOf(false) }
     var evidenceDetail by remember { mutableStateOf<NowEvidenceDetail?>(null) }
     var showSleepWindowEvidence by remember { mutableStateOf(false) }
 
-    LaunchedEffect(activeScopeSummary.hasChart, recoveryWindow) {
-        if (!activeScopeSummary.hasChart && recoveryWindow == null) {
+    LaunchedEffect(autonomicDetailAvailable) {
+        if (!autonomicDetailAvailable) {
             showAutonomicDetail = false
         }
     }
 
     if (showAutonomicDetail) {
-        AutonomicDetailDialog(
+        AutonomicDetailSheet(
             recoveryWindow = recoveryWindow,
             epochs = ppi247Epochs,
             sleepEpisodes = sleepEpisodes,
             lastPpiSyncEpochMs = lastPpiSyncEpochMs,
+            // Without a recovery window the default ACTIVE_SLEEP_REST scope only shows
+            // an empty state; open on a rolling scope so the PPI-only case lands on data.
+            initialScope = if (recoveryWindow != null) {
+                AutonomicDetailScope.ACTIVE_SLEEP_REST
+            } else {
+                AutonomicDetailScope.ROLLING_1H
+            },
             onDismiss = { showAutonomicDetail = false }
         )
     }
@@ -126,11 +127,7 @@ fun SignalsScreen(
         NowEvidenceDetailSheet(
             detail = detail,
             nowState = nowState,
-            onDismiss = { evidenceDetail = null },
-            onOpenHrvTrajectory = {
-                evidenceDetail = null
-                showAutonomicDetail = true
-            }
+            onDismiss = { evidenceDetail = null }
         )
     }
     if (showSleepWindowEvidence) {
@@ -179,15 +176,9 @@ fun SignalsScreen(
             )
         }
         item {
-            MorningSignalSection(
+            SignalsCurrentSection(
                 nowState = nowState,
-                onOpenEvidence = { detail ->
-                    if (detail == NowEvidenceDetail.SLEEP_REST) {
-                        showSleepWindowEvidence = true
-                    } else {
-                        evidenceDetail = detail
-                    }
-                }
+                onOpenForecastEvidence = { evidenceDetail = NowEvidenceDetail.SIGNAL }
             )
         }
         item {
@@ -201,7 +192,7 @@ fun SignalsScreen(
         item {
             SignalsDataSection(
                 nowState = nowState,
-                autonomicDetailAvailable = activeScopeSummary.hasChart || recoveryWindow != null,
+                autonomicDetailAvailable = autonomicDetailAvailable,
                 onOpenDataQuality = { evidenceDetail = NowEvidenceDetail.DATA_QUALITY },
                 onOpenAutonomicDetail = { showAutonomicDetail = true }
             )
@@ -218,6 +209,34 @@ private fun signalsHeroSubtitle(nowState: NowScreenState): String =
         else ->
             "Review the evidence behind the forecast, repair sleep/rest windows, and inspect signal quality."
     }
+
+@Composable
+private fun SignalsCurrentSection(
+    nowState: NowScreenState,
+    onOpenForecastEvidence: () -> Unit
+) {
+    // Evidence behind the forecast, not a re-print of the Now hero status. The "why"
+    // (caution reasons) plus the contextual lanes the hero doesn't surface.
+    SectionCard(title = "Current signal", subtitle = "Evidence behind today's forecast") {
+        val reasons = nowState.currentStateRead?.reasons.orEmpty().take(3)
+        if (reasons.isEmpty()) {
+            SupportText(nowState.currentState.message)
+        } else {
+            reasons.forEach { reason -> SupportText("• $reason") }
+        }
+        if (nowState.functionalContext.availability != NowDataAvailability.MISSING) {
+            DetailRow("Functional context", nowState.functionalContext.label)
+        }
+        if (nowState.autonomicContext.availability != NowDataAvailability.MISSING) {
+            DetailRow("Autonomic context", nowState.autonomicContext.label)
+        }
+        ButtonRow {
+            OutlinedButton(onClick = onOpenForecastEvidence) {
+                Text("Forecast evidence")
+            }
+        }
+    }
+}
 
 @Composable
 private fun SignalsSleepRestSection(
