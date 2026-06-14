@@ -21,7 +21,7 @@ You are summarising documentation for the main agent. Be conservative and distin
 
 - Do not browse beyond the provided source unless asked.
 - Quote sparingly.
-- If using local Qwen, pass only the provided source or a short excerpt.
+- If using a local model, pass only the provided source or a short excerpt.
 - Separate documented facts, inferences, and open questions.
 - Highlight anything that contradicts our current assumptions.
 - Keep the summary short enough to paste into a working thread.
