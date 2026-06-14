@@ -237,7 +237,12 @@ fun buildNowScreenState(
 ): NowScreenState {
     val relevantMorningRead = morningRead?.takeIf { it.sourceDate == today }
     val latestReadinessSync = syncRuns.latestReadinessSync()
-    val syncRunning = isBusy || latestReadinessSync?.status == "running"
+    // A genuine Loop sync is in progress only when a readiness sync run is "running".
+    // isBusy is a generic flag (imports, exports, scans, marker saves all set it), so it
+    // gates actions and generic pending-ness but must NOT drive Loop-sync-specific hero/stage
+    // messaging — that keys off syncInProgress alone (see withSignalContext).
+    val syncInProgress = latestReadinessSync?.status == "running"
+    val syncRunning = isBusy || syncInProgress
     val noMainSleep = sleepEpisodeReviewState.activeDateGroup?.hasNoSleepDecision == true
     val resolvingWindowAvailable = noMainSleep ||
         sleepEpisodeReviewState.activeDateGroup?.hasPrimaryReadinessWindow == true ||
@@ -300,7 +305,7 @@ fun buildNowScreenState(
         morningRead = relevantMorningRead,
         hasFinalSleep = hasFinalSleep,
         hasPpi = hasPpi,
-        syncRunning = syncRunning,
+        syncInProgress = syncInProgress,
         noMainSleep = noMainSleep,
         analysisWindow = activeAnalysisWindow
     )
@@ -1149,13 +1154,13 @@ private fun NowCurrentState.withSignalContext(
     morningRead: AnalysisWindowEvidence?,
     hasFinalSleep: Boolean,
     hasPpi: Boolean,
-    syncRunning: Boolean,
+    syncInProgress: Boolean,
     noMainSleep: Boolean,
     analysisWindow: NowAnalysisWindowProvenance
 ): NowCurrentState {
     val stage = when {
         markerStatus.state == NowMarkerState.ACTIVE_BEDTIME -> NowSignalStage.SLEEP_TIME
-        syncRunning -> NowSignalStage.STARTING_SYNC
+        syncInProgress -> NowSignalStage.STARTING_SYNC
         hasFinalSleep || noMainSleep || kind == NowCurrentStateKind.READY -> NowSignalStage.UPDATE_COMPLETE
         hasPpi -> NowSignalStage.INITIAL_PPI
         else -> NowSignalStage.NOT_STARTED
@@ -1180,13 +1185,13 @@ private fun NowCurrentState.withSignalContext(
         stage = stage,
         hrvDetail = hrvDetailForState(morningRead, noMainSleep, analysisWindow),
         signalConfidence = signalConfidence,
-        connectionPrompt = if (syncRunning) {
+        connectionPrompt = if (syncInProgress) {
             "Keep the phone close to the Loop until sync finishes."
         } else {
             null
         },
         heroPrompt = when {
-            syncRunning -> "Stay near Loop"
+            syncInProgress -> "Stay near Loop"
             markerStatus.state == NowMarkerState.STALE_BEDTIME -> "Marker stale"
             else -> null
         }

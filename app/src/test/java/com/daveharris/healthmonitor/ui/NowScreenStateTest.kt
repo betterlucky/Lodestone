@@ -691,8 +691,8 @@ class NowScreenStateTest {
     // 2b-iv fold: the former TodayReadinessStatus now rides on NowCurrentState. These lock
     // the signal-acquisition stage, confidence summary, and attention prompts to currentState.
     @Test
-    fun syncRunningSurfacesSignalContextPromptsOnCurrentState() {
-        val state = nowState(isBusy = true)
+    fun runningSyncSurfacesSignalContextPromptsOnCurrentState() {
+        val state = nowState(syncRuns = listOf(runningCheckInSync()))
 
         assertEquals(NowSignalStage.STARTING_SYNC, state.currentState.stage)
         assertEquals(
@@ -700,6 +700,29 @@ class NowScreenStateTest {
             state.currentState.connectionPrompt
         )
         assertEquals("Stay near Loop", state.currentState.heroPrompt)
+    }
+
+    @Test
+    fun busyNonSyncActionDoesNotSurfaceSyncMessaging() {
+        // isBusy covers marker saves / imports / scans; it must not masquerade as a Loop sync.
+        val state = nowState(isBusy = true)
+
+        assertEquals(NowSignalStage.NOT_STARTED, state.currentState.stage)
+        assertNull(state.currentState.connectionPrompt)
+        assertNull(state.currentState.heroPrompt)
+    }
+
+    @Test
+    fun runningSyncPromptWinsTheHeroAttentionPill() {
+        // The live sync prompt must beat the device-connection line in the hero pill.
+        val state = nowState(
+            runtime = DeviceRuntimeState(bluetoothPowered = true, connectionPhase = "connecting"),
+            syncRuns = listOf(runningCheckInSync())
+        )
+
+        val labels = dailyForecastHeroFacts(state).map { it.label }
+        assertTrue("Keep the phone close to the Loop until sync finishes." in labels)
+        assertFalse("Connecting" in labels)
     }
 
     @Test
@@ -934,6 +957,17 @@ class NowScreenStateTest {
             rawPpiPoorEpochCount = 0,
             rawPpiCoverageHours = rawPpiCoverageHours,
             hrvTrajectory = hrvTrajectory
+        )
+
+    private fun runningCheckInSync(): SyncRunEntity =
+        SyncRunEntity(
+            deviceId = "loop-1",
+            firmwareVersion = null,
+            appVersion = "test",
+            startedAtEpochMs = now,
+            endedAtEpochMs = null,
+            status = "running",
+            notes = "check-in"
         )
 
     private fun trajectory(vararg values: Double): List<HrvTrajectoryPoint> =

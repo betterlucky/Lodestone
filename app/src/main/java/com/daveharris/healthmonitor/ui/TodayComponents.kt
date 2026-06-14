@@ -235,11 +235,12 @@ internal fun dailyForecastCheckInMessage(nowState: NowScreenState): String =
     }
 
 private fun heroAttentionFact(nowState: NowScreenState): String? {
-    val needsDeviceContext = nowState.currentState.connectionPrompt != null ||
-        nowState.deviceConnection.availability in setOf(
-            NowDataAvailability.MISSING,
-            NowDataAvailability.PENDING
-        )
+    // A live sync prompt wins the hero pill — surface it ahead of a generic device line.
+    nowState.currentState.connectionPrompt?.let { return it }
+    val needsDeviceContext = nowState.deviceConnection.availability in setOf(
+        NowDataAvailability.MISSING,
+        NowDataAvailability.PENDING
+    )
     return if (needsDeviceContext) {
         nowState.deviceConnection.detail
     } else {
