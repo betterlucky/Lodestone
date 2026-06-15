@@ -331,7 +331,7 @@ private fun SignalEvidenceContent(nowState: NowScreenState) {
         DetailRow("Basis", nowState.signalRobustness.basisLabel)
         DetailRow("Functional", nowState.functionalContext.detail)
         DetailRow("Autonomic", nowState.autonomicContext.detail)
-        DetailRow("Stability", nowState.stateStability.detail)
+        DetailRow("Caution", nowState.cautionSummary.detail)
         morningRead?.let {
             DetailRow("Date", it.sourceDate ?: "unknown")
             DetailRow("Signal source", autonomicSourceDisplayLabel(it.overnightAutonomicSource))
@@ -403,18 +403,6 @@ internal fun AnalysisWindowEvidence.analysisWindowLabel(): String =
 
 private fun AnalysisWindowEvidence.morningReadSource(): AnalysisWindowSource? =
     AnalysisWindowSource.fromKey(overnightAutonomicSource)
-
-private fun stabilityLabel(morningRead: AnalysisWindowEvidence?): String? {
-    val goodEpochs = morningRead?.rawPpiGoodEpochCount ?: return null
-    val poorEpochs = morningRead.rawPpiPoorEpochCount ?: 0
-    val coverageHours = morningRead.rawPpiCoverageHours ?: return null
-    return when {
-        goodEpochs < 12 || coverageHours < 3.0 -> "Brittle"
-        poorEpochs > goodEpochs / 3 -> "Brittle"
-        poorEpochs > 0 || coverageHours < 5.0 -> "Mixed"
-        else -> "Stable"
-    }
-}
 
 private fun autonomicSourceDisplayLabel(source: String): String =
     when (AnalysisWindowSource.fromKey(source)) {

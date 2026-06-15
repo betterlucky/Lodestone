@@ -131,7 +131,7 @@ data class NowSignalRobustness(
     val nightlyRecharge: NowDataPoint
 )
 
-data class NowStateStability(
+data class NowCautionSummary(
     val availability: NowDataAvailability,
     val label: String,
     val detail: String
@@ -206,7 +206,7 @@ data class NowScreenState(
     val currentState: NowCurrentState,
     val functionalContext: NowFunctionalContext,
     val signalRobustness: NowSignalRobustness,
-    val stateStability: NowStateStability,
+    val cautionSummary: NowCautionSummary,
     val autonomicContext: NowAutonomicContext,
     val freshness: NowFreshness,
     val markerStatus: NowMarkerStatus,
@@ -294,7 +294,7 @@ fun buildNowScreenState(
     // Gate by today like morningRead, so a stale read from another day never
     // surfaces a forecast/caution labelled as today's.
     val relevantCurrentState = currentStateRead?.takeIf { it.sourceDate == today }
-    val stateStability = buildStateStability(relevantCurrentState)
+    val cautionSummary = buildCautionSummary(relevantCurrentState)
     val autonomicContext = buildAutonomicContext(relevantMorningRead, noMainSleep)
     val currentState = buildCurrentState(
         currentStateRead = relevantCurrentState,
@@ -334,7 +334,7 @@ fun buildNowScreenState(
         currentState = currentState,
         functionalContext = functionalContext,
         signalRobustness = signalRobustness,
-        stateStability = stateStability,
+        cautionSummary = cautionSummary,
         autonomicContext = autonomicContext,
         freshness = freshness,
         markerStatus = markerStatus,
@@ -698,23 +698,23 @@ private fun buildSignalRobustness(
 }
 
 /**
- * Model-v1 replacement for the deleted fake `buildStateStability` (which
- * mislabelled PPI data coverage as "stability"). Stability is now the honest
- * pairing the naming contract calls for: the caution signal (brittleness /
- * push-risk) sitting BESIDE the forecast, qualified by confidence (data support).
+ * The honest caution display the naming contract calls for: the caution signal
+ * (brittleness / push-risk) sitting BESIDE the forecast, qualified by confidence
+ * (data support). Replaces the old fake "stability" read that mislabelled PPI
+ * data coverage; "stability" is reserved and not used here.
  * See docs/lodestone-naming-contract.md §3 and docs/lodestone-model-v1.md §2-3.
  */
-private fun buildStateStability(currentState: CurrentStateRead?): NowStateStability {
+private fun buildCautionSummary(currentState: CurrentStateRead?): NowCautionSummary {
     if (currentState == null) {
-        return NowStateStability(
+        return NowCautionSummary(
             availability = NowDataAvailability.MISSING,
             label = "TBC",
-            detail = "Not enough recent data to describe stability yet."
+            detail = "Not enough recent data to describe caution yet."
         )
     }
     val caution = currentState.caution
     if (caution.level == CautionLevel.ELEVATED) {
-        return NowStateStability(
+        return NowCautionSummary(
             availability = NowDataAvailability.PRESENT,
             label = "Caution",
             detail = caution.reasons.firstOrNull()
@@ -726,7 +726,7 @@ private fun buildStateStability(currentState: CurrentStateRead?): NowStateStabil
         ConfidenceLevel.MEDIUM -> "Reasonably supported by recent data."
         ConfidenceLevel.HIGH -> "Well supported by recent data."
     }
-    return NowStateStability(
+    return NowCautionSummary(
         availability = NowDataAvailability.PRESENT,
         label = "No caution flag",
         detail = confidenceNote

@@ -105,7 +105,7 @@ class NowScreenStateTest {
 
         // Forecast-first: thin PPI coverage no longer downgrades the forecast (the old
         // sleep-score gating is gone); coverage now lives in SignalConfidence. Model
-        // confidence/caution drives any caveat — see stateStabilityReflectsCautionAndConfidence().
+        // confidence/caution drives any caveat — see cautionSummaryReflectsCautionAndConfidence().
         assertEquals(NowCurrentStateKind.READY, state.currentState.kind)
         assertEquals("Likely OK", state.currentState.label)
         assertEquals("Ready", state.currentState.qualifier)
@@ -650,18 +650,18 @@ class NowScreenStateTest {
     }
 
     @Test
-    fun stateStabilityReflectsCautionAndConfidence() {
+    fun cautionSummaryReflectsCautionAndConfidence() {
         val elevated = nowState(currentState = modelRead(cautionLevel = CautionLevel.ELEVATED))
-        assertEquals(NowDataAvailability.PRESENT, elevated.stateStability.availability)
-        assertEquals("Caution", elevated.stateStability.label)
-        assertTrue(elevated.stateStability.detail.contains("higher range"))
+        assertEquals(NowDataAvailability.PRESENT, elevated.cautionSummary.availability)
+        assertEquals("Caution", elevated.cautionSummary.label)
+        assertTrue(elevated.cautionSummary.detail.contains("higher range"))
 
         val settled = nowState(currentState = modelRead(cautionLevel = CautionLevel.NONE, confidence = ConfidenceLevel.LOW))
-        assertEquals("No caution flag", settled.stateStability.label)
-        assertTrue(settled.stateStability.detail.contains("Limited"))
+        assertEquals("No caution flag", settled.cautionSummary.label)
+        assertTrue(settled.cautionSummary.detail.contains("Limited"))
 
         val missing = nowState(currentState = null)
-        assertEquals(NowDataAvailability.MISSING, missing.stateStability.availability)
+        assertEquals(NowDataAvailability.MISSING, missing.cautionSummary.availability)
     }
 
     @Test
@@ -683,8 +683,8 @@ class NowScreenStateTest {
         assertTrue(state.activeAnalysisWindow.selectedByUser)
         assertEquals(NowDataAvailability.NOT_APPLICABLE, state.signalRobustness.sleepReport.availability)
         assertEquals("No main sleep decision", state.signalRobustness.basisLabel)
-        // No model read supplied in this fixture -> stability simply unavailable.
-        assertEquals(NowDataAvailability.MISSING, state.stateStability.availability)
+        // No model read supplied in this fixture -> caution summary simply unavailable.
+        assertEquals(NowDataAvailability.MISSING, state.cautionSummary.availability)
         assertTrue(state.primaryActions.checkIn.enabled)
     }
 

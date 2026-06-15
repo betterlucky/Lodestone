@@ -43,9 +43,6 @@ interface ProbeDao {
     )
 
     @Insert
-    suspend fun insertMorningPredictionSnapshot(entity: MorningPredictionSnapshotEntity): Long
-
-    @Insert
     suspend fun insertCurrentStateSnapshot(entity: CurrentStateSnapshotEntity): Long
 
     @Insert
@@ -520,8 +517,6 @@ interface ProbeDao {
     @Query("SELECT * FROM daily_check_in ORDER BY sourceDate DESC")
     fun observeDailyCheckIns(): Flow<List<DailyCheckInEntity>>
 
-    @Query("SELECT * FROM morning_prediction_snapshot ORDER BY issuedAtEpochMs DESC")
-    fun observeMorningPredictionSnapshots(): Flow<List<MorningPredictionSnapshotEntity>>
 
     @Query("SELECT * FROM sleep_night_raw ORDER BY sourceDate DESC, syncTimestampEpochMs DESC LIMIT 1")
     fun observeLatestSleepRecord(): Flow<SleepNightRawEntity?>
