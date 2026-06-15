@@ -124,7 +124,6 @@ private fun Intent.toWorkerData(): Data =
     Data.Builder()
         .putOptionalString(ProbeCommandReceiver.EXTRA_COMMAND, getStringExtra(ProbeCommandReceiver.EXTRA_COMMAND))
         .putOptionalString(ProbeCommandReceiver.EXTRA_DEVICE_ID, getStringExtra(ProbeCommandReceiver.EXTRA_DEVICE_ID))
-        .putOptionalString(ProbeCommandReceiver.EXTRA_FOOD_DATE, getStringExtra(ProbeCommandReceiver.EXTRA_FOOD_DATE))
         .putOptionalString(ProbeCommandReceiver.EXTRA_FROM_DATE, getStringExtra(ProbeCommandReceiver.EXTRA_FROM_DATE))
         .putOptionalString(ProbeCommandReceiver.EXTRA_TO_DATE, getStringExtra(ProbeCommandReceiver.EXTRA_TO_DATE))
         .putLong(ProbeCommandReceiver.EXTRA_TRIGGER_AT_EPOCH_MS, getLongExtra(ProbeCommandReceiver.EXTRA_TRIGGER_AT_EPOCH_MS, -1L))
@@ -148,7 +147,6 @@ private fun androidx.work.Data.toCommandIntent(context: Context): Intent =
     Intent(context, ProbeCommandReceiver::class.java).apply {
         putExtra(ProbeCommandReceiver.EXTRA_COMMAND, getString(ProbeCommandReceiver.EXTRA_COMMAND))
         getString(ProbeCommandReceiver.EXTRA_DEVICE_ID)?.let { putExtra(ProbeCommandReceiver.EXTRA_DEVICE_ID, it) }
-        getString(ProbeCommandReceiver.EXTRA_FOOD_DATE)?.let { putExtra(ProbeCommandReceiver.EXTRA_FOOD_DATE, it) }
         getString(ProbeCommandReceiver.EXTRA_FROM_DATE)?.let { putExtra(ProbeCommandReceiver.EXTRA_FROM_DATE, it) }
         getString(ProbeCommandReceiver.EXTRA_TO_DATE)?.let { putExtra(ProbeCommandReceiver.EXTRA_TO_DATE, it) }
         putExtra(ProbeCommandReceiver.EXTRA_TRIGGER_AT_EPOCH_MS, getLong(ProbeCommandReceiver.EXTRA_TRIGGER_AT_EPOCH_MS, -1L))
