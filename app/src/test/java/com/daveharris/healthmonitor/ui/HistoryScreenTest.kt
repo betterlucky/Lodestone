@@ -1,10 +1,7 @@
 package com.daveharris.healthmonitor.ui
 
+import com.daveharris.healthmonitor.data.CurrentStateSnapshotEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.DailyWeightEntity
-import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
-import com.daveharris.healthmonitor.data.GripSessionEntity
-import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import java.time.LocalDate
 import java.util.Locale
@@ -12,6 +9,7 @@ import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class HistoryScreenTest {
@@ -28,58 +26,47 @@ class HistoryScreenTest {
     }
 
     @Test
-    fun reportsPairLatestPredictionWithJournalOutcomeAndCompleteness() {
+    fun reportsPairLatestForecastWithJournalOutcomeAndCompleteness() {
         val reports = buildHistoryDayReports(
-            predictions = listOf(
-                prediction("2026-05-30", issuedAt = 1, status = TrafficLightStatus.GOOD.name),
-                prediction("2026-05-31", issuedAt = 1, status = TrafficLightStatus.OK.name, sleepMinutes = 450),
-                prediction("2026-05-31", issuedAt = 2, status = TrafficLightStatus.UNSTEADY.name, sleepMinutes = 210)
+            forecasts = listOf(
+                forecast("2026-05-30", issuedAt = 1, level = TrafficLightStatus.GOOD.name),
+                forecast("2026-05-31", issuedAt = 1, level = TrafficLightStatus.OK.name),
+                forecast("2026-05-31", issuedAt = 2, level = TrafficLightStatus.UNSTEADY.name)
             ),
-            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name, manualGripStrengthKg = 28.5)),
-            foodSummaries = listOf(food("2026-05-31")),
-            weights = listOf(weight("2026-05-31"))
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name))
         )
 
         val latest = reports.first()
         assertEquals("2026-05-31", latest.sourceDate)
-        assertEquals(TrafficLightStatus.UNSTEADY, latest.predictionStatus)
+        assertEquals(TrafficLightStatus.UNSTEADY, latest.forecastStatus)
         assertEquals(TrafficLightStatus.CRASH, latest.outcomeStatus)
-        assertEquals("Autonomic signal looked steadier than functional outcome", latest.predictionOutcomeLabel)
-        assertEquals("Short/irregular sleep", latest.sleepBucketLabel)
-        assertTrue(latest.dataCompletenessLabel.contains("prediction"))
+        assertEquals("Forecast was steadier than the outcome", latest.forecastOutcomeLabel)
+        assertTrue(latest.dataCompletenessLabel.contains("forecast"))
         assertTrue(latest.dataCompletenessLabel.contains("journal"))
-        assertTrue(latest.dataCompletenessLabel.contains("food"))
-        assertTrue(latest.dataCompletenessLabel.contains("weight"))
-        assertEquals("Good → Unsteady", latest.stabilityTransitionLabel)
-        assertEquals("1800 kcal, 4 items, 1 tea, 11.0h window", latest.foodSummaryLabel)
-        assertEquals("70.0 kg at 08:00", latest.weightLabel)
-        assertEquals("28.5 kg", latest.gripStrengthLabel)
+        assertEquals("Good → Unsteady", latest.stateTransitionLabel)
         assertTrue(latest.functionalContextLabel.contains("Outcome: Crash"))
         assertTrue(latest.functionalContextLabel.contains("day shape unknown"))
     }
 
     @Test
-    fun reportsJournalOnlyDaysWithoutPretendingThereWasPredictionEvidence() {
+    fun reportsJournalOnlyDaysWithoutPretendingThereWasForecastEvidence() {
         val reports = buildHistoryDayReports(
-            predictions = emptyList(),
-            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.OK.name)),
-            foodSummaries = emptyList(),
-            weights = emptyList()
+            forecasts = emptyList(),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.OK.name))
         )
 
         val report = reports.single()
-        assertEquals("No morning signal", report.predictionLabel)
-        assertEquals("Functional outcome saved without an autonomic signal", report.predictionOutcomeLabel)
-        assertEquals("No morning signal evidence", report.robustnessLabel)
+        assertEquals("No forecast", report.forecastLabel)
+        assertEquals("Outcome saved without a forecast", report.forecastOutcomeLabel)
         assertEquals("journal", report.dataCompletenessLabel)
-        assertEquals("No active window recorded", report.windowProvenanceLabel)
+        assertEquals("No forecast recorded", report.stateTransitionLabel)
     }
 
     @Test
-    fun reportsMixedAutonomicAndFunctionalEvidenceWithoutFailureLanguage() {
+    fun reportsMixedForecastAndFunctionalEvidenceWithoutFailureLanguage() {
         val reports = buildHistoryDayReports(
-            predictions = listOf(
-                prediction("2026-05-31", issuedAt = 1, status = TrafficLightStatus.GOOD.name)
+            forecasts = listOf(
+                forecast("2026-05-31", issuedAt = 1, level = TrafficLightStatus.GOOD.name)
             ),
             checkIns = listOf(
                 checkIn(
@@ -89,129 +76,79 @@ class HistoryScreenTest {
                     mostlyHorizontal = true,
                     pemPaybackToday = true
                 )
-            ),
-            foodSummaries = emptyList(),
-            weights = emptyList()
+            )
         )
 
         val report = reports.single()
-        assertEquals("Autonomic signal looked steadier than functional outcome", report.predictionOutcomeLabel)
+        assertEquals("Forecast was steadier than the outcome", report.forecastOutcomeLabel)
         assertTrue(report.functionalContextLabel.contains("Mostly horizontal"))
         assertTrue(report.functionalContextLabel.contains("PEM / payback"))
         assertTrue(report.dataCompletenessLabel.contains("day shape"))
     }
 
     @Test
-    fun reportsWhetherWindowSourceHasLoopReportContext() {
-        val reports = buildHistoryDayReports(
-            predictions = listOf(
-                prediction(
-                    "2026-05-31",
-                    issuedAt = 1,
-                    status = TrafficLightStatus.OK.name,
-                    sleepMinutes = null,
-                    isInterim = true
-                )
-            ),
-            checkIns = emptyList(),
-            foodSummaries = emptyList(),
-            weights = emptyList()
-        )
+    fun confidenceLabelShowsOnlyWhenDegraded() {
+        val low = buildHistoryDayReports(
+            forecasts = listOf(forecast("2026-05-31", issuedAt = 1, level = TrafficLightStatus.OK.name, confidence = "LOW")),
+            checkIns = emptyList()
+        ).single()
+        assertEquals("Low — limited recent data", low.confidenceLabel)
 
-        assertEquals(
-            "raw ppi manual window pending sleep report (Loop report pending for comparison)",
-            reports.single().windowProvenanceLabel
-        )
-    }
+        val medium = buildHistoryDayReports(
+            forecasts = listOf(forecast("2026-05-31", issuedAt = 1, level = TrafficLightStatus.OK.name, confidence = "MEDIUM")),
+            checkIns = emptyList()
+        ).single()
+        assertEquals("Medium — still gathering data", medium.confidenceLabel)
 
-    @Test
-    fun reportsFormatPartialFoodAndWeightRows() {
-        val reports = buildHistoryDayReports(
-            predictions = emptyList(),
-            checkIns = emptyList(),
-            foodSummaries = listOf(
-                food(
-                    sourceDate = "2026-05-31",
-                    totalCaloriesKcal = null,
-                    eventCount = 4,
-                    teaCount = null,
-                    eatingWindowHours = null
-                ),
-                food(
-                    sourceDate = "2026-05-30",
-                    totalCaloriesKcal = null,
-                    eventCount = null,
-                    teaCount = null,
-                    eatingWindowHours = null
-                )
-            ),
-            weights = listOf(weight(sourceDate = "2026-05-31", measuredTime = null))
-        )
+        val high = buildHistoryDayReports(
+            forecasts = listOf(forecast("2026-05-31", issuedAt = 1, level = TrafficLightStatus.OK.name, confidence = "HIGH")),
+            checkIns = emptyList()
+        ).single()
+        assertNull(high.confidenceLabel)
 
-        assertEquals("4 items", reports.first { it.sourceDate == "2026-05-31" }.foodSummaryLabel)
-        assertEquals("70.0 kg", reports.first { it.sourceDate == "2026-05-31" }.weightLabel)
-        assertEquals("Food import present", reports.first { it.sourceDate == "2026-05-30" }.foodSummaryLabel)
-    }
-
-    @Test
-    fun reportsImportedGripSessionsAsFunctionalEvidence() {
-        val reports = buildHistoryDayReports(
-            predictions = emptyList(),
-            checkIns = emptyList(),
-            foodSummaries = emptyList(),
-            weights = emptyList(),
-            gripSessions = listOf(gripSession("2026-05-31"))
-        )
-
-        val report = reports.single()
-        assertEquals("2026-05-31", report.sourceDate)
-        assertEquals("grip", report.dataCompletenessLabel)
-        assertTrue(report.gripStrengthLabel.contains("1 session"))
-        assertTrue(report.gripStrengthLabel.contains("best 35.1 kg"))
+        val journalOnly = buildHistoryDayReports(
+            forecasts = emptyList(),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.OK.name))
+        ).single()
+        assertNull(journalOnly.confidenceLabel)
     }
 
     @Test
     fun reportBuilderHandlesLargerLocalHistoryWithoutDroppingRows() {
         val start = LocalDate.parse("2020-01-01")
         val dates = (0 until 2_000).map { start.plusDays(it.toLong()).toString() }
-        val predictions = dates.mapIndexed { index, date ->
-            prediction(
+        val forecasts = dates.mapIndexed { index, date ->
+            forecast(
                 sourceDate = date,
                 issuedAt = index.toLong(),
-                status = if (index % 3 == 0) TrafficLightStatus.GOOD.name else TrafficLightStatus.OK.name
+                level = if (index % 3 == 0) TrafficLightStatus.GOOD.name else TrafficLightStatus.OK.name
             )
         }
         val checkIns = dates.filterIndexed { index, _ -> index % 2 == 0 }
             .map { date -> checkIn(date, TrafficLightStatus.OK.name) }
-        val foods = dates.filterIndexed { index, _ -> index % 5 == 0 }.map(::food)
-        val weights = dates.filterIndexed { index, _ -> index % 7 == 0 }.map(::weight)
 
         val reports = buildHistoryDayReports(
-            predictions = predictions,
-            checkIns = checkIns,
-            foodSummaries = foods,
-            weights = weights
+            forecasts = forecasts,
+            checkIns = checkIns
         )
 
         assertEquals(2_000, reports.size)
         assertEquals(dates.last(), reports.first().sourceDate)
         assertEquals(dates.first(), reports.last().sourceDate)
-        assertEquals("First morning signal on record", reports.last().stabilityTransitionLabel)
+        assertEquals("First forecast on record", reports.last().stateTransitionLabel)
     }
 
     @Test
-    fun coverageSummaryCountsJournalAndMorningSignalCoverage() {
+    fun coverageSummaryCountsJournalAndForecastCoverage() {
         val reports = buildHistoryDayReports(
-            predictions = listOf(prediction("2026-05-31", issuedAt = 1, status = TrafficLightStatus.OK.name)),
-            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name)),
-            foodSummaries = emptyList(),
-            weights = emptyList()
+            forecasts = listOf(forecast("2026-05-31", issuedAt = 1, level = TrafficLightStatus.OK.name)),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.CRASH.name))
         )
 
         val summary = buildHistoryCoverageSummary(reports, attentionDateCount = 2)
         assertEquals(1, summary.dayReportCount)
         assertEquals(1, summary.withJournalCount)
-        assertEquals(1, summary.withMorningSignalCount)
+        assertEquals(1, summary.withForecastCount)
         assertEquals(2, summary.attentionDateCount)
     }
 
@@ -232,61 +169,53 @@ class HistoryScreenTest {
     }
 
     @Test
-    fun stabilityTransitionLabelUsesPlainLanguage() {
-        assertEquals("Unchanged from prior day", stabilityTransitionLabelForTest("OK", "OK"))
-        assertEquals("First morning signal on record", stabilityTransitionLabelForTest(null, "GOOD"))
+    fun stateTransitionLabelUsesPlainLanguage() {
+        assertEquals("Unchanged from prior day", stateTransitionLabelForTest("OK", "OK"))
+        assertEquals("First forecast on record", stateTransitionLabelForTest(null, "GOOD"))
     }
 
     @Test
-    fun journalOnlyDaysReportNoMorningSignalChange() {
+    fun journalOnlyDaysReportNoForecastChange() {
         val reports = buildHistoryDayReports(
-            predictions = emptyList(),
-            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.OK.name)),
-            foodSummaries = emptyList(),
-            weights = emptyList()
+            forecasts = emptyList(),
+            checkIns = listOf(checkIn("2026-05-31", TrafficLightStatus.OK.name))
         )
 
-        assertEquals("No morning signal recorded", reports.single().stabilityTransitionLabel)
+        assertEquals("No forecast recorded", reports.single().stateTransitionLabel)
     }
 
-    private fun stabilityTransitionLabelForTest(previousStatus: String?, currentStatus: String): String {
+    private fun stateTransitionLabelForTest(previousLevel: String?, currentLevel: String): String {
         val reports = buildHistoryDayReports(
-            predictions = buildList {
-                previousStatus?.let { add(prediction("2026-05-30", issuedAt = 1, status = it)) }
-                add(prediction("2026-05-31", issuedAt = 1, status = currentStatus))
+            forecasts = buildList {
+                previousLevel?.let { add(forecast("2026-05-30", issuedAt = 1, level = it)) }
+                add(forecast("2026-05-31", issuedAt = 1, level = currentLevel))
             },
-            checkIns = emptyList(),
-            foodSummaries = emptyList(),
-            weights = emptyList()
+            checkIns = emptyList()
         )
-        return reports.first { it.sourceDate == "2026-05-31" }.stabilityTransitionLabel
+        return reports.first { it.sourceDate == "2026-05-31" }.stateTransitionLabel
     }
 
-    private fun prediction(
+    private fun forecast(
         sourceDate: String,
         issuedAt: Long,
-        status: String,
-        sleepMinutes: Int? = 480,
-        isInterim: Boolean = false
-    ): MorningPredictionSnapshotEntity =
-        MorningPredictionSnapshotEntity(
+        level: String,
+        confidence: String = "LOW"
+    ): CurrentStateSnapshotEntity =
+        CurrentStateSnapshotEntity(
             sourceDate = sourceDate,
             issuedAtEpochMs = issuedAt,
             snapshotOrigin = "test",
             modelVersion = "test",
-            status = status,
-            confidence = "medium",
-            isInterim = isInterim,
-            sleepDataReady = sleepMinutes != null,
-            overnightAutonomicSource = "raw_ppi_manual_window_pending_sleep_report",
-            sleepDurationMinutes = sleepMinutes,
-            nightlyRmssd = 42.0,
-            baselineReady = true,
-            recoveryAvailable = true,
-            rawPpiGoodEpochCount = 36,
-            rawPpiPoorEpochCount = 2,
-            rawPpiCoverageHours = 4.5,
-            summary = "test",
+            forecastLevel = level,
+            forecastBasis = "RECENT_OUTCOME",
+            cautionLevel = "NONE",
+            cautionKind = "PUSH_RISK",
+            cautionReasonsJson = "[]",
+            confidenceLevel = confidence,
+            recentOutcomeLevel = level,
+            recentOutcomeDate = sourceDate,
+            exertionLoadRecent = 12,
+            hrvCv24h = 0.08,
             reasonsJson = "[]"
         )
 
@@ -315,63 +244,5 @@ class HistoryScreenTest {
             paybackPeakToday = false,
             paybackPeakConfidence = null,
             manualGripStrengthKg = manualGripStrengthKg
-        )
-
-    private fun food(
-        sourceDate: String,
-        totalCaloriesKcal: Int? = 1800,
-        eventCount: Int? = 4,
-        teaCount: Int? = 1,
-        eatingWindowHours: Double? = 11.0
-    ): FoodDailySummaryEntity =
-        FoodDailySummaryEntity(
-            sourceDate = sourceDate,
-            totalCaloriesKcal = totalCaloriesKcal,
-            eventCount = eventCount,
-            teaCount = teaCount,
-            firstIntakeTime = "08:00",
-            lastIntakeTime = "19:00",
-            eatingWindowHours = eatingWindowHours,
-            rawItemsJson = "[]",
-            importSource = "test",
-            importedAtEpochMs = 1
-        )
-
-    private fun weight(sourceDate: String, measuredTime: String? = "08:00"): DailyWeightEntity =
-        DailyWeightEntity(
-            sourceDate = sourceDate,
-            measuredTime = measuredTime,
-            weightKg = 70.0,
-            notes = null,
-            importSource = "test",
-            importedAtEpochMs = 1
-        )
-
-    private fun gripSession(sourceDate: String): GripSessionEntity =
-        GripSessionEntity(
-            sessionId = "grip-$sourceDate-test",
-            sourceDate = sourceDate,
-            startedAtEpochMs = 1,
-            startedAtLocal = "${sourceDate}T09:00:00+01:00",
-            hand = "left",
-            protocolLabel = "check_2",
-            pullSeconds = 3.0,
-            restSeconds = 5.0,
-            expectedRepCount = 2,
-            setNumber = 1,
-            restGapMinutes = null,
-            deviceLabel = null,
-            bodyPosition = null,
-            armPosition = null,
-            handleSetting = null,
-            notes = null,
-            completedRepCount = 2,
-            bestValueKg = 35.1,
-            meanValueKg = 32.0,
-            firstValueKg = 35.1,
-            lastValueKg = 29.0,
-            bestToLastDropPct = 17.38,
-            importSource = "test",
-            importedAtEpochMs = 1
         )
 }

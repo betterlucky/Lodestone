@@ -30,35 +30,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.daveharris.healthmonitor.data.CurrentStateSnapshotEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.DailyWeightEntity
-import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
-import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
-import com.daveharris.healthmonitor.data.MorningPredictionSnapshotEntity
-import com.daveharris.healthmonitor.data.AnalysisWindowSource
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 
 @Composable
 fun HistoryScreen(
     padding: PaddingValues,
-    morningPredictionSnapshots: List<MorningPredictionSnapshotEntity>,
+    currentStateSnapshots: List<CurrentStateSnapshotEntity>,
     dailyCheckIns: List<DailyCheckInEntity>,
-    foodDailySummaries: List<FoodDailySummaryEntity>,
-    dailyWeights: List<DailyWeightEntity>,
-    gripSessions: List<GripSessionEntity>,
     sleepEpisodeReviewState: SleepEpisodeReviewState,
     viewModel: ProbeViewModel,
     onOpenJournal: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    val reports = remember(morningPredictionSnapshots, dailyCheckIns, foodDailySummaries, dailyWeights, gripSessions) {
+    val reports = remember(currentStateSnapshots, dailyCheckIns) {
         buildHistoryDayReports(
-            predictions = morningPredictionSnapshots,
-            checkIns = dailyCheckIns,
-            foodSummaries = foodDailySummaries,
-            weights = dailyWeights,
-            gripSessions = gripSessions
+            forecasts = currentStateSnapshots,
+            checkIns = dailyCheckIns
         )
     }
     val coverage = remember(reports, sleepEpisodeReviewState.attentionDateCount) {
@@ -78,7 +68,7 @@ fun HistoryScreen(
         item {
             HeroCard(
                 title = "History",
-                subtitle = "Browse past days, compare morning signal with how the day ended, and edit saved journal entries.",
+                subtitle = "Browse past days, compare the forecast with how the day ended, and edit saved journal entries.",
                 eyebrow = "History",
                 actionLabel = "Settings",
                 onAction = onOpenSettings
@@ -89,7 +79,7 @@ fun HistoryScreen(
                 SectionCard(title = "Past days at a glance", subtitle = "Coverage across saved reports") {
                     DetailRow("Day reports", coverage.dayReportCount.toString())
                     DetailRow("With journal outcome", coverage.withJournalCount.toString())
-                    DetailRow("With morning signal", coverage.withMorningSignalCount.toString())
+                    DetailRow("With forecast", coverage.withForecastCount.toString())
                     if (coverage.attentionDateCount > 0) {
                         DetailRow("Sleep-window review backlog", coverage.attentionDateCount.toString())
                         SupportText(
@@ -180,18 +170,16 @@ private fun HistoryDayReportCard(
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.weight(1f)) {
                     Text(report.sourceDate, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                    Text(report.predictionOutcomeLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(report.forecastOutcomeLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                StatusBadge(report.outcomeLabel ?: report.predictionLabel, report.outcomeStatus ?: report.predictionStatus)
+                StatusBadge(report.outcomeLabel ?: report.forecastLabel, report.outcomeStatus ?: report.forecastStatus)
             }
-            DetailRow("Morning signal", report.predictionLabel)
+            DetailRow("Forecast", report.forecastLabel)
             DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
             DetailRow("Functional context", report.functionalContextLabel)
-            DetailRow("Robustness", report.robustnessLabel)
+            report.confidenceLabel?.let { DetailRow("Confidence", it) }
             DetailRow("Evidence on file", report.dataCompletenessLabel)
-            DetailRow("Window source", report.windowProvenanceLabel)
-            DetailRow("Sleep bucket", report.sleepBucketLabel)
-            DetailRow("Morning signal change", report.stabilityTransitionLabel)
+            DetailRow("Forecast change", report.stateTransitionLabel)
             historySleepWindowDetailRow(sleepWindowStatus)?.let { (label, value) ->
                 DetailRow(label, value)
             }
@@ -222,18 +210,13 @@ private fun HistoryDayDetailCard(
     onOpenJournal: () -> Unit,
     onClose: () -> Unit
 ) {
-    SectionCard(title = report.sourceDate, subtitle = report.predictionOutcomeLabel) {
-        DetailRow("Morning signal", report.predictionLabel)
+    SectionCard(title = report.sourceDate, subtitle = report.forecastOutcomeLabel) {
+        DetailRow("Forecast", report.forecastLabel)
         DetailRow("Outcome", report.outcomeLabel ?: "No journal outcome")
         DetailRow("Functional context", report.functionalContextLabel)
-        DetailRow("Analysis window", report.windowProvenanceLabel)
-        DetailRow("Robustness", report.robustnessLabel)
-        DetailRow("Sleep bucket", report.sleepBucketLabel)
+        report.confidenceLabel?.let { DetailRow("Confidence", it) }
         DetailRow("Completeness", report.dataCompletenessLabel)
-        DetailRow("Food", report.foodSummaryLabel)
-        DetailRow("Weight", report.weightLabel)
-        DetailRow("Grip strength", report.gripStrengthLabel)
-        DetailRow("Morning signal change", report.stabilityTransitionLabel)
+        DetailRow("Forecast change", report.stateTransitionLabel)
         historySleepWindowDetailRow(sleepWindowStatus)?.let { (label, value) ->
             DetailRow(label, value)
         }
@@ -252,7 +235,7 @@ private fun HistoryDayDetailCard(
 data class HistoryCoverageSummary(
     val dayReportCount: Int,
     val withJournalCount: Int,
-    val withMorningSignalCount: Int,
+    val withForecastCount: Int,
     val attentionDateCount: Int
 )
 
@@ -263,7 +246,7 @@ fun buildHistoryCoverageSummary(
     HistoryCoverageSummary(
         dayReportCount = reports.size,
         withJournalCount = reports.count { it.outcomeStatus != null },
-        withMorningSignalCount = reports.count { it.predictionStatus != null },
+        withForecastCount = reports.count { it.forecastStatus != null },
         attentionDateCount = attentionDateCount
     )
 
@@ -280,88 +263,78 @@ fun historySleepWindowDetailRow(status: String?): Pair<String, String>? =
 
 data class HistoryDayReport(
     val sourceDate: String,
-    val predictionStatus: TrafficLightStatus?,
-    val predictionLabel: String,
+    val forecastStatus: TrafficLightStatus?,
+    val forecastLabel: String,
     val outcomeStatus: TrafficLightStatus?,
     val outcomeLabel: String?,
-    val predictionOutcomeLabel: String,
+    val forecastOutcomeLabel: String,
     val functionalContextLabel: String,
-    val robustnessLabel: String,
+    val confidenceLabel: String?,
     val dataCompletenessLabel: String,
-    val windowProvenanceLabel: String,
-    val sleepBucketLabel: String,
-    val stabilityTransitionLabel: String,
-    val foodSummaryLabel: String,
-    val weightLabel: String,
-    val gripStrengthLabel: String,
+    val stateTransitionLabel: String,
     val notes: String?
 )
 
+/**
+ * History reports surface the model-v1 forecast (`current_state_snapshot`) paired
+ * with the journalled outcome, plus the current-model confidence and day-to-day
+ * forecast change. Exploratory side measures (food / weight / grip imports) are
+ * deliberately NOT surfaced here yet — they are not part of the v1 model and have
+ * no in-app import flow. The shape leaves room to re-add per-measure rows once
+ * any of them accrues enough data to be worth keeping; until then History stays
+ * focused on the measures the current model actually uses.
+ */
 fun buildHistoryDayReports(
-    predictions: List<MorningPredictionSnapshotEntity>,
-    checkIns: List<DailyCheckInEntity>,
-    foodSummaries: List<FoodDailySummaryEntity>,
-    weights: List<DailyWeightEntity>,
-    gripSessions: List<GripSessionEntity> = emptyList()
+    forecasts: List<CurrentStateSnapshotEntity>,
+    checkIns: List<DailyCheckInEntity>
 ): List<HistoryDayReport> {
-    val latestPredictionByDate = predictions
+    val latestForecastByDate = forecasts
         .groupBy { it.sourceDate }
         .mapValues { (_, snapshots) -> snapshots.maxBy { it.issuedAtEpochMs } }
     val checkInsByDate = checkIns.associateBy { it.sourceDate }
-    val foodByDate = foodSummaries.associateBy { it.sourceDate }
-    val weightsByDate = weights.associateBy { it.sourceDate }
-    val gripByDate = gripSessions.groupBy { it.sourceDate }
-    val dates = (latestPredictionByDate.keys + checkInsByDate.keys + foodByDate.keys + weightsByDate.keys + gripByDate.keys)
+    val dates = (latestForecastByDate.keys + checkInsByDate.keys)
         .sortedDescending()
-    val previousPredictionStatusByDate = mutableMapOf<String, String?>()
-    var latestOlderPredictionStatus: String? = null
+    val previousForecastByDate = mutableMapOf<String, String?>()
+    var latestOlderForecast: String? = null
     for (date in dates.asReversed()) {
-        previousPredictionStatusByDate[date] = latestOlderPredictionStatus
-        latestPredictionByDate[date]?.status?.let { latestOlderPredictionStatus = it }
+        previousForecastByDate[date] = latestOlderForecast
+        latestForecastByDate[date]?.forecastLevel?.let { latestOlderForecast = it }
     }
 
     return dates.map { date ->
-        val prediction = latestPredictionByDate[date]
-        val previousPrediction = previousPredictionStatusByDate[date]
+        val forecast = latestForecastByDate[date]
+        val previousForecast = previousForecastByDate[date]
         val checkIn = checkInsByDate[date]
-        val predictionStatus = prediction?.status?.toTrafficLightStatusOrNull()
+        val forecastStatus = forecast?.forecastLevel?.toTrafficLightStatusOrNull()
         val outcomeStatus = checkIn?.eveningOutcome?.toTrafficLightStatusOrNull()
-        val food = foodByDate[date]
-        val weight = weightsByDate[date]
-        val gripForDate = gripByDate[date].orEmpty()
         HistoryDayReport(
             sourceDate = date,
-            predictionStatus = predictionStatus,
-            predictionLabel = predictionStatus?.let { labelForStatus(it.name) } ?: "No morning signal",
+            forecastStatus = forecastStatus,
+            forecastLabel = forecastStatus?.let { labelForStatus(it.name) } ?: "No forecast",
             outcomeStatus = outcomeStatus,
             outcomeLabel = outcomeStatus?.let { labelForStatus(it.name) },
-            predictionOutcomeLabel = predictionOutcomeLabel(predictionStatus, outcomeStatus),
+            forecastOutcomeLabel = forecastOutcomeLabel(forecastStatus, outcomeStatus),
             functionalContextLabel = functionalContextLabel(checkIn),
-            robustnessLabel = robustnessLabel(prediction),
-            dataCompletenessLabel = dataCompletenessLabel(prediction, checkIn, food, weight, gripForDate),
-            windowProvenanceLabel = historyWindowSourceLabel(prediction),
-            sleepBucketLabel = sleepBucketLabel(prediction?.sleepDurationMinutes),
-            stabilityTransitionLabel = stabilityTransitionLabel(previousPrediction, prediction?.status),
-            foodSummaryLabel = historyFoodLabel(food),
-            weightLabel = historyWeightLabel(weight),
-            gripStrengthLabel = historyGripStrengthLabel(checkIn, gripForDate),
+            confidenceLabel = confidenceLabel(forecast),
+            dataCompletenessLabel = dataCompletenessLabel(forecast, checkIn),
+            stateTransitionLabel = stateTransitionLabel(previousForecast, forecast?.forecastLevel),
             notes = checkIn?.notes
         )
     }
 }
 
-private fun predictionOutcomeLabel(
-    prediction: TrafficLightStatus?,
+private fun forecastOutcomeLabel(
+    forecast: TrafficLightStatus?,
     outcome: TrafficLightStatus?
 ): String =
     when {
-        prediction == null && outcome == null -> "No paired autonomic/functional evidence yet"
-        prediction == null -> "Functional outcome saved without an autonomic signal"
-        outcome == null -> "Autonomic signal waiting for functional outcome"
-        prediction == outcome -> "Autonomic signal and functional outcome aligned"
-        outcome.severityRank() > prediction.severityRank() -> "Autonomic signal looked steadier than functional outcome"
-        prediction.severityRank() > outcome.severityRank() -> "Autonomic signal looked more cautious than functional outcome"
-        else -> "Autonomic and functional lanes differed"
+        forecast == null && outcome == null -> "No paired forecast and outcome yet"
+        forecast == null -> "Outcome saved without a forecast"
+        outcome == null -> "Forecast waiting for the day's outcome"
+        forecast == outcome -> "Forecast and outcome aligned"
+        outcome.severityRank() > forecast.severityRank() -> "Forecast was steadier than the outcome"
+        forecast.severityRank() > outcome.severityRank() -> "Forecast was more cautious than the outcome"
+        else -> "Forecast and outcome differed"
     }
 
 private fun functionalContextLabel(checkIn: DailyCheckInEntity?): String {
@@ -375,103 +348,40 @@ private fun functionalContextLabel(checkIn: DailyCheckInEntity?): String {
         } else {
             add("day shape unknown")
         }
-        checkIn.manualGripStrengthKg?.let { grip ->
-            add(String.format(java.util.Locale.UK, "grip %.1f kg", grip))
-        }
     }
     return parts.joinToString(" · ")
 }
 
-private fun robustnessLabel(prediction: MorningPredictionSnapshotEntity?): String {
-    if (prediction == null) return "No morning signal evidence"
-    val parts = buildList {
-        add(if (prediction.sleepDataReady) "sleep report" else "sleep pending")
-        add(if ((prediction.rawPpiGoodEpochCount ?: 0) > 0) "PPI ${prediction.rawPpiGoodEpochCount}" else "no PPI")
-        add(if (prediction.baselineReady) "baseline ready" else "baseline sparse")
-        add(prediction.confidence.replaceFirstChar { it.titlecase() })
+/**
+ * Capped data-confidence for the day's forecast, shown only when degraded
+ * (LOW/MEDIUM). HIGH is suppressed — confidence is capped while the model is
+ * unvalidated, so a HIGH would be misleading (see lodestone-naming-contract.md).
+ */
+private fun confidenceLabel(forecast: CurrentStateSnapshotEntity?): String? =
+    when (forecast?.confidenceLevel) {
+        "LOW" -> "Low — limited recent data"
+        "MEDIUM" -> "Medium — still gathering data"
+        else -> null
     }
-    return parts.joinToString(" · ")
-}
-
-private fun historyWindowSourceLabel(prediction: MorningPredictionSnapshotEntity?): String {
-    if (prediction == null) return "No active window recorded"
-    val source = prediction.overnightAutonomicSource.replace('_', ' ')
-    val morningReadSource = AnalysisWindowSource.fromKey(prediction.overnightAutonomicSource)
-    val state = when {
-        prediction.sleepDataReady -> "Loop report attached"
-        morningReadSource?.hasEstablishedSleepWindow == true -> "Loop report pending for comparison"
-        prediction.isInterim -> "sleep/rest window pending"
-        else -> "sleep context pending"
-    }
-    return "$source ($state)"
-}
 
 private fun dataCompletenessLabel(
-    prediction: MorningPredictionSnapshotEntity?,
-    checkIn: DailyCheckInEntity?,
-    food: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?,
-    gripSessions: List<GripSessionEntity>
+    forecast: CurrentStateSnapshotEntity?,
+    checkIn: DailyCheckInEntity?
 ): String {
     val present = buildList {
-        if (prediction != null) add("prediction")
-        if (prediction?.sleepDataReady == true) add("sleep")
-        if ((prediction?.rawPpiGoodEpochCount ?: 0) > 0) add("PPI")
+        if (forecast != null) add("forecast")
         if (checkIn != null) add("journal")
         if (checkIn?.dayShapeCaptured == true) add("day shape")
-        if (food != null) add("food")
-        if (weight != null) add("weight")
-        if (checkIn?.manualGripStrengthKg != null || gripSessions.isNotEmpty()) add("grip")
     }
     return if (present.isEmpty()) "No tracked data yet" else present.joinToString(", ")
 }
 
-private fun historyFoodLabel(food: FoodDailySummaryEntity?): String {
-    if (food == null) return "No food import"
-    val parts = buildList {
-        food.totalCaloriesKcal?.let { add("$it kcal") }
-        food.eventCount?.let { add("$it items") }
-        food.teaCount?.let { add("$it tea") }
-        food.eatingWindowHours?.let { add(String.format(java.util.Locale.UK, "%.1fh window", it)) }
-    }
-    return parts.joinToString(", ").ifBlank { "Food import present" }
-}
-
-private fun historyWeightLabel(weight: DailyWeightEntity?): String =
-    weight?.let {
-        val measured = it.measuredTime?.let { time -> " at $time" }.orEmpty()
-        String.format(java.util.Locale.UK, "%.1f kg%s", it.weightKg, measured)
-    } ?: "No weight row"
-
-private fun historyGripStrengthLabel(
-    checkIn: DailyCheckInEntity?,
-    sessions: List<GripSessionEntity>
-): String {
-    if (sessions.isEmpty()) {
-        return checkIn?.manualGripStrengthKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) }
-            ?: "No grip reading"
-    }
-    val parts = buildList {
-        checkIn?.manualGripStrengthKg?.let { add(String.format(java.util.Locale.UK, "manual %.1f kg", it)) }
-        if (sessions.isNotEmpty()) add(reviewGripSessionSummary(sessions))
-    }
-    return parts.joinToString(" · ").ifBlank { "No grip reading" }
-}
-
-private fun sleepBucketLabel(minutes: Int?): String =
+private fun stateTransitionLabel(previousForecast: String?, currentForecast: String?): String =
     when {
-        minutes == null -> "No sleep duration"
-        minutes < 4 * 60 -> "Short/irregular sleep"
-        minutes > 10 * 60 -> "Long/irregular sleep"
-        else -> "Typical-duration sleep"
-    }
-
-private fun stabilityTransitionLabel(previousStatus: String?, currentStatus: String?): String =
-    when {
-        currentStatus == null -> "No morning signal recorded"
-        previousStatus == null -> "First morning signal on record"
-        previousStatus == currentStatus -> "Unchanged from prior day"
-        else -> "${labelForStatus(previousStatus)} → ${labelForStatus(currentStatus)}"
+        currentForecast == null -> "No forecast recorded"
+        previousForecast == null -> "First forecast on record"
+        previousForecast == currentForecast -> "Unchanged from prior day"
+        else -> "${labelForStatus(previousForecast)} → ${labelForStatus(currentForecast)}"
     }
 
 private fun String.toTrafficLightStatusOrNull(): TrafficLightStatus? =

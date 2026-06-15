@@ -70,7 +70,7 @@ class ProbeRepository(
     val syncDomainResults = dao.observeSyncDomainResults()
     val inspectorRows = dao.observeInspectorRows()
     val appSettings = dao.observeAppSettings()
-    val morningPredictionSnapshots = dao.observeMorningPredictionSnapshots()
+    val currentStateSnapshots = dao.observeCurrentStateSnapshots()
     val recentSleepEpisodes = dao.observeRecentSleepEpisodes()
     /**
      * Lodestone model-v1 read (persistence spine + caution + capped confidence).

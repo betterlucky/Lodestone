@@ -69,12 +69,10 @@ fun ProbeApp(
     val capabilities by viewModel.observedCapabilities.collectAsState()
     val appSettings by viewModel.appSettings.collectAsState()
     val dailyCheckIns by viewModel.dailyCheckIns.collectAsState()
-    val foodDailySummaries by viewModel.foodDailySummaries.collectAsState()
-    val dailyWeights by viewModel.dailyWeights.collectAsState()
     val gripSessions by viewModel.gripSessions.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
     val currentState by viewModel.currentState.collectAsState()
-    val morningPredictionSnapshots by viewModel.morningPredictionSnapshots.collectAsState()
+    val currentStateSnapshots by viewModel.currentStateSnapshots.collectAsState()
     val syncRuns by viewModel.syncRuns.collectAsState()
     val recentWakeMarkers by viewModel.recentWakeMarkers.collectAsState()
     val recentPpi247Epochs by viewModel.recentPpi247Epochs.collectAsState()
@@ -239,11 +237,8 @@ fun ProbeApp(
                                         )
                                         ProbeTab.HISTORY -> HistoryScreen(
                                             padding = padding,
-                                            morningPredictionSnapshots = morningPredictionSnapshots,
+                                            currentStateSnapshots = currentStateSnapshots,
                                             dailyCheckIns = dailyCheckIns,
-                                            foodDailySummaries = foodDailySummaries,
-                                            dailyWeights = dailyWeights,
-                                            gripSessions = gripSessions,
                                             sleepEpisodeReviewState = sleepEpisodeReviewState,
                                             viewModel = viewModel,
                                             onOpenJournal = {
