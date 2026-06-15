@@ -55,10 +55,6 @@ fun ProbeApp(
     viewModel: ProbeViewModel,
     permissionsGranted: Boolean,
     onRequestPermissions: () -> Unit,
-    onImportFoodCsv: () -> Unit,
-    onSetFoodFolder: () -> Unit,
-    onImportGripCsv: () -> Unit,
-    onSetGripFolder: () -> Unit,
     onImportSleep2Screenshot: () -> Unit,
     onRequestHealthConnectPermissions: () -> Unit,
     onOpenHealthConnectSettings: () -> Unit
@@ -69,7 +65,6 @@ fun ProbeApp(
     val capabilities by viewModel.observedCapabilities.collectAsState()
     val appSettings by viewModel.appSettings.collectAsState()
     val dailyCheckIns by viewModel.dailyCheckIns.collectAsState()
-    val gripSessions by viewModel.gripSessions.collectAsState()
     val morningRead by viewModel.morningRead.collectAsState()
     val currentState by viewModel.currentState.collectAsState()
     val currentStateSnapshots by viewModel.currentStateSnapshots.collectAsState()
@@ -177,8 +172,6 @@ fun ProbeApp(
                             },
                             firmwareRediscoveryNeeded = viewModel.firmwareRediscoveryNeeded,
                             viewModel = viewModel,
-                            onSetFoodFolder = onSetFoodFolder,
-                            onSetGripFolder = onSetGripFolder,
                             onImportSleep2Screenshot = onImportSleep2Screenshot,
                             onRequestHealthConnectPermissions = onRequestHealthConnectPermissions,
                             onOpenHealthConnectSettings = onOpenHealthConnectSettings,
@@ -253,13 +246,8 @@ fun ProbeApp(
                                 JournalCaptureSheet(
                                     selectedDate = viewModel.checkInDate,
                                     dailyCheckIns = dailyCheckIns,
-                                    foodSummary = viewModel.currentFoodSummary,
-                                    weight = viewModel.currentDailyWeight,
-                                    gripSessions = gripSessions.filter { it.sourceDate == viewModel.checkInDate },
                                     viewModel = viewModel,
                                     actionsEnabled = !blockPostSwipeTaps,
-                                    onImportFoodCsv = onImportFoodCsv,
-                                    onImportGripCsv = onImportGripCsv,
                                     onDismiss = { showJournalCapture = false }
                                 )
                             }

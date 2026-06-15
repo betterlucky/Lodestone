@@ -34,9 +34,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.DailyWeightEntity
-import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
-import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 
 enum class JournalCaptureStep(val title: String, val subtitle: String) {
@@ -54,10 +51,10 @@ enum class JournalCaptureStep(val title: String, val subtitle: String) {
     ),
     BODY(
         "Body check",
-        "Optional weakness and manual grip."
+        "Optional weakness."
     ),
-    NOTES_IMPORTS(
-        "Notes and imports",
+    NOTES(
+        "Notes",
         "Optional detail for this date."
     )
 }
@@ -78,13 +75,8 @@ val journalCaptureSteps: List<JournalCaptureStep> = JournalCaptureStep.entries
 fun JournalCaptureSheet(
     selectedDate: String,
     dailyCheckIns: List<DailyCheckInEntity>,
-    foodSummary: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?,
-    gripSessions: List<GripSessionEntity>,
     viewModel: ProbeViewModel,
     actionsEnabled: Boolean,
-    onImportFoodCsv: () -> Unit,
-    onImportGripCsv: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(
@@ -127,15 +119,7 @@ fun JournalCaptureSheet(
                     JournalCaptureStep.DAY_SHAPE -> JournalDayShapeStep(viewModel, dailyCheckIns, selectedDate)
                     JournalCaptureStep.APPROACH -> JournalApproachStep(viewModel)
                     JournalCaptureStep.BODY -> JournalBodyStep(viewModel)
-                    JournalCaptureStep.NOTES_IMPORTS -> JournalNotesImportsStep(
-                        viewModel = viewModel,
-                        foodSummary = foodSummary,
-                        weight = weight,
-                        gripSessions = gripSessions,
-                        actionsEnabled = actionsEnabled,
-                        onImportFoodCsv = onImportFoodCsv,
-                        onImportGripCsv = onImportGripCsv
-                    )
+                    JournalCaptureStep.NOTES -> JournalNotesStep(viewModel)
                 }
             }
             JournalCaptureFooter(
@@ -259,40 +243,15 @@ private fun JournalBodyStep(viewModel: ProbeViewModel) {
             checked = viewModel.muscleWeaknessTodayDraft,
             onCheckedChange = viewModel::updateMuscleWeaknessToday
         )
-        GripStrengthField(
-            value = viewModel.manualGripStrengthKgDraft,
-            onValueChange = viewModel::updateManualGripStrengthKg
-        )
     }
 }
 
 @Composable
-private fun JournalNotesImportsStep(
-    viewModel: ProbeViewModel,
-    foodSummary: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?,
-    gripSessions: List<GripSessionEntity>,
-    actionsEnabled: Boolean,
-    onImportFoodCsv: () -> Unit,
-    onImportGripCsv: () -> Unit
-) {
+private fun JournalNotesStep(viewModel: ProbeViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         NotesField(
             value = viewModel.notesDraft,
             onValueChange = viewModel::updateNotesDraft
-        )
-        FoodSection(
-            foodSummary = foodSummary,
-            weight = weight,
-            onSyncFood = { if (actionsEnabled) viewModel.importLatestFoodCsvFromDownloads() },
-            onChooseFile = { if (actionsEnabled) onImportFoodCsv() },
-            isBusy = viewModel.isBusy
-        )
-        GripSessionSection(
-            sessions = gripSessions,
-            onSyncGrip = { if (actionsEnabled) viewModel.importLatestGripCsvFromFolder() },
-            onChooseFile = { if (actionsEnabled) onImportGripCsv() },
-            isBusy = viewModel.isBusy
         )
     }
 }

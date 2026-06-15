@@ -42,7 +42,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             app = app,
             command = command,
             deviceId = intent.getStringExtra(EXTRA_DEVICE_ID),
-            foodDate = intent.getStringExtra(EXTRA_FOOD_DATE),
             fromDate = intent.getStringExtra(EXTRA_FROM_DATE),
             toDate = intent.getStringExtra(EXTRA_TO_DATE),
             triggerAtEpochMs = intent.getLongExtra(EXTRA_TRIGGER_AT_EPOCH_MS, -1L),
@@ -162,7 +161,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         app: HealthMonitorApp,
         command: String,
         deviceId: String?,
-        foodDate: String?,
         fromDate: String?,
         toDate: String?,
         triggerAtEpochMs: Long,
@@ -177,7 +175,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
     ) {
         val repository = app.container.repository
         val syncCoordinator = app.container.syncCoordinator
-        val dailyReviewRepository = app.container.dailyReviewRepository
         val healthConnectAnalysisExporter = app.container.healthConnectAnalysisExporter
         val settings = repository.getAppSettings()
         val selectedDeviceId = deviceId ?: settings?.selectedDeviceId
@@ -358,18 +355,8 @@ class ProbeCommandReceiver : BroadcastReceiver() {
                 val count = repository.rebuildContextEpochTables().getOrThrow()
                 Log.i(TAG, "Rebuilt $count context epoch/sample rows")
             }
-            "food_sync" -> {
-                val date = foodDate ?: java.time.LocalDate.now().toString()
-                val count = dailyReviewRepository.importLatestFoodCsvFromDownloads(app.applicationContext, date).getOrThrow()
-                Log.i(TAG, "Imported $count food day summaries from food CSV for $date")
-            }
-            "grip_sync" -> {
-                val date = foodDate ?: java.time.LocalDate.now().toString()
-                val count = dailyReviewRepository.importLatestGripCsvFromSavedFolder(app.applicationContext, date).getOrThrow()
-                Log.i(TAG, "Imported $count grip sessions from grip CSV for $date")
-            }
             "health_connect_export" -> {
-                val date = LocalDate.parse(foodDate ?: fromDate ?: LocalDate.now().toString())
+                val date = LocalDate.parse(fromDate ?: LocalDate.now().toString())
                 val file = healthConnectAnalysisExporter.exportSleepAnalysis(date)
                 Log.i(TAG, "Exported Health Connect sleep analysis to ${file.absolutePath}")
             }
@@ -381,7 +368,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
         private const val TAG = "ProbeCommandReceiver"
         const val EXTRA_COMMAND = "probe_command"
         const val EXTRA_DEVICE_ID = "probe_device_id"
-        const val EXTRA_FOOD_DATE = "probe_food_date"
         const val EXTRA_FROM_DATE = "probe_from_date"
         const val EXTRA_TO_DATE = "probe_to_date"
         const val EXTRA_TRIGGER_AT_EPOCH_MS = "probe_trigger_at_epoch_ms"

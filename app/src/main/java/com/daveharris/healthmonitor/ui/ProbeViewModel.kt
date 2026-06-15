@@ -21,8 +21,6 @@ import com.daveharris.healthmonitor.wakeTargetDateForMarker
 import com.daveharris.healthmonitor.data.DailyReviewRepository
 import com.daveharris.healthmonitor.data.DeviceProfileEntity
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.DailyWeightEntity
-import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.AnalysisWindowEvidence
 import com.daveharris.healthmonitor.data.PaybackPeakConfidence
@@ -68,9 +66,6 @@ class ProbeViewModel(
     val syncDomainResults = repository.syncDomainResults.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val appSettings = repository.appSettings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val dailyCheckIns = dailyReviewRepository.dailyCheckIns.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val foodDailySummaries = dailyReviewRepository.foodDailySummaries.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val dailyWeights = dailyReviewRepository.dailyWeights.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    val gripSessions = dailyReviewRepository.gripSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val currentState = repository.currentState.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val currentStateSnapshots = repository.currentStateSnapshots.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -120,8 +115,6 @@ class ProbeViewModel(
         private set
     var muscleWeaknessTodayDraft by mutableStateOf(false)
         private set
-    var manualGripStrengthKgDraft by mutableStateOf("")
-        private set
     var notesDraft by mutableStateOf("")
         private set
     var dayShapeCapturedDraft by mutableStateOf(false)
@@ -139,10 +132,6 @@ class ProbeViewModel(
     var paybackPeakTodayDraft by mutableStateOf(false)
         private set
     private var paybackPeakConfidenceDraft by mutableStateOf<String?>(null)
-    var currentFoodSummary by mutableStateOf<FoodDailySummaryEntity?>(null)
-        private set
-    var currentDailyWeight by mutableStateOf<DailyWeightEntity?>(null)
-        private set
     var showOutcomeValidation by mutableStateOf(false)
         private set
     var saveSuccessFlash by mutableStateOf(false)
@@ -153,7 +142,6 @@ class ProbeViewModel(
         private set
     var sleepReportRetryCooldownUntilEpochMs by mutableStateOf(loadSleepReportRetryCooldown(application))
         private set
-    private var foodSummaryJob: Job? = null
     private var reviewLoadJob: Job? = null
     private var checkInIntentResetJob: Job? = null
 
@@ -186,7 +174,6 @@ class ProbeViewModel(
                 repository.recordCurrentStateSnapshot(read)
             }
         }
-        refreshFoodImportForDate(checkInDate)
         refreshHealthConnectPermissions()
     }
 
@@ -725,10 +712,7 @@ class ProbeViewModel(
             if (date == currentLodestoneDate()) {
                 runBusyAction("Resetting today…") {
                     clearDailyCheckInDraft()
-                    dailyReviewRepository.clearFoodImportForDate(date)
-                    currentFoodSummary = null
-                    currentDailyWeight = null
-                    statusMessage = "Reset today's journal and food import."
+                    statusMessage = "Reset today's journal."
                 }
             } else {
                 val existing = dailyReviewRepository.getDailyCheckIn(date)
@@ -739,7 +723,6 @@ class ProbeViewModel(
                     clearDailyCheckInDraft()
                     statusMessage = "No saved journal for $date."
                 }
-                refreshFoodImportForDate(date)
             }
         }
     }
@@ -761,10 +744,6 @@ class ProbeViewModel(
 
     fun updateMuscleWeaknessToday(value: Boolean) {
         muscleWeaknessTodayDraft = value
-    }
-
-    fun updateManualGripStrengthKg(value: String) {
-        manualGripStrengthKgDraft = sanitizeGripStrengthInput(value)
     }
 
     fun updateMostlyHorizontal(value: Boolean) {
@@ -865,7 +844,6 @@ class ProbeViewModel(
                 setSleepEpisodeReviewDates(date)
                 statusMessage = "No saved check-in for $date. Current draft left unchanged."
             }
-            refreshFoodImportForDate(date)
         }
     }
 
@@ -878,14 +856,7 @@ class ProbeViewModel(
             }
             showOutcomeValidation = false
             runBusyAction("Saving evening check-in…") {
-                val context = getApplication<Application>()
                 val savedDate = checkInDate
-                val foodImportResult = runCatching {
-                    dailyReviewRepository.importLatestFoodCsvFromDownloads(context, savedDate).getOrThrow()
-                }
-                currentFoodSummary = dailyReviewRepository.getFoodDailySummary(savedDate)
-                currentDailyWeight = dailyReviewRepository.getDailyWeight(savedDate)
-
                 val outcome = eveningOutcomeDraft!!
                 dailyReviewRepository.saveDailyCheckIn(
                     sourceDate = savedDate,
@@ -900,15 +871,14 @@ class ProbeViewModel(
                     majorTaskType = if (dayShapeCapturedDraft && majorTaskDraft) majorTaskTypeDraft else null,
                     pemPaybackToday = if (dayShapeCapturedDraft) pemPaybackTodayDraft else null,
                     paybackPeakToday = if (dayShapeCapturedDraft) paybackPeakTodayDraft else null,
-                    paybackPeakConfidence = paybackPeakConfidenceForSave(),
-                    manualGripStrengthKg = gripStrengthKgOrNull(manualGripStrengthKgDraft)
+                    paybackPeakConfidence = paybackPeakConfidenceForSave()
                 )
                 if (!pemPaybackTodayDraft) {
                     autoMarkSingleDayPaybackPeakIfNeeded(savedDate)
                 }
                 clearDailyCheckInDraft()
                 saveSuccessFlash = true
-                statusMessage = buildSaveStatusMessage(savedDate, foodImportResult)
+                statusMessage = "Saved journal entry for $savedDate. Entry fields cleared."
             }
         }
     }
@@ -919,104 +889,6 @@ class ProbeViewModel(
 
     fun clearSaveSuccessFlash() {
         saveSuccessFlash = false
-    }
-
-    private fun buildSaveStatusMessage(savedDate: String, foodImportResult: Result<Int>): String {
-        val foodMessage = when {
-            foodImportResult.isSuccess && foodImportResult.getOrDefault(0) > 0 -> {
-                val parts = listOfNotNull(
-                    currentFoodSummary?.totalCaloriesKcal?.let { "$it kcal" },
-                    currentFoodSummary?.eventCount?.let { "$it items" },
-                    currentDailyWeight?.weightKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) }
-                )
-                if (parts.isEmpty()) " Imported food log." else " Imported food log (${parts.joinToString(", ")})."
-            }
-            foodImportResult.isFailure && foodImportResult.exceptionOrNull()?.message?.contains("No food_log CSV", ignoreCase = true) == true ->
-                if (currentFoodSummary != null || currentDailyWeight != null) {
-                    " No new food log found; existing food data left unchanged."
-                } else {
-                    " No food log found for that date."
-                }
-            foodImportResult.isFailure ->
-                " Food import failed: ${foodImportResult.exceptionOrNull()?.message ?: "unknown error"}."
-            else ->
-                " No dated food entries were imported."
-        }
-        return "Saved journal entry for $savedDate.$foodMessage Entry fields cleared."
-    }
-
-    fun importLatestFoodCsvFromDownloads() {
-        val context = getApplication<Application>()
-        viewModelScope.launch {
-            val date = checkInDate
-            runBusyAction("Looking for food CSV for $date…") {
-                val importedCount = dailyReviewRepository.importLatestFoodCsvFromDownloads(context, date).getOrThrow()
-                refreshFoodImportForDate(checkInDate)
-                statusMessage = if (importedCount > 0) {
-                    "Food log synced for $date."
-                } else {
-                    "Food CSV found, but no dated entries were imported."
-                }
-            }
-        }
-    }
-
-    fun saveFoodFolder(uri: Uri) {
-        val context = getApplication<Application>()
-        dailyReviewRepository.saveFoodFolder(context, uri)
-        statusMessage = "FoodLogData folder authorised. Sync food log will use it next time."
-    }
-
-    fun importFoodCsv(uri: Uri) {
-        val context = getApplication<Application>()
-        viewModelScope.launch {
-            val date = checkInDate
-            runBusyAction("Importing food CSV for $date…") {
-                val importedCount = dailyReviewRepository.importFoodCsv(context, uri, date).getOrThrow()
-                refreshFoodImportForDate(checkInDate)
-                statusMessage = if (importedCount > 0) {
-                    "Food CSV import successful for $date."
-                } else {
-                    "Food CSV imported, but no dated entries were found."
-                }
-            }
-        }
-    }
-
-    fun importLatestGripCsvFromFolder() {
-        val context = getApplication<Application>()
-        viewModelScope.launch {
-            val date = checkInDate
-            runBusyAction("Looking for grip CSV for $date…") {
-                val importedCount = dailyReviewRepository.importLatestGripCsvFromSavedFolder(context, date).getOrThrow()
-                statusMessage = if (importedCount > 0) {
-                    "Grip session import successful for $date."
-                } else {
-                    "Grip CSV found, but no sessions were imported."
-                }
-            }
-        }
-    }
-
-    fun saveGripFolder(uri: Uri) {
-        val context = getApplication<Application>()
-        dailyReviewRepository.saveGripFolder(context, uri)
-        statusMessage = "GripRecorderData folder authorised. Sync grip will use it next time."
-    }
-
-    fun importGripCsv(uri: Uri) {
-        val context = getApplication<Application>()
-        viewModelScope.launch {
-            val date = checkInDate
-            runBusyAction("Importing grip CSV for $date…") {
-                val importedCount = dailyReviewRepository.importGripCsv(context, uri, date).getOrThrow()
-                statusMessage = if (importedCount > 0) {
-                    "Grip CSV import successful for $date."
-                } else {
-                    "Grip CSV imported, but no sessions were found."
-                }
-            }
-        }
     }
 
     fun runAutomationCommand(action: String, deviceId: String?) {
@@ -1121,7 +993,6 @@ class ProbeViewModel(
             runCatching { TrafficLightStatus.valueOf(value) }.getOrNull()
         }
         muscleWeaknessTodayDraft = entity.muscleWeaknessToday
-        manualGripStrengthKgDraft = entity.manualGripStrengthKg?.toString().orEmpty()
         notesDraft = entity.notes.orEmpty()
         dayShapeCapturedDraft = entity.dayShapeCaptured == true
         mostlyHorizontalDraft = dayShapeCapturedDraft && entity.mostlyHorizontal == true
@@ -1147,7 +1018,6 @@ class ProbeViewModel(
             } else {
                 clearDailyCheckInDraft()
             }
-            refreshFoodImportForDate(date)
         }
     }
 
@@ -1159,7 +1029,6 @@ class ProbeViewModel(
         eveningOutcomeDraft = null
         approachToDayDraft = null
         muscleWeaknessTodayDraft = false
-        manualGripStrengthKgDraft = ""
         notesDraft = ""
         clearDayShapeDraft()
     }
@@ -1206,14 +1075,6 @@ class ProbeViewModel(
     ) {
         checkInDate = activeDate
         sleepEpisodeReviewDates.value = reviewDates.distinct().ifEmpty { listOf(activeDate) }
-    }
-
-    private fun refreshFoodImportForDate(date: String) {
-        foodSummaryJob?.cancel()
-        foodSummaryJob = viewModelScope.launch {
-            currentFoodSummary = dailyReviewRepository.getFoodDailySummary(date)
-            currentDailyWeight = dailyReviewRepository.getDailyWeight(date)
-        }
     }
 
     fun currentLodestoneDate(): String =
@@ -1287,29 +1148,6 @@ class ProbeViewModel(
         }
     }
 }
-
-internal fun sanitizeGripStrengthInput(value: String): String {
-    var decimalSeen = false
-    return buildString {
-        value.forEach { rawChar ->
-            val char = if (rawChar == ',') '.' else rawChar
-            when {
-                char.isDigit() -> append(char)
-                char == '.' && !decimalSeen -> {
-                    decimalSeen = true
-                    append(char)
-                }
-            }
-        }
-        // Six characters covers the accepted 0.1-150.0 kg range while keeping the field low-friction.
-    }.take(6)
-}
-
-// Nullable because grip capture is optional; 0.1-150.0 kg accepts normal dynamometer readings
-// while filtering slips such as "0" or extra digits pasted into the field.
-internal fun gripStrengthKgOrNull(value: String): Double? =
-    value.toDoubleOrNull()
-        ?.takeIf { it in 0.1..150.0 }
 
 private fun String?.toNowMarkerMode(): NowMarkerMode =
     runCatching { NowMarkerMode.valueOf(this ?: "") }.getOrDefault(NowMarkerMode.BEDTIME_AND_WAKING)
