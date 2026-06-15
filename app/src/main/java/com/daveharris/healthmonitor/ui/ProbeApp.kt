@@ -196,7 +196,7 @@ fun ProbeApp(
                                     .coerceIn(-1f, 1f)
                                 ElasticPagerPage(pageOffset = pageOffset) {
                                     when (ProbeTab.entries[page]) {
-                                        ProbeTab.NOW -> DataScreen(
+                                        ProbeTab.NOW -> NowScreen(
                                             padding = padding,
                                             runtime = runtime,
                                             morningRead = morningRead,

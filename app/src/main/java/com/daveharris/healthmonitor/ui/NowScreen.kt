@@ -30,7 +30,7 @@ import com.daveharris.healthmonitor.polar.DeviceRuntimeState
 import com.daveharris.healthmonitor.resolveLodestoneDisplayDate
 
 @Composable
-fun DataScreen(
+fun NowScreen(
     padding: PaddingValues,
     runtime: DeviceRuntimeState,
     morningRead: AnalysisWindowEvidence?,
@@ -94,7 +94,7 @@ fun DataScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            TodayHeroCard(
+            NowHeroCard(
                 nowState = nowState,
                 onOpenSettings = onOpenSettings,
                 onOpenSignalsSection = onOpenSignalsSection
