@@ -117,7 +117,7 @@ fun signalConfidenceSummary(
 }
 
 @Composable
-fun TodayHeroCard(
+fun NowHeroCard(
     nowState: NowScreenState,
     onOpenSettings: () -> Unit,
     onOpenSignalsSection: (SignalsSection) -> Unit = {}
