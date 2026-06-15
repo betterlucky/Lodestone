@@ -49,32 +49,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.daveharris.healthmonitor.data.DailyCheckInEntity
-import com.daveharris.healthmonitor.data.DailyWeightEntity
-import com.daveharris.healthmonitor.data.FoodDailySummaryEntity
-import com.daveharris.healthmonitor.data.GripSessionEntity
 import com.daveharris.healthmonitor.data.JournalMajorTaskTypes
 import com.daveharris.healthmonitor.data.TrafficLightStatus
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
-
-private fun reviewFoodImportSummary(
-    summary: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?
-): String {
-    if (summary == null && weight == null) return "Not synced"
-    val parts = buildList {
-        if (summary != null) {
-            val calories = summary.totalCaloriesKcal?.let { "$it kcal" }
-            val events = summary.eventCount?.let { "$it items" }
-            add(listOfNotNull(calories, events).joinToString(", ").ifBlank { "food synced" })
-        }
-        if (weight != null) {
-            add(String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg))
-        }
-    }
-    return "Synced: ${parts.joinToString("; ")}"
-}
 
 private fun majorTaskTypeLabel(value: String?): String? =
     when (value) {
@@ -85,235 +64,10 @@ private fun majorTaskTypeLabel(value: String?): String? =
         else -> null
     }
 
-private fun reviewDayShapeSummary(checkIn: DailyCheckInEntity): String? {
-    if (checkIn.dayShapeCaptured != true) return null
-    val parts = buildList {
-        if (checkIn.mostlyHorizontal == true) add("Mostly horizontal")
-        if (checkIn.leftHouse == true) add("Left the house")
-        if (checkIn.majorTask == true) add(majorTaskTypeLabel(checkIn.majorTaskType) ?: "Work / major task")
-        if (checkIn.pemPaybackToday == true) add("PEM / payback")
-        if (checkIn.paybackPeakToday == true) add("Payback peak")
-    }
-    return if (parts.isEmpty()) "None marked" else parts.joinToString(" · ")
-}
-
-@Composable
-fun FoodSection(
-    foodSummary: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?,
-    onSyncFood: () -> Unit,
-    onChooseFile: () -> Unit,
-    isBusy: Boolean
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val summaryText = when {
-        foodSummary != null && weight != null -> "${foodSummary.totalCaloriesKcal ?: "n/a"} kcal · ${foodSummary.eventCount ?: "n/a"} items · ${
-            String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg)
-        }"
-        foodSummary != null -> "${foodSummary.totalCaloriesKcal ?: "n/a"} kcal · ${foodSummary.eventCount ?: "n/a"} items"
-        weight != null -> "Weight: ${String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg)}"
-        else -> "No food log synced for this date"
-    }
-
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Food & weight", fontWeight = FontWeight.SemiBold)
-                    Text(summaryText, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = { expanded = !expanded }, enabled = !isBusy) {
-                    Text(if (expanded) "Less" else "More")
-                }
-            }
-            if (expanded) {
-                if (foodSummary != null || weight != null) {
-                    FoodSummaryCard(summary = foodSummary, weight = weight)
-                }
-                ButtonRow {
-                    Button(onClick = onSyncFood, enabled = !isBusy) {
-                        Text("Sync food log")
-                    }
-                    OutlinedButton(onClick = onChooseFile, enabled = !isBusy) {
-                        Text("Choose file")
-                    }
-                }
-                SupportText("Saving the check-in also tries to import the FoodLogData CSV for this date.")
-            }
-        }
-    }
-}
-
-@Composable
-fun GripSessionSection(
-    sessions: List<GripSessionEntity>,
-    onSyncGrip: () -> Unit,
-    onChooseFile: () -> Unit,
-    isBusy: Boolean
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val summaryText = reviewGripSessionSummary(sessions)
-
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.72f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Grip sessions", fontWeight = FontWeight.SemiBold)
-                    Text(summaryText, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = { expanded = !expanded }, enabled = !isBusy) {
-                    Text(if (expanded) "Less" else "More")
-                }
-            }
-            if (expanded) {
-                if (sessions.isNotEmpty()) {
-                    sessions.take(3).forEach { session ->
-                        GripSessionSummaryCard(session)
-                    }
-                }
-                ButtonRow {
-                    Button(onClick = onSyncGrip, enabled = !isBusy) {
-                        Text("Sync grip")
-                    }
-                    OutlinedButton(onClick = onChooseFile, enabled = !isBusy) {
-                        Text("Choose file")
-                    }
-                }
-                SupportText("Grip Recorder exports are temporary session files. Lodestone stores imported sessions in its database.")
-            }
-        }
-    }
-}
-
-@Composable
-private fun GripSessionSummaryCard(session: GripSessionEntity) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f))
-    ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(session.protocolLabel ?: "Grip session", fontWeight = FontWeight.SemiBold)
-            DetailRow("Hand", session.hand ?: "n/a")
-            DetailRow("Reps", session.completedRepCount.toString())
-            DetailRow("Best", session.bestValueKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) } ?: "n/a")
-            DetailRow("Mean", session.meanValueKg?.let { String.format(java.util.Locale.UK, "%.1f kg", it) } ?: "n/a")
-            DetailRow("Best-to-last drop", session.bestToLastDropPct?.let { String.format(java.util.Locale.UK, "%.1f%%", it) } ?: "n/a")
-        }
-    }
-}
-
-internal fun reviewGripSessionSummary(sessions: List<GripSessionEntity>): String {
-    if (sessions.isEmpty()) return "No grip session synced for this date"
-    val first = sessions.maxWithOrNull(
-        compareBy<GripSessionEntity> { it.startedAtEpochMs ?: Long.MIN_VALUE }.thenBy { it.sessionId }
-    ) ?: return "Grip session synced"
-    val parts = buildList {
-        add("${sessions.size} session${if (sessions.size == 1) "" else "s"}")
-        first.protocolLabel?.let { add(it.replace('_', ' ')) }
-        first.hand?.let { add(it) }
-        first.bestValueKg?.let { add(String.format(java.util.Locale.UK, "best %.1f kg", it)) }
-        first.meanValueKg?.let { add(String.format(java.util.Locale.UK, "mean %.1f kg", it)) }
-    }
-    return parts.joinToString(" · ")
-}
-
-@Composable
-fun ReviewHistoryItem(
-    checkIn: DailyCheckInEntity,
-    foodSummary: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?,
-    onTap: () -> Unit
-) {
-    val parsedStatus = checkIn.eveningOutcome.toTrafficLightStatusOrNull()
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onTap),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.96f)
-        )
-    ) {
-        Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(checkIn.sourceDate, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                StatusBadge(labelForStatus(checkIn.eveningOutcome), parsedStatus)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(
-                    "Approach: ${checkIn.approachToDay?.let(::labelForStatus) ?: "-"}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    "Weakness: ${if (checkIn.muscleWeaknessToday) "Yes" else "No"}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                checkIn.manualGripStrengthKg?.let { grip ->
-                    Text(
-                        String.format(java.util.Locale.UK, "Grip: %.1f kg", grip),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-            Text(
-                "Food: ${reviewFoodImportSummary(foodSummary, weight)}",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall
-            )
-            reviewDayShapeSummary(checkIn)?.let { summary ->
-                Text(
-                    "Day shape: $summary",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-            if (!checkIn.notes.isNullOrBlank()) {
-                Text(
-                    checkIn.notes,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
 @Composable
 fun ReviewDatePickerField(
     selectedDate: String,
     hasSavedReview: Boolean,
-    hasFoodImport: Boolean,
     flashSuccess: Boolean,
     todayDate: String,
     onClearFlash: () -> Unit,
@@ -345,10 +99,7 @@ fun ReviewDatePickerField(
         hasSavedReview -> Color(0xFF2E7D60).copy(alpha = 0.55f)
         else -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.18f)
     }
-    val status = listOf(
-        if (hasSavedReview) "saved journal" else "no saved journal",
-        if (hasFoodImport) "food synced" else "no food import"
-    ).joinToString(" · ")
+    val status = if (hasSavedReview) "saved journal" else "no saved journal"
 
     Card(
         modifier = Modifier
@@ -567,35 +318,6 @@ private fun DayShapeFilterChip(
 }
 
 @Composable
-private fun FoodSummaryCard(
-    summary: FoodDailySummaryEntity?,
-    weight: DailyWeightEntity?
-) {
-    Card(
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.16f))
-    ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Food for this date", fontWeight = FontWeight.SemiBold)
-            if (summary != null) {
-                DetailRow("Calories", summary.totalCaloriesKcal?.toString() ?: "n/a")
-                DetailRow("Events", summary.eventCount?.toString() ?: "n/a")
-                DetailRow("Tea", summary.teaCount?.toString() ?: "n/a")
-                DetailRow("First intake", summary.firstIntakeTime ?: "n/a")
-                DetailRow("Last intake", summary.lastIntakeTime ?: "n/a")
-                DetailRow("Eating window", summary.eatingWindowHours?.let { String.format(java.util.Locale.UK, "%.1f h", it) } ?: "n/a")
-            }
-            if (weight != null) {
-                DetailRow("Weight", String.format(java.util.Locale.UK, "%.1f kg", weight.weightKg))
-            }
-        }
-    }
-}
-
-@Composable
 fun MuscleWeaknessToggle(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
@@ -621,23 +343,6 @@ fun MuscleWeaknessToggle(
             Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
     }
-}
-
-@Composable
-fun GripStrengthField(
-    value: String,
-    onValueChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        modifier = Modifier.fillMaxWidth(),
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text("Grip strength, kg (optional)") },
-        supportingText = { Text("Manual dynamometer reading if you took one today.") },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        shape = RoundedCornerShape(18.dp)
-    )
 }
 
 @Composable

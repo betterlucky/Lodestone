@@ -177,7 +177,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
     ) {
         val repository = app.container.repository
         val syncCoordinator = app.container.syncCoordinator
-        val dailyReviewRepository = app.container.dailyReviewRepository
         val healthConnectAnalysisExporter = app.container.healthConnectAnalysisExporter
         val settings = repository.getAppSettings()
         val selectedDeviceId = deviceId ?: settings?.selectedDeviceId
@@ -357,16 +356,6 @@ class ProbeCommandReceiver : BroadcastReceiver() {
             "context_rebuild_epochs" -> {
                 val count = repository.rebuildContextEpochTables().getOrThrow()
                 Log.i(TAG, "Rebuilt $count context epoch/sample rows")
-            }
-            "food_sync" -> {
-                val date = foodDate ?: java.time.LocalDate.now().toString()
-                val count = dailyReviewRepository.importLatestFoodCsvFromDownloads(app.applicationContext, date).getOrThrow()
-                Log.i(TAG, "Imported $count food day summaries from food CSV for $date")
-            }
-            "grip_sync" -> {
-                val date = foodDate ?: java.time.LocalDate.now().toString()
-                val count = dailyReviewRepository.importLatestGripCsvFromSavedFolder(app.applicationContext, date).getOrThrow()
-                Log.i(TAG, "Imported $count grip sessions from grip CSV for $date")
             }
             "health_connect_export" -> {
                 val date = LocalDate.parse(foodDate ?: fromDate ?: LocalDate.now().toString())

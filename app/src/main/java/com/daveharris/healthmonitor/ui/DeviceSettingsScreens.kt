@@ -164,8 +164,6 @@ fun SettingsScreen(
     appSettingsSummary: String?,
     firmwareRediscoveryNeeded: Boolean,
     viewModel: ProbeViewModel,
-    onSetFoodFolder: () -> Unit,
-    onSetGripFolder: () -> Unit,
     onImportSleep2Screenshot: () -> Unit,
     onRequestHealthConnectPermissions: () -> Unit,
     onOpenHealthConnectSettings: () -> Unit,
@@ -281,12 +279,6 @@ fun SettingsScreen(
                     }
                 }
                 ButtonRow {
-                    Button(onClick = onSetFoodFolder, enabled = !viewModel.isBusy) {
-                        Text("Set FoodLogData folder")
-                    }
-                    Button(onClick = onSetGripFolder, enabled = !viewModel.isBusy) {
-                        Text("Set GripRecorderData folder")
-                    }
                     OutlinedButton(
                         onClick = viewModel::prepareForPolarFlowUpdate,
                         enabled = !viewModel.isBusy && viewModel.selectedDeviceId != null

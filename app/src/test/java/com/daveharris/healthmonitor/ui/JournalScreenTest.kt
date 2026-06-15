@@ -20,7 +20,7 @@ class JournalScreenTest {
     fun captureFlowMovesOneQuestionAtATime() {
         assertEquals(JournalCaptureStep.DAY_SHAPE, nextJournalCaptureStep(JournalCaptureStep.OUTCOME))
         assertEquals(JournalCaptureStep.OUTCOME, previousJournalCaptureStep(JournalCaptureStep.DAY_SHAPE))
-        assertEquals(JournalCaptureStep.NOTES_IMPORTS, nextJournalCaptureStep(JournalCaptureStep.NOTES_IMPORTS))
+        assertEquals(JournalCaptureStep.NOTES, nextJournalCaptureStep(JournalCaptureStep.NOTES))
         assertEquals(JournalCaptureStep.OUTCOME, previousJournalCaptureStep(JournalCaptureStep.OUTCOME))
     }
 
