@@ -73,7 +73,7 @@ class ProbeViewModel(
     val gripSessions = dailyReviewRepository.gripSessions.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val morningRead = repository.morningRead.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val currentState = repository.currentState.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    val morningPredictionSnapshots = repository.morningPredictionSnapshots.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val currentStateSnapshots = repository.currentStateSnapshots.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val recentWakeMarkers = repository.recentWakeMarkers.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val recentPpi247Epochs = repository.recentPpi247Epochs.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val recentSleepEpisodes = repository.recentSleepEpisodes.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
